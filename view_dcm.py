@@ -7,7 +7,7 @@ Set DATADIR to the root directory containing BONE_AI_* folders.
 """
 
 from pathlib import Path
-
+import os
 import numpy as np
 import pydicom
 import matplotlib.pyplot as plt
@@ -36,7 +36,7 @@ def normalize(arr: np.ndarray) -> np.ndarray:
     return arr
 
 
-def plot_volume(volume: np.ndarray, title: str, save_path: Path | None = None):
+def plot_volume(volume: np.ndarray, title: str, save_path: Path):
     volume = normalize(volume)
     Z, H, W = volume.shape
 
@@ -75,8 +75,8 @@ def plot_volume(volume: np.ndarray, title: str, save_path: Path | None = None):
 
 
 def main():
-    datadir = Path(".")  # root containing BONE_AI_* folders
-    savedir = 'previews'
+    datadir = Path("/mnt/rimp/PROJECTS/BONE-AI/ADQUISICIONES/")  # root containing BONE_AI_* folders
+    savedir = "/home/ext_xinwan/Bone_AI/preview"
 
     folders = sorted(f for f in datadir.rglob("*.dcm") if f.is_file())
     scan_dirs = sorted({f.parent for f in folders})
@@ -89,7 +89,9 @@ def main():
             print(f"  Skipped ({e})")
             continue
         print(f"  Volume shape (Z, H, W): {volume.shape}")
-        save_path = folder / "preview.png"
+        new_save_folder = Path(savedir + str(folder).replace('/mnt/rimp/PROJECTS/BONE-AI/ADQUISICIONES', ''))
+        os.makedirs(new_save_folder, exist_ok=True)
+        save_path = new_save_folder / "preview.png"
         plot_volume(volume, title=str(folder), save_path=save_path)
 
 
