@@ -83,8 +83,26 @@ def label_contrast(series_desc: str) -> str:
 # Main
 # ---------------------------------------------------------------------------
 
+REQUIRED_COLS = [
+    "repetition_time_ms",
+    "echo_time_ms",
+    "magnetic_field_str",
+]
+
+
 def label(input_csv: Path, output_csv: Path) -> None:
     df = pd.read_csv(input_csv, dtype=str).fillna("")
+
+    before = len(df)
+
+    # Keep only MR modality
+    df = df[df["modality"] == "MR"]
+    print(f"Dropped {before - len(df)} non-MR rows ({len(df)} remaining)")
+
+    # Drop rows with any required parameter empty
+    before = len(df)
+    df = df[df[REQUIRED_COLS].apply(lambda r: r.str.strip().ne("")).all(axis=1)]
+    print(f"Dropped {before - len(df)} rows with missing required fields ({len(df)} remaining)")
 
     df["sequence_type"] = df["series_description"].apply(label_sequence_type)
     df["fat_sat"]       = df.apply(
