@@ -41,11 +41,11 @@ def label_sequence_type(series_desc: str) -> str:
     upper = series_desc.upper()
 
     tokens = _tokens(series_desc)
-    if re.search(r"LOCAL", upper) or any(t in ("LOC", "SCOUT", "SURVEY", "CALIBRATION", "CAL") for t in tokens):
+    if re.search(r"LOCAL|SCOUT|SURVEY|CALIBRATION", upper):
         return "localizer"
 
     # DWI / diffusion
-    if re.search(r"DWI", upper) or re.search(r"DIFF", upper) or re.search(r"DIFUSION", upper) or re.search(r"ADC", upper):
+    if re.search(r"DWI|DIFF|DIFUSION|ADC", upper):
         return "DWI"
 
     # Perfusion
