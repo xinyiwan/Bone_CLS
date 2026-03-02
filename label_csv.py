@@ -41,7 +41,7 @@ def label_sequence_type(series_desc: str) -> str:
     upper = series_desc.upper()
 
     tokens = _tokens(series_desc)
-    if re.search(r"LOCAL|SCOUT|SURVEY|CALIBRATION", upper):
+    if re.search(r"CAL|LOC|LOCAL|SCOUT|SURVEY|CALIBRATION", upper):
         return "localizer"
 
     # DWI / diffusion
