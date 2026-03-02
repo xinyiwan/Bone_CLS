@@ -24,8 +24,8 @@ from pathlib import Path
 import numpy as np
 import pydicom
 
-DATADIR = Path(".")
-OUTPUT_CSV = Path("dicom_headers.csv")
+DATADIR = Path("/data/")
+OUTPUT_CSV = Path("/results/dicom_headers.csv")
 
 
 # ---------------------------------------------------------------------------
