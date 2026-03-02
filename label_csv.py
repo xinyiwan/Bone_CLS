@@ -2,7 +2,7 @@
 Add sequence labels to the DICOM header CSV produced by extract_headers.py.
 
 Three new columns are appended:
-  sequence_type  – T1 | T2 | T2* | DWI | PDW | DP | PD | perfusion | localizer  (from series_description)
+  sequence_type  – T1 | T2 | T2* | DWI | PDW | PD | perfusion | localizer  (from series_description)
   fat_sat        – fatsat  (from series_description or scan_options)
   contrast       – contrast  (from series_description)
 
@@ -68,9 +68,8 @@ def label_sequence_type(series_desc: str) -> str:
     if "PDW" in tokens:
         return "PDW"
 
-    for marker in ("DP", "PD"):
-        if marker in tokens:
-            return marker
+    if any(t in ("DP", "PD") for t in tokens):
+        return "PD"
 
     return ""
 

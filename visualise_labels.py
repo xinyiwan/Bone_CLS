@@ -25,7 +25,7 @@ def build_modality_label(row: pd.Series) -> str:
         parts.append("FS")
     if row["contrast"]:
         parts.append("CE")
-    return " ".join(parts)
+    return "-".join(parts)
 
 
 def visualise(input_csv: Path, output_fig: Path) -> None:
