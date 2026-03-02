@@ -24,9 +24,10 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 
 def _tokens(text: str) -> list[str]:
-    """Split an upper-cased DICOM string into alpha-only tokens.
+    """Split an upper-cased DICOM string into alpha-only tokens (digits stripped).
 
-    e.g. "T2_FS SAG" → ["T2", "FS", "SAG"]
+    e.g. "T2_FS SAG" → ["T", "FS", "SAG"]
+         "T1_FSE"    → ["T", "FSE"]
     Splitting on non-letter chars ensures 'FS' != 'FSE'.
     """
     if not text:
@@ -35,12 +36,24 @@ def _tokens(text: str) -> list[str]:
 
 
 def label_sequence_type(series_desc: str) -> str:
+    # Tokens are alpha-only, so T1/T2 become "T" — search the original string
+    # for those. Purely alpha markers (LOC, DP, PD) still use tokens.
+    upper = series_desc.upper()
+
     tokens = _tokens(series_desc)
-    if "LOC" in tokens or "LOCALIZER" in tokens or "LOCALISER" in tokens:
+    if any(t in ("LOC", "LOCALIZER", "LOCALISER") for t in tokens):
         return "localizer"
-    for marker in ("T1", "T2", "DP", "PD"):
-        if any(t == marker or t.startswith(marker) for t in tokens):
+
+    # Use the raw string so "AX GRE T2 (MERGE)" → T2, not lost as "T"
+    if re.search(r"T1", upper):
+        return "T1"
+    if re.search(r"T2", upper):
+        return "T2"
+
+    for marker in ("DP", "PD"):
+        if marker in tokens:
             return marker
+
     return ""
 
 
