@@ -1,0 +1,93 @@
+"""
+Add sequence labels to the DICOM header CSV produced by extract_headers.py.
+
+Three new columns are appended:
+  sequence_type  – T1 | T2 | DP | PD | localizer  (from series_description)
+  fat_sat        – fatsat  (from series_description or scan_options)
+  contrast       – contrast  (from series_description)
+
+Non-matching entries are left empty.
+
+Usage:
+    python label_csv.py dicom_headers.csv          # overwrites in place
+    python label_csv.py dicom_headers.csv out.csv  # write to new file
+"""
+
+import re
+import sys
+import pandas as pd
+from pathlib import Path
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _tokens(text: str) -> list[str]:
+    """Split an upper-cased DICOM string into alpha-only tokens.
+
+    e.g. "T2_FS SAG" → ["T2", "FS", "SAG"]
+    Splitting on non-letter chars ensures 'FS' != 'FSE'.
+    """
+    if not text:
+        return []
+    return [t for t in re.split(r"[^A-Z]+", text.upper()) if t]
+
+
+def label_sequence_type(series_desc: str) -> str:
+    tokens = _tokens(series_desc)
+    if "LOC" in tokens or "LOCALIZER" in tokens or "LOCALISER" in tokens:
+        return "localizer"
+    for marker in ("T1", "T2", "DP", "PD"):
+        if any(t == marker or t.startswith(marker) for t in tokens):
+            return marker
+    return ""
+
+
+def label_fat_sat(series_desc: str, scan_options: str) -> str:
+    for text in (series_desc, scan_options):
+        tokens = _tokens(text)
+        if any(t in ("STIR", "FS", "FATSAT", "FATSUPP", "SPIR", "SPAIR", 'FAT') for t in tokens):
+            return "fatsat"
+    return ""
+
+
+def label_contrast(series_desc: str) -> str:
+    tokens = _tokens(series_desc)
+    if "GD" in tokens:
+        return "contrast"
+    return ""
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def label(input_csv: Path, output_csv: Path) -> None:
+    df = pd.read_csv(input_csv, dtype=str).fillna("")
+
+    df["sequence_type"] = df["series_description"].apply(label_sequence_type)
+    df["fat_sat"]       = df.apply(
+        lambda r: label_fat_sat(r["series_description"], r["scan_options"]), axis=1
+    )
+    df["contrast"]      = df["series_description"].apply(label_contrast)
+
+    df.to_csv(output_csv, index=False)
+    print(f"Labelled {len(df)} rows → {output_csv}")
+
+    # Quick summary
+    print("\nsequence_type counts:")
+    print(df["sequence_type"].replace("", "(empty)").value_counts().to_string())
+    print("\nfat_sat counts:")
+    print(df["fat_sat"].replace("", "(empty)").value_counts().to_string())
+    print("\ncontrast counts:")
+    print(df["contrast"].replace("", "(empty)").value_counts().to_string())
+
+
+if __name__ == "__main__":
+    args = sys.argv[1:]
+    if not args:
+        sys.exit("Usage: python label_csv.py input.csv [output.csv]")
+    input_csv  = Path(args[0])
+    output_csv = Path(args[1]) if len(args) > 1 else input_csv
+    label(input_csv, output_csv)
