@@ -66,7 +66,7 @@ def label_sequence_type(series_desc: str) -> str:
         return "T2"
 
     if "PDW" in tokens:
-        return "PDW"
+        return "PD"
 
     if any(t in ("DP", "PD") for t in tokens):
         return "PD"
