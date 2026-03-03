@@ -23,6 +23,7 @@ Set DATADIR and OUTDIR before running, then:
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 from pathlib import Path
 from utils import find_scan_dirs
@@ -78,6 +79,8 @@ def run_dcm2niix(dicom_dir, nifti_path, overwrite=False):
         if result != 0:
             logger.warning("dcm2niix returned non-zero for %s.", dicom_dir)
             return False
+        for f in nifti_path.parent.glob("*.nii*"):
+            os.chmod(f, 0o664)
         return True
     except Exception as exc:
         logger.warning("dcm2niix error: %s", exc)
@@ -113,9 +116,13 @@ def run_dicom2nifti(dicom_dir, nifti_path, overwrite=False):
     if not output_files:
         return False
 
-    # Rename outputs to a predictable naming scheme
+    # Rename outputs to match the expected nifti_path name
+    stem = nifti_path.name[:-7] if nifti_path.name.endswith(".nii.gz") else nifti_path.stem
     for n, f in enumerate(output_files):
-        f.rename(out_dir / ("image" + str(n) + ".nii.gz"))
+        suffix = "" if len(output_files) == 1 else f"_{n}"
+        dest = out_dir / f"{stem}{suffix}.nii.gz"
+        f.rename(dest)
+        os.chmod(dest, 0o664)
 
     return True
 
@@ -155,6 +162,7 @@ def run_manual_dcm2nifti(dicom_dir, nifti_path, overwrite=False):
 
     nifti_path.parent.mkdir(parents=True, exist_ok=True)
     sitk.WriteImage(image, str(nifti_path))
+    os.chmod(nifti_path, 0o664)
     return True
 
 
