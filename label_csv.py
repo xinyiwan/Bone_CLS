@@ -45,7 +45,7 @@ def label_sequence_type(series_desc: str) -> str:
         return "localizer"
 
     # DWI / diffusion
-    if re.search(r"DWI|DIFF|DIFUSION|ADC", upper):
+    if re.search(r"DWI|DIFF|DIFUSION|ADC|DIFU", upper):
         return "DWI"
 
     # Perfusion
@@ -54,16 +54,16 @@ def label_sequence_type(series_desc: str) -> str:
 
     # STIR is T2-weighted
     if "STIR" in tokens:
-        return "T2"
+        return "T2W"
 
     # Use the raw string so "AX GRE T2 (MERGE)" → T2, not lost as "T"
     if re.search(r"T1", upper):
-        return "T1"
+        return "T1W"
     # T2* must be checked before plain T2
     if re.search(r"T2\*", series_desc, re.IGNORECASE):
         return "T2*"
-    if re.search(r"T2", upper):
-        return "T2"
+    if re.search(r"T2", upper) or re.search(r"STIR", upper):
+        return "T2W"
 
     if "PDW" in tokens:
         return "PD"
@@ -75,16 +75,18 @@ def label_sequence_type(series_desc: str) -> str:
 
 
 def label_fat_sat(series_desc: str, scan_options: str) -> str:
+    upper = series_desc.upper()
     for text in (series_desc, scan_options):
         tokens = _tokens(text)
-        if any(t in ("STIR", "FS", "FATSAT", "FATSUPP", "SPIR", "SPAIR", 'FAT') for t in tokens):
+        if any(t in ("STIR", "FS", "FATSAT", "FATSUPP", "SPIR", "SPAIR", "FLAIR", 'FAT') for t in tokens) or re.search(r"STIR", upper):
             return "fatsat"
     return ""
 
 
 def label_contrast(series_desc: str) -> str:
+    upper = series_desc.upper()
     tokens = _tokens(series_desc)
-    if "GD" in tokens:
+    if any(t in ("GD", "GAD") for t in tokens) or re.search(r"/+C | /+CTE", upper):
         return "contrast"
     return ""
 
