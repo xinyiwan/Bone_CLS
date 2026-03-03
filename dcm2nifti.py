@@ -218,7 +218,7 @@ def convert_all(datadir, outdir, overwrite=False):
     for subject, session, scan, scan_dir in find_scan_dirs(datadir):
         # Flatten any sub-folder separators in the scan name
         scan_stem = scan.replace("/", "_")
-        nifti_path = outdir / subject / session / (scan_stem + ".nii.gz")
+        nifti_path = outdir / subject / session / scan_stem / "images.nii.gz"
 
         if not overwrite and nifti_path.exists():
             logger.info("Skipping %s/%s/%s (exists).", subject, session, scan)
