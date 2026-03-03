@@ -25,6 +25,7 @@ from __future__ import annotations
 import logging
 import shutil
 from pathlib import Path
+from utils import find_scan_dirs
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -190,27 +191,6 @@ def convert_scan(dicom_dir, nifti_path, overwrite=False):
 
     logger.error("All conversion tools failed for %s", dicom_dir)
     return False
-
-
-# ---------------------------------------------------------------------------
-# Dataset traversal (mirrors extract_headers.py)
-# ---------------------------------------------------------------------------
-
-def find_scan_dirs(datadir):
-    # type: (Path,) -> ...
-    """Yield ``(subject, session, scan, scan_dir)`` for every folder with .dcm files."""
-    scan_dirs = sorted({f.parent for f in datadir.rglob("*.dcm") if f.is_file()})
-    for scan_dir in scan_dirs:
-        parts = scan_dir.relative_to(datadir).parts
-        if len(parts) >= 3:
-            subject, session, scan = parts[0], parts[1], "/".join(parts[2:])
-        elif len(parts) == 2:
-            subject, session, scan = parts[0], "", parts[1]
-        elif len(parts) == 1:
-            subject, session, scan = parts[0], "", parts[0]
-        else:
-            subject, session, scan = "", "", ""
-        yield subject, session, scan, scan_dir
 
 
 def convert_all(datadir, outdir, overwrite=False):

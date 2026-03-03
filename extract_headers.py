@@ -23,9 +23,10 @@ from pathlib import Path
 
 import numpy as np
 import pydicom
+from utils import find_scan_dirs
 
 DATADIR = Path("/data/")
-OUTPUT_CSV = Path("/results/dicom_headers.csv")
+OUTPUT_CSV = Path("/results/dicom_headers_Mar3.csv")
 
 
 # ---------------------------------------------------------------------------
@@ -198,31 +199,6 @@ def extract_scan_headers(scan_dir: Path) -> dict:
 
     return row
 
-
-# ---------------------------------------------------------------------------
-# Dataset traversal
-# ---------------------------------------------------------------------------
-
-def find_scan_dirs(datadir: Path):
-    """Yield ``(subject, session, scan, scan_dir)`` for every folder with .dcm files.
-
-    The path components relative to *datadir* are interpreted as:
-        3+ levels deep : parts[0]=subject, parts[1]=session, parts[2]=scan
-        2 levels deep  : parts[0]=subject, parts[1]=scan (session = scan name)
-        1 level deep   : subject = scan name, session = ""
-    """
-    scan_dirs = sorted({f.parent for f in datadir.rglob("*.dcm") if f.is_file()})
-    for scan_dir in scan_dirs:
-        parts = scan_dir.relative_to(datadir).parts
-        if len(parts) >= 3:
-            subject, session, scan = parts[0], parts[1], "/".join(parts[2:])
-        elif len(parts) == 2:
-            subject, session, scan = parts[0], "", parts[1]
-        elif len(parts) == 1:
-            subject, session, scan = parts[0], "", parts[0]
-        else:
-            subject, session, scan = "", "", ""
-        yield subject, session, scan, scan_dir
 
 
 # ---------------------------------------------------------------------------
