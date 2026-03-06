@@ -9,8 +9,9 @@ Resampling before segmentation avoids blocky edges when transferring masks back.
 
 Directory assumption (output of dcm2nifti.py):
     <session_dir>/
-        <scan_name>.nii.gz
-        ...
+        <scan_name_dir>/
+            image.nii.gz
+            ...
 
 Usage:
     python high_reso_test.py <session_dir> [output.nii.gz]
@@ -69,13 +70,14 @@ def select_best(paths: list[Path]) -> Path:
     """
     Prefer T1, then T2, then others.
     Within the same type, prefer the image with the smallest maximum spacing
-    (i.e. highest resolution in all directions).
+    (finest worst-case axis = most isotropic / least blocky source).
+    Sequence type is guessed from the scan folder name, not the file name.
     """
     def sort_key(p: Path):
-        seq  = guess_sequence_type(p.stem)
-        pri  = SEQ_PRIORITY.get(seq, 99)
-        sp   = get_spacing(p)
-        return (pri, max(sp))
+        seq = guess_sequence_type(p.parent.name)   # folder = scan name
+        pri = SEQ_PRIORITY.get(seq, 99)
+        sp  = get_spacing(p)
+        return (pri, max(sp))                      # smallest max-spacing wins
 
     return sorted(paths, key=sort_key)[0]
 
@@ -109,26 +111,24 @@ def resample(image: sitk.Image, new_spacing: tuple[float, ...]) -> sitk.Image:
 # ---------------------------------------------------------------------------
 
 def process_session(session_dir: Path, output_path: Path) -> None:
-    niftis = sorted(session_dir.glob("*.nii.gz"))
-    if not niftis:
-        # also check one level deeper (scan sub-folders)
-        niftis = sorted(session_dir.glob("*/*.nii.gz"))
+    # Structure: session_dir/<scan_name_dir>/<image>.nii.gz
+    niftis = sorted(session_dir.glob("*/*.nii.gz"))
     if not niftis:
         raise FileNotFoundError(f"No .nii.gz files found under {session_dir}")
 
     print(f"Found {len(niftis)} NIfTI file(s):")
     spacings = []
     for p in niftis:
-        sp = get_spacing(p)
-        seq = guess_sequence_type(p.stem)
-        print(f"  {p.name:50s}  spacing={tuple(round(s,3) for s in sp)}  seq={seq}")
+        sp  = get_spacing(p)
+        seq = guess_sequence_type(p.parent.name)   # scan folder = sequence name
+        print(f"  {p.parent.name:50s}  spacing={tuple(round(s,3) for s in sp)}  seq={seq}")
         spacings.append(sp)
 
     target = finest_spacing(spacings)
     print(f"\nFinest spacing (per-axis min): {tuple(round(s,3) for s in target)}")
 
     best = select_best(niftis)
-    seq  = guess_sequence_type(best.stem)
+    seq  = guess_sequence_type(best.parent.name)
     sp   = get_spacing(best)
     print(f"Source image : {best.name}  (seq={seq}, spacing={tuple(round(s,3) for s in sp)})")
 
