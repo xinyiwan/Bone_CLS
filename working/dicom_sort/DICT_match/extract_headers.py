@@ -26,7 +26,7 @@ import pydicom
 from utils import find_scan_dirs
 
 DATADIR = Path("/data/")
-OUTPUT_CSV = Path("/results/dicom_headers_Mar3.csv")
+OUTPUT_CSV = Path("/results/dicom_headers_Mar10.csv")
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +162,9 @@ TAGS: list[tuple[str, tuple | None, object]] = [
     ("coil",                (0x18, 0x1250), None),
     ("encoding_direction",  (0x18, 0x1312), None),
     ("patient_position",    (0x18, 0x5100), None),
+    ("Contrast_Agent",      (0x18, 0x10),   None), 
+    ("Volume",              (0x18, 0x1040), None), 
+    ("Total_Dose",          (0x18, 0x1041), None), 
     # --- geometry ---------------------------------------------------------
     ("rows",                (0x28, 0x10),   None),
     ("columns",             (0x28, 0x11),   None),
