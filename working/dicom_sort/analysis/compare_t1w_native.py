@@ -25,9 +25,9 @@ def load_dcm_clf(path: str) -> pd.DataFrame:
 
     # Rename join keys to canonical names
     df = df.rename(columns={
-        "Paciente": "subject",
+        "Paciente": "scan",
         "Estudio":  "session",
-        "Serie":    "scan",
+        "Serie":    "subject",
     })
 
     # Relevant prediction columns
