@@ -23,6 +23,7 @@ Usage:
     python high_reso_test.py <session_dir> [output_dir]
 """
 
+import os
 import re
 import sys
 from pathlib import Path
@@ -115,6 +116,7 @@ def process_session(session_dir: Path, output_dir: Path) -> None:
         out_path  = output_dir / rel
         out_path.parent.mkdir(parents=True, exist_ok=True)
         sitk.WriteImage(resampled, str(out_path))
+        os.chmod(out_path, 0o666)
         print(f"  {p.parent.name}/{p.name}  {image.GetSize()} → {resampled.GetSize()}  saved → {out_path}")
 
 
