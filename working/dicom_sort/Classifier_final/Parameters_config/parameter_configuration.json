@@ -1,0 +1,8 @@
+{ 
+	"CLASSIFIER": {
+		"excel_flag": false,	
+		"input_folder": "ADQUISICIONES",
+		"excel_path":"/Proyecto/NB/Final.xlsx",
+		"excel_column":"path"
+		}
+}

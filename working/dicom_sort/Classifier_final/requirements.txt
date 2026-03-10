@@ -1,0 +1,11 @@
+tqdm==4.64.0
+nibabel==4.0.1
+scipy==1.9.0
+matplotlib==3.5.2
+tensorflow== 2.10.0
+pandas==2.0.3
+pydicom== 2.4.4
+openpyxl==3.1.5
+pypickle==2.0.1
+catboost==1.2.8
+opencv-python==4.13.0.92
