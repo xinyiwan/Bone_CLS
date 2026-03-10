@@ -98,6 +98,13 @@ T1W_SUBTYPES = {
     ("N", "N"): "T1W-no-no",
     ("Y", "N"): "T1W-fs-no",
     ("Y", "Y"): "T1W-fs-c",
+    ("N", "Y"): "T1W-no-c"
+}
+T2W_SUBTYPES = {
+    ("N", "N"): "T2W-no-no",
+    ("Y", "N"): "T2W-fs-no",
+    ("Y", "Y"): "T2W-fs-c",
+    ("N", "Y"): "T2W-no-c"
 }
 # DCM clf uses "-" for "not applicable" (when modality != T1W); treat as N
 DCM_NEG = {"N", "-"}
@@ -105,20 +112,27 @@ DCM_NEG = {"N", "-"}
 
 def make_combined_label_dcm(row) -> str:
     """Composite label for DCM clf row: T1W-{fs}-{c} or the modality."""
-    if row["dcm_modality"] != "T1W":
-        return row["dcm_modality"]
     fs = "Y" if row["dcm_fat_sat"] == "Y" else "N"
     c  = "Y" if row["dcm_contrast"] == "Y" else "N"
-    return T1W_SUBTYPES.get((fs, c), f"T1W-{fs}-{c}")
+    if row["dcm_modality"] == "T1W":
+        return T1W_SUBTYPES.get((fs, c), f"T1W-{fs}-{c}")
+    elif row["dcm_modality"] == "T2W":
+        return T2W_SUBTYPES.get((fs, c), f"T2W-{fs}-{c}")
+    else: 
+        return row["dcm_modality"]
 
 
 def make_combined_label_dict(row) -> str:
     """Composite label for dict method row: T1W-{fs}-{c} or the modality."""
-    if row["dict_modality"] != "T1W":
-        return row["dict_modality"]
     fs = row["dict_fat_sat"]   # already Y/N
     c  = row["dict_contrast"]  # already Y/N
-    return T1W_SUBTYPES.get((fs, c), f"T1W-{fs}-{c}")
+    if row["dict_modality"] == "T1W":
+        return T1W_SUBTYPES.get((fs, c), f"T1W-{fs}-{c}")
+    elif row["dict_modality"] == "T2W":
+        return T2W_SUBTYPES.get((fs, c), f"T2W-{fs}-{c}")
+    else:
+        return row["dict_modality"]
+    
 
 
 def agreement_stats(tp, tn, fp, fn) -> dict:
@@ -169,7 +183,7 @@ def analyse(dcm_path: str, dict_path: str) -> None:
     merged["dict_label"] = merged.apply(make_combined_label_dict, axis=1)
 
     # ---- Crosstab (exclude PD rows from dict side) -----------------------
-    exclude_modalities = {"PD"}   # DCM clf never predicts these
+    exclude_modalities = {""}   # DCM clf never predicts these
     mask_cross = ~merged["dict_modality"].isin(exclude_modalities)
 
     cross = pd.crosstab(
@@ -179,7 +193,7 @@ def analyse(dcm_path: str, dict_path: str) -> None:
     )
     total = mask_cross.sum()
     print(f"\n--- Combined-label crosstab  (dict rows vs DCM clf cols, "
-          f"PD excluded, n={total}) ---")
+          f"n={total}) ---")
     print(cross.to_string())
 
     # ---- Per-subtype binary agreement ------------------------------------
