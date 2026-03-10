@@ -83,10 +83,14 @@ def label_fat_sat(series_desc: str, scan_options: str) -> str:
     return ""
 
 
-def label_contrast(series_desc: str) -> str:
+def label_contrast(series_desc: str, Contrast_Agent: str, volume: str, total_dose: str) -> str:
     upper = series_desc.upper()
     tokens = _tokens(series_desc)
+    agent_tokens = _tokens(Contrast_Agent.upper())
     if any(t in ("GD", "GAD") for t in tokens) or re.search(r"/+C | /+CTE", upper):
+        return "contrast"
+    elif any(t in ("YES", "Y", "GD", "CONTRASTE", "DOTAREM", "GADO", "GAD", "MH", "MULTIHANCE") for t in agent_tokens) \
+        and total_dose != "0":
         return "contrast"
     return ""
 
@@ -120,7 +124,9 @@ def label(input_csv: Path, output_csv: Path) -> None:
     df["fat_sat"]       = df.apply(
         lambda r: label_fat_sat(r["series_description"], r["scan_options"]), axis=1
     )
-    df["contrast"]      = df["series_description"].apply(label_contrast)
+    df["contrast"]      = df.apply(
+        lambda r: label_contrast(r["series_description"], r["Contrast_Agent"], r["Volume"], r["Total_Dose"]), axis=1
+    )
 
     df.to_csv(output_csv, index=False)
     print(f"Labelled {len(df)} rows → {output_csv}")
