@@ -13,6 +13,8 @@ import pandas as pd
 import numpy as np
 import argparse
 from pathlib import Path
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 
 # ---------------------------------------------------------------------------
@@ -147,6 +149,36 @@ def agreement_stats(tp, tn, fp, fn) -> dict:
                 precision=precision, recall=recall, f1=f1)
 
 
+def plot_crosstab(cross: pd.DataFrame, out_path: Path) -> None:
+    """Save a heatmap of the crosstab (without the TOTAL margin row/col)."""
+    data = cross.drop(index="TOTAL", columns="TOTAL", errors="ignore")
+
+    # Annotation: count + percentage of column total (per DCM clf prediction)
+    col_totals = data.sum(axis=0)
+    annot = data.apply(
+        lambda col: col.map(lambda v: f"{v}\n({v/col_totals[col.name]*100:.0f}%)")
+        if col_totals[col.name] > 0 else col.map(str)
+    )
+
+    fig, ax = plt.subplots(figsize=(max(6, len(data.columns) * 1.2),
+                                    max(4, len(data.index) * 0.8)))
+    sns.heatmap(
+        data, annot=annot, fmt="", cmap="Blues",
+        linewidths=0.5, linecolor="grey",
+        cbar_kws={"label": "count"},
+        ax=ax,
+    )
+    ax.set_xlabel("DCM classifier", fontsize=11)
+    ax.set_ylabel("Dict method", fontsize=11)
+    ax.set_title("Prediction agreement\n(dict rows × DCM clf cols)", fontsize=12)
+    ax.tick_params(axis="x", rotation=45)
+    ax.tick_params(axis="y", rotation=0)
+    plt.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+    print(f"Heatmap saved to: {out_path}")
+
+
 def print_agreement(label: str, stats: dict) -> None:
     t, a = stats["total"], stats["agree"]
     pct  = a / t * 100 if t > 0 else float("nan")
@@ -195,6 +227,8 @@ def analyse(dcm_path: str, dict_path: str) -> None:
     print(f"\n--- Combined-label crosstab  (dict rows vs DCM clf cols, "
           f"n={total}) ---")
     print(cross.to_string())
+
+    plot_crosstab(cross, Path(dcm_path).parent / "crosstab_heatmap.png")
 
     # ---- Per-subtype binary agreement ------------------------------------
     print("\n--- Per-subtype agreement (binary: is this subtype vs not) ---")
