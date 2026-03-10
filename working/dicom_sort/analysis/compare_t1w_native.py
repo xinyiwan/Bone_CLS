@@ -1,9 +1,12 @@
 """
-Compare T1W native predictions between:
+Compare T1W predictions between:
   - DICOM classifier (DCM clf)
   - Dictionary matching method (dict method)
 
-Focuses on T1W native sequences: T1W modality, no contrast, no fat saturation.
+Breaks T1W into three subtypes:
+  T1W-no-no  : T1W, no fat-sat, no contrast  (native)
+  T1W-fs-no  : T1W, fat-sat,    no contrast
+  T1W-fs-c   : T1W, fat-sat,    with contrast
 """
 
 import pandas as pd
@@ -90,22 +93,56 @@ def load_dict_method(path: str) -> pd.DataFrame:
     return df
 
 
-def is_t1w_native_dcm(df: pd.DataFrame) -> pd.Series:
-    """True for rows the DCM classifier calls T1W native (no C, no FS)."""
-    return (
-        (df["dcm_modality"] == "T1W") &
-        (df["dcm_contrast"].isin(["N", "-"])) &
-        (df["dcm_fat_sat"].isin(["N", "-"]))
-    )
+# T1W subtypes we care about: (fat_sat_flag, contrast_flag) -> label
+T1W_SUBTYPES = {
+    ("N", "N"): "T1W-no-no",
+    ("Y", "N"): "T1W-fs-no",
+    ("Y", "Y"): "T1W-fs-c",
+}
+# DCM clf uses "-" for "not applicable" (when modality != T1W); treat as N
+DCM_NEG = {"N", "-"}
 
 
-def is_t1w_native_dict(df: pd.DataFrame) -> pd.Series:
-    """True for rows the dict method calls T1W native (no C, no FS)."""
-    return (
-        (df["dict_modality"] == "T1W") &
-        (df["dict_contrast"] == "N") &
-        (df["dict_fat_sat"] == "N")
-    )
+def make_combined_label_dcm(row) -> str:
+    """Composite label for DCM clf row: T1W-{fs}-{c} or the modality."""
+    if row["dcm_modality"] != "T1W":
+        return row["dcm_modality"]
+    fs = "Y" if row["dcm_fat_sat"] == "Y" else "N"
+    c  = "Y" if row["dcm_contrast"] == "Y" else "N"
+    return T1W_SUBTYPES.get((fs, c), f"T1W-{fs}-{c}")
+
+
+def make_combined_label_dict(row) -> str:
+    """Composite label for dict method row: T1W-{fs}-{c} or the modality."""
+    if row["dict_modality"] != "T1W":
+        return row["dict_modality"]
+    fs = row["dict_fat_sat"]   # already Y/N
+    c  = row["dict_contrast"]  # already Y/N
+    return T1W_SUBTYPES.get((fs, c), f"T1W-{fs}-{c}")
+
+
+def agreement_stats(tp, tn, fp, fn) -> dict:
+    total = tp + tn + fp + fn
+    agree = tp + tn
+    precision = tp / (tp + fp) if (tp + fp) > 0 else float("nan")
+    recall    = tp / (tp + fn) if (tp + fn) > 0 else float("nan")
+    f1 = (2 * precision * recall / (precision + recall)
+          if (precision + recall) > 0 else float("nan"))
+    return dict(tp=tp, tn=tn, fp=fp, fn=fn,
+                total=total, agree=agree,
+                precision=precision, recall=recall, f1=f1)
+
+
+def print_agreement(label: str, stats: dict) -> None:
+    t, a = stats["total"], stats["agree"]
+    pct  = a / t * 100 if t > 0 else float("nan")
+    print(f"\n  [{label}]  n={t}")
+    print(f"    Both positive (TP): {stats['tp']}  |  Both negative (TN): {stats['tn']}")
+    print(f"    Dict=Y DCM=N  (FP): {stats['fp']}  |  Dict=N DCM=Y  (FN): {stats['fn']}")
+    print(f"    Agreement : {a}/{t} ({pct:.1f}%)  "
+          f"Precision={stats['precision']:.3f}  "
+          f"Recall={stats['recall']:.3f}  "
+          f"F1={stats['f1']:.3f}")
 
 
 # ---------------------------------------------------------------------------
@@ -116,7 +153,7 @@ def analyse(dcm_path: str, dict_path: str) -> None:
     dcm  = load_dcm_clf(dcm_path)
     dct  = load_dict_method(dict_path)
 
-    print(f"DCM clf rows : {len(dcm):,}")
+    print(f"DCM clf rows    : {len(dcm):,}")
     print(f"Dict method rows: {len(dct):,}")
 
     # ---- Merge on subject / session / scan --------------------------------
@@ -127,69 +164,56 @@ def analyse(dcm_path: str, dict_path: str) -> None:
         print("No matching rows found – check that subject/session/scan keys align.")
         return
 
-    # ---- Boolean T1W-native flags ----------------------------------------
-    merged["dcm_t1w_native"]  = is_t1w_native_dcm(merged)
-    merged["dict_t1w_native"] = is_t1w_native_dict(merged)
+    # ---- Composite labels ------------------------------------------------
+    merged["dcm_label"]  = merged.apply(make_combined_label_dcm,  axis=1)
+    merged["dict_label"] = merged.apply(make_combined_label_dict, axis=1)
 
-    n_dcm_pos  = merged["dcm_t1w_native"].sum()
-    n_dict_pos = merged["dict_t1w_native"].sum()
-    print(f"\nT1W native positives — DCM clf: {n_dcm_pos}  |  Dict method: {n_dict_pos}")
-
-    # ---- Confusion matrix (dict vs dcm) ----------------------------------
-    tp = (merged["dcm_t1w_native"]  & merged["dict_t1w_native"]).sum()
-    tn = (~merged["dcm_t1w_native"] & ~merged["dict_t1w_native"]).sum()
-    fp = (~merged["dcm_t1w_native"] &  merged["dict_t1w_native"]).sum()
-    fn = (merged["dcm_t1w_native"]  & ~merged["dict_t1w_native"]).sum()
-
-    total = len(merged)
-    agree = tp + tn
-
-    print("\n--- Agreement (T1W native) ---")
-    print(f"  Both agree T1W native      (TP): {tp}")
-    print(f"  Both agree NOT T1W native  (TN): {tn}")
-    print(f"  Dict=Y, DCM=N              (FP): {fp}")
-    print(f"  Dict=N, DCM=Y              (FN): {fn}")
-    print(f"  Overall agreement: {agree}/{total} ({agree/total*100:.1f}%)")
-
-    if tp + fp + fn > 0:
-        precision = tp / (tp + fp) if (tp + fp) > 0 else float("nan")
-        recall    = tp / (tp + fn) if (tp + fn) > 0 else float("nan")
-        f1        = (2 * precision * recall / (precision + recall)
-                     if (precision + recall) > 0 else float("nan"))
-        print(f"  Precision (DCM as ref): {precision:.3f}")
-        print(f"  Recall    (DCM as ref): {recall:.3f}")
-        print(f"  F1 score              : {f1:.3f}")
-
-    # ---- Breakdown: modality agreement (for ALL rows) --------------------
-    print("\n--- Modality agreement (all rows) ---")
-    mod_agree = (merged["dcm_modality"] == merged["dict_modality"]).sum()
-    print(f"  Exact modality match: {mod_agree}/{total} ({mod_agree/total*100:.1f}%)")
+    # ---- Crosstab (exclude PD rows from dict side) -----------------------
+    exclude_modalities = {"PD"}   # DCM clf never predicts these
+    mask_cross = ~merged["dict_modality"].isin(exclude_modalities)
 
     cross = pd.crosstab(
-        merged["dict_modality"], merged["dcm_modality"],
+        merged.loc[mask_cross, "dict_label"],
+        merged.loc[mask_cross, "dcm_label"],
         margins=True, margins_name="TOTAL"
     )
-    print("\n  Crosstab  dict (rows) vs DCM clf (cols):")
+    total = mask_cross.sum()
+    print(f"\n--- Combined-label crosstab  (dict rows vs DCM clf cols, "
+          f"PD excluded, n={total}) ---")
     print(cross.to_string())
 
-    # ---- Focus: rows where either method says T1W native -----------------
-    either = merged["dcm_t1w_native"] | merged["dict_t1w_native"]
-    t1w_df = merged[either].copy()
+    # ---- Per-subtype binary agreement ------------------------------------
+    print("\n--- Per-subtype agreement (binary: is this subtype vs not) ---")
+    all_disagree = []
 
-    if not t1w_df.empty:
-        print(f"\n--- Rows flagged T1W native by at least one method ({len(t1w_df)}) ---")
-        display_cols = ["subject", "session", "scan",
-                        "dcm_modality", "dcm_fat_sat", "dcm_contrast",
-                        "dict_modality", "dict_fat_sat", "dict_contrast",
-                        "dcm_t1w_native", "dict_t1w_native"]
-        print(t1w_df[[c for c in display_cols if c in t1w_df.columns]].to_string(index=False))
+    for subtype in ["T1W-no-no", "T1W-fs-no", "T1W-fs-c"]:
+        dcm_pos  = merged["dcm_label"]  == subtype
+        dict_pos = merged["dict_label"] == subtype
 
-    # ---- Disagreement details --------------------------------------------
-    disagree_df = merged[merged["dcm_t1w_native"] != merged["dict_t1w_native"]].copy()
+        tp = (dcm_pos  & dict_pos).sum()
+        tn = (~dcm_pos & ~dict_pos).sum()
+        fp = (~dcm_pos &  dict_pos).sum()   # dict says yes, DCM says no
+        fn = (dcm_pos  & ~dict_pos).sum()   # DCM says yes, dict says no
+
+        print_agreement(subtype, agreement_stats(tp, tn, fp, fn))
+
+        # collect disagreements for this subtype
+        dis = merged[(dcm_pos != dict_pos)].copy()
+        dis.insert(0, "subtype", subtype)
+        all_disagree.append(dis)
+
+    # ---- Save all disagreements ------------------------------------------
+    disagree_df = pd.concat(all_disagree, ignore_index=True)
     if not disagree_df.empty:
-        out_path = Path(dcm_path).parent / "t1w_native_disagreements.csv"
-        disagree_df.to_csv(out_path, index=False)
-        print(f"\nDisagreements saved to: {out_path}")
+        out_path = Path(dcm_path).parent / "t1w_subtype_disagreements.csv"
+        cols = ["subtype", "subject", "session", "scan",
+                "dcm_label", "dict_label",
+                "dcm_modality", "dcm_fat_sat", "dcm_contrast",
+                "dict_modality", "dict_fat_sat", "dict_contrast"]
+        disagree_df[[c for c in cols if c in disagree_df.columns]].to_csv(
+            out_path, index=False
+        )
+        print(f"\nAll disagreements saved to: {out_path}")
 
 
 # ---------------------------------------------------------------------------
