@@ -19,5 +19,4 @@ COPY . /module/
 
 RUN pip3 install -r requirements.txt
 
-ENTRYPOINT ["python", "Classifier_main.py"]
-
+# ENTRYPOINT ["python", "Classifier_main.py"]

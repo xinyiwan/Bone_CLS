@@ -99,55 +99,6 @@ def create_error_result(patient, study, serie, error_type, error_message):
         "Error": f"{error_type}: {error_message}"
     }
 
-def create_skipped_result(patient, study, serie):
-    """Create a result entry for skipped series (already processed)"""
-    return {
-        "Paciente": patient,
-        "Estudio": study,
-        "Serie": serie,
-        "Nombre DICOM": "SKIPPED",
-        "Predicción Clases W": "SKIPPED",
-        "Predicción Clases W P": 1,
-        "Predicción Clases FS": "SKIPPED",
-        "Predicción Clases FS P": 1,
-        "Predicción Clases C": "SKIPPED",
-        "Predicción Clases C P": 1,
-        "Scanning Sequence": "SKIPPED",
-        "Scanning Sequence P": 1,
-        "Num Bval": "-",
-        "B-values": "-",
-        "Num dim": 0,
-        "Num Vol": "-",
-        "Num Cortes": 0,
-        "Num_dcm": "-",
-        "Num_echos": 0,
-        "Inversion_time": "-",
-        "Adquisition Dimension": "-",
-        "Plano": "-",
-        "Orientación": "-",
-        "Manufacturer": "Unknown",
-        "ManufacturerModelName": "Unknown",
-        "Fat Suppresion": "-",
-        "Water Suppresion": "-",
-        "In Phase": "-",
-        "Out Phase": "-",
-        "Real": "-",
-        "Imaginary": "-",
-        "Magnitude": "-",
-        "Phase": "-",
-        "All_image_type": "Unknown",
-        "Num ImageType": 0,
-        "H": "-",
-        "N": "-",
-        "T": "-",
-        "A": "-",
-        "P": "-",
-        "LL": "-",
-        "S": "-",
-        "UL": "-",
-        "Error": "SKIPPED - Already processed"
-    }
-
 def classifier(model_other,dicom_tags_others,model_weighting,dicom_tags_weigthing,model_fs,dicom_tags_fs,model_family,dicom_tags_family,model_c,model,
                path_serie,Etiquetas_dicom,Error,resultados,excel_path_out,Img_size,Model_name):
 
@@ -432,305 +383,351 @@ def classifier(model_other,dicom_tags_others,model_weighting,dicom_tags_weigthin
     return resultados
 
 
-def create_error_result(patient, study, serie, error_type, error_message):
-    """Create a standardized error result entry"""
-    return {
-        "Paciente": patient,
-        "Estudio": study,
-        "Serie": serie,
-        "Nombre DICOM": "ERROR",
-        "Predicción Clases W": "ERROR",
-        "Predicción Clases W P": 1,
-        "Predicción Clases FS": "ERROR",
-        "Predicción Clases FS P": 1,
-        "Predicción Clases C": "ERROR",
-        "Predicción Clases C P": 1,
-        "Scanning Sequence": "ERROR",
-        "Scanning Sequence P": 1,
-        "Num Bval": "-",
-        "B-values": "-",
-        "Num dim": 0,
-        "Num Vol": "-",
-        "Num Cortes": 0,
-        "Num_dcm": "-",
-        "Num_echos": 0,
-        "Inversion_time": "-",
-        "Adquisition Dimension": "-",
-        "Plano": "-",
-        "Orientación": "-",
-        "Manufacturer": "Unknown",
-        "ManufacturerModelName": "Unknown",
-        "Fat Suppresion": "-",
-        "Water Suppresion": "-",
-        "In Phase": "-",
-        "Out Phase": "-",
-        "Real": "-",
-        "Imaginary": "-",
-        "Magnitude": "-",
-        "Phase": "-",
-        "All_image_type": "Unknown",
-        "Num ImageType": 0,
-        "H": "-",
-        "N": "-",
-        "T": "-",
-        "A": "-",
-        "P": "-",
-        "LL": "-",
-        "S": "-",
-        "UL": "-",
-        "Error": f"{error_type}: {error_message}"
-    }
-
 def main():
+    try:
+        parser = argparse.ArgumentParser(
+            description="""
+            Código para clasificar las secuencias segun su ponderación, supresion grasa, contraste y familia; separando los casos que no son usados para analisis (Mapas, localizadores...) 
+            a partir de un excel de entrada con las rutas a las series que se quieren clasificar o una carpeta con los pacientes que se quieren clasificar. El resultado es un excel con las 
+            rutas y algunas de las caracteristicas de cada imagen.
 
+            Ejemplo de ejecución:
+            docker run --rm --env-file=.env -v C:\path\of\Project:/Proyecto  -v C:\path\of\Parameterfolder:/Parameters_config  -v C:\path\of\Path_excel:/Path_excel -t dockername:tag 
 
-    parser = argparse.ArgumentParser(
-        description="""
-        Código para clasificar las secuencias segun su ponderación, supresion grasa, contraste y familia; separando los casos que no son usados para analisis (Mapas, localizadores...) 
-        a partir de un excel de entrada con las rutas a las series que se quieren clasificar o una carpeta con los pacientes que se quieren clasificar. El resultado es un excel con las 
-        rutas y algunas de las caracteristicas de cada imagen.
+            donde:
+            * C:\path\of\Project ruta del proyecto
+            * C:\path\of\Parameterfolder ruta de la carpeta donde se encuentra el fichero de configuración de parámetros
+            * C:\Path_excel (opcional) ruta a la carpeta donde se encuentra el excel con las rutas de las series a clasificar""",
 
-        Ejemplo de ejecución:
-        docker run --rm --env-file=.env -v C:\path\of\Project:/Proyecto  -v C:\path\of\Parameterfolder:/Parameters_config  -v C:\path\of\Path_excel:/Path_excel -t dockername:tag 
+            formatter_class=argparse.RawDescriptionHelpFormatter
+        )
 
-        donde:
-        * C:\path\of\Project ruta del proyecto
-        * C:\path\of\Parameterfolder ruta de la carpeta donde se encuentra el fichero de configuración de parámetros
-        * C:\Path_excel (opcional) ruta a la carpeta donde se encuentra el excel con las rutas de las series a clasificar""",
+        args = parser.parse_args()
 
-        formatter_class=argparse.RawDescriptionHelpFormatter
-    )
+        Etiquetas_dicom =['EchoTime', 'InversionTime',  'PixelSpacing', 'RepetitionTime','SliceThickness','MRAcquisitionType','FlipAngle',
+                       'PixelBandwidth','ImageType','SequenceVariant','ScanningSequence','ImageOrientationPatient','EchoTrainLength',
+                       'ScanOptions','SpectrallySelectedSuppression','Manufacturer','ManufacturerModelName']
 
-    args = parser.parse_args()
+        path_project = os.environ.get('INPUT_PATH',"/Project")
+        output_folder = os.environ.get('OUTPUT_PATH',"/Output")
+        config = os.environ.get('CONFIG_PATH',"/Parameters_config")
+        config_filename = os.environ.get('CONFIG_FILE', 'parameter_configuration.json')
+        config_file = os.path.join(config, config_filename)
 
-    Etiquetas_dicom =['EchoTime', 'InversionTime',  'PixelSpacing', 'RepetitionTime','SliceThickness','MRAcquisitionType','FlipAngle',
-                   'PixelBandwidth','ImageType','SequenceVariant','ScanningSequence','ImageOrientationPatient','EchoTrainLength',
-                   'ScanOptions','SpectrallySelectedSuppression','Manufacturer','ManufacturerModelName']
+        os.makedirs(os.path.join(output_folder,'Results'),exist_ok=True)
+        os.makedirs(os.path.join(output_folder,'Logs'),exist_ok=True)
 
+        excel_path_out=os.path.join(output_folder,'Results','Sequence_Classifier_2.xlsx')
+        log_path=os.path.join(output_folder,'Logs','Sequence_Classifier.log')
 
+        logging.basicConfig(
+            filename=log_path,  # Nombre del archivo de registro
+            level=logging.INFO,       # Nivel de registro (puedes usar logging.DEBUG, logging.INFO, logging.WARNING, etc.)
+            format='%(asctime)s - %(levelname)s - %(message)s'
+        )
 
-    path_project = os.environ.get('INPUT_PATH',"/Proyecto")
-    config = os.environ.get('CONFIG_PATH',"/Parameters_config")
-    config_filename = os.environ.get('CONFIG_FILE', 'parameter_configuration.json')
-    config_file = os.path.join(config, config_filename)
+        logging.info('Starting Sequence Classifier')
 
-    os.makedirs(os.path.join(path_project,'Results'),exist_ok=True)
-    os.makedirs(os.path.join(path_project,'Logs'),exist_ok=True)
+        # Load existing results
+        resultados, processed_series = load_existing_results(excel_path_out)
+        skipped_count = 0
+        processed_count = 0
+        error_count = 0
 
-    excel_path_out=os.path.join(path_project,'Results','Sequence_Classifier_2.xlsx')
-    log_path=os.path.join(path_project,'Logs','Sequence_Classifier.log')
+        logging.info('Loading Parameters file')
 
+        with open(config_file, 'r') as f:
+            params_config = json.load(f)
 
-    logging.basicConfig(
-        filename=log_path,  # Nombre del archivo de registro
-        level=logging.INFO,       # Nivel de registro (puedes usar logging.DEBUG, logging.INFO, logging.WARNING, etc.)
-        format='%(asctime)s - %(levelname)s - %(message)s'
-    )
+        data = params_config.get('CLASSIFIER', {})
 
-    logging.info('Starting Sequence Classifier')
+        path_model_folder_config="/module"
 
-    logging.info('Loading Parameters file')
+        logging.info('Loading Other Model Configuration')
 
-    with open(config_file, 'r') as f:
-        params_config = json.load(f)
+        # OTHER MODEL
+        path_model_other=os.path.join(path_model_folder_config,'Models/Model_others.pkl')
+        path_dicom_tags_others=os.path.join(path_model_folder_config,"Models/Model_others.json")
+        with open(path_model_other, "rb") as archivo:
+            model_other = pickle.load(archivo)
+        with open(path_dicom_tags_others, 'r') as f:
+            data_o = json.load(f)
+            dicom_tags_others=data_o['ETIQUETAS_DICOM']
 
-    data = params_config.get('CLASSIFIER', {})
+        logging.info('Loading Weigthing Model Configuration')
 
+        # WEIGTHING MODEL
+        path_model_weigthing=os.path.join(path_model_folder_config,'Models/Model_weigthing.pkl')
+        path_dicom_tags_weigthing=os.path.join(path_model_folder_config,"Models/Model_weigthing.json")
+        with open(path_model_weigthing, "rb") as archivo:
+            model_weighting = pickle.load(archivo)
+        with open(path_dicom_tags_weigthing, 'r') as f:
+            data_w = json.load(f)
+            dicom_tags_weigthing=data_w['ETIQUETAS_DICOM']
 
-    path_model_folder_config="/module"
+        logging.info('Loading Family Model Configuration')
 
+        # FAMILY MODEL
+        path_model_family=os.path.join(path_model_folder_config,'Models/Model_family.pkl')
+        path_dicom_tags_family=os.path.join(path_model_folder_config,"Models/Model_family.json")
+        with open(path_model_family, "rb") as archivo:
+            model_family = pickle.load(archivo)
+        with open(path_dicom_tags_family, 'r') as f:
+            data_f = json.load(f)
+            dicom_tags_family=data_f['ETIQUETAS_DICOM']
 
-    logging.info('Loading Other Model Configuration')
+        logging.info('Loading FS Model Configuration')
 
-    # OTHER MODEL
-    path_model_other=os.path.join(path_model_folder_config,'Models/Model_others.pkl')
-    path_dicom_tags_others=os.path.join(path_model_folder_config,"Models/Model_others.json")
-    with open(path_model_other, "rb") as archivo:
-        model_other = pickle.load(archivo)
-    with open(path_dicom_tags_others, 'r') as f:
-        data_o = json.load(f)
-        dicom_tags_others=data_o['ETIQUETAS_DICOM']
+        # FAT SUPRESSION MODEL
+        path_model_fs=os.path.join(path_model_folder_config,'Models/Model_fs.pkl')
+        path_dicom_tags_fs=os.path.join(path_model_folder_config,"Models/Model_fs.json")
+        with open(path_model_fs, "rb") as archivo:
+            model_fs = pickle.load(archivo)
+        with open(path_dicom_tags_fs, 'r') as f:
+            data_fs = json.load(f)
+            dicom_tags_fs=data_fs['ETIQUETAS_DICOM']
 
-    logging.info('Loading Weigthing Model Configuration')
+        logging.info('Loading Contrast Model Configuration')
 
-    # WEIGTHING MODEL
-    path_model_weigthing=os.path.join(path_model_folder_config,'Models/Model_weigthing.pkl')
-    path_dicom_tags_weigthing=os.path.join(path_model_folder_config,"Models/Model_weigthing.json")
-    with open(path_model_weigthing, "rb") as archivo:
-        model_weighting = pickle.load(archivo)
-    with open(path_dicom_tags_weigthing, 'r') as f:
-        data_w = json.load(f)
-        dicom_tags_weigthing=data_w['ETIQUETAS_DICOM']
+        # CONTRAST MODEL
+        path_data_c=os.path.join(path_model_folder_config,"Models/Model_c.json")
+        with open(path_data_c, 'r') as f:
+            data_model_c = json.load(f)
+        path_model_c=os.path.join(path_model_folder_config,'Models/Model_c.h5')
 
-    logging.info('Loading Family Model Configuration')
+        Model_type = data_model_c['MODEL']
+        Training_mode=data_model_c['TRAINING_MODE']
+        learning_rate = data_model_c['LEARNING_RATE']
+        Model_name = data_model_c['MODEL_NAME']
+        Img_size=data_model_c['IMG_SIZE']
 
-    # FAMILY MODEL
-    path_model_family=os.path.join(path_model_folder_config,'Models/Model_family.pkl')
-    path_dicom_tags_family=os.path.join(path_model_folder_config,"Models/Model_family.json")
-    with open(path_model_family, "rb") as archivo:
-        model_family = pickle.load(archivo)
-    with open(path_dicom_tags_family, 'r') as f:
-        data_f = json.load(f)
-        dicom_tags_family=data_f['ETIQUETAS_DICOM']
+        model_c = crear_modelo_img(Model_type,Training_mode,["1"],learning_rate,'c',Img_size,'sigmoid','binary_crossentropy',Model_name)   
+        model_c.load_weights(path_model_c)
 
-    logging.info('Loading FS Model Configuration')
+        logging.info('Loading Model Configuration')
 
-    # FAT SUPRESSION MODEL
-    path_model_fs=os.path.join(path_model_folder_config,'Models/Model_fs.pkl')
-    path_dicom_tags_fs=os.path.join(path_model_folder_config,"Models/Model_fs.json")
-    with open(path_model_fs, "rb") as archivo:
-        model_fs = pickle.load(archivo)
-    with open(path_dicom_tags_fs, 'r') as f:
-        data_fs = json.load(f)
-        dicom_tags_fs=data_fs['ETIQUETAS_DICOM']
+        # REGION MODEL
+        path_dicom_tags=os.path.join(path_model_folder_config,"Models/Model_region.json")
+        with open(path_dicom_tags, 'r') as f:
+            data_model_reg = json.load(f)
+        path_model=os.path.join(path_model_folder_config,'Models/Model_region.h5')
 
-    logging.info('Loading Contrast Model Configuration')
+        Model_type_reg = data_model_reg['MODEL']
+        Labels = data_model_reg['LABELS']
+        Model_name_reg = data_model_reg['MODEL_NAME']
+        Img_size_reg=data_model_reg['IMG_SIZE']
 
-    # CONTRAST MODEL
-    path_data_c=os.path.join(path_model_folder_config,"Models/Model_c.json")
-    with open(path_data_c, 'r') as f:
-        data_model_c = json.load(f)
-    path_model_c=os.path.join(path_model_folder_config,'Models/Model_c.h5')
+        model = crear_modelo_reg(Model_type_reg,Labels,Img_size_reg,Model_name_reg)   
+        model.load_weights(path_model)
 
+        study = ''
+        patient = ''
+        serie = ''
+        Error=""
 
-    Model_type = data_model_c['MODEL']
-    Training_mode=data_model_c['TRAINING_MODE']
-    learning_rate = data_model_c['LEARNING_RATE']
-    Model_name = data_model_c['MODEL_NAME']
-    Img_size=data_model_c['IMG_SIZE']
+        logging.info('Loading Model')
+        logging.info('Starting Prediction')
 
-    model_c = crear_modelo_img(Model_type,Training_mode,["1"],learning_rate,'c',Img_size,'sigmoid','binary_crossentropy',Model_name)   
-    model_c.load_weights(path_model_c)
-
-    logging.info('Loading Model Configuration')
-
-
-
-    # REGION MODEL
-    path_dicom_tags=os.path.join(path_model_folder_config,"Models/Model_region.json")
-    with open(path_dicom_tags, 'r') as f:
-        data_model_reg = json.load(f)
-    path_model=os.path.join(path_model_folder_config,'Models/Model_region.h5')
-
-
-
-    Model_type_reg = data_model_reg['MODEL']
-    Labels = data_model_reg['LABELS']
-    Model_name_reg = data_model_reg['MODEL_NAME']
-    Img_size_reg=data_model_reg['IMG_SIZE']
-
-    model = crear_modelo_reg(Model_type_reg,Labels,Img_size_reg,Model_name_reg)   
-    model.load_weights(path_model)
-
-    study = ''
-    patient = ''
-    serie = ''
-    resultados = []
-    Error=""
-
-    logging.info('Loading Model')
-
-    logging.info('Starting Prediction')
-
-    excel_flag=data.get('excel_flag', False)
-    if excel_flag:
-        excel_path = data.get('excel_path', None)
-        excel_column= data.get('excel_column', None)
-
-        if excel_path is None or excel_column is None:
-            raise ValueError("Faltan 'excel_path' o 'excel_column' en la configuración.")
-
-        # Cargar Excel
-        df_datos = pd.read_excel(excel_path)
-
-        for _, row in df_datos.iterrows():
-            path_serie = row[excel_column]
-            resultados = classifier(model_other,dicom_tags_others,model_weighting,dicom_tags_weigthing,model_fs,dicom_tags_fs,model_family,dicom_tags_family,model_c,model,
-                                                  path_serie,Etiquetas_dicom,Error,resultados,excel_path_out,Img_size,Model_name)
-
-    else: 
-        path_adquisition=os.path.join(path_project, data.get('input_folder', 'ADQUISICIONES'))
-        patients=os.listdir(path_adquisition)
+        excel_flag=data.get('excel_flag', False)
         
-    for patient in tqdm(patients):
-        print(patient)
-        path_patient = os.path.join(path_adquisition, patient)
-        
-        if os.path.isdir(path_patient):
+        if excel_flag:
+            excel_path = data.get('excel_path', None)
+            excel_column= data.get('excel_column', None)
+
+            if excel_path is None or excel_column is None:
+                raise ValueError("Faltan 'excel_path' o 'excel_column' en la configuración.")
+
+            # Cargar Excel
+            df_datos = pd.read_excel(excel_path)
+            total_series = len(df_datos)
+
+            for idx, row in tqdm(df_datos.iterrows(), total=total_series, desc="Processing series"):
+                path_serie = row[excel_column]
+                
+                # Extract patient, study, serie from path
+                path_aux, serie = os.path.split(path_serie)
+                path_aux, study = os.path.split(path_aux)
+                _, patient = os.path.split(path_aux)
+                
+                # Check if already processed
+                if is_series_processed(patient, study, serie, processed_series):
+                    logging.info(f"Skipping already processed: {patient}/{study}/{serie}")
+                    skipped_count += 1
+                    continue
+                
+                try:
+                    # Validate path exists before processing
+                    if not os.path.exists(path_serie):
+                        raise FileNotFoundError(f"Path does not exist: {path_serie}")
+                        
+                    resultados = classifier(
+                        model_other, dicom_tags_others,
+                        model_weighting, dicom_tags_weigthing,
+                        model_fs, dicom_tags_fs,
+                        model_family, dicom_tags_family,
+                        model_c, model,
+                        path_serie, Etiquetas_dicom, Error, 
+                        resultados, excel_path_out, Img_size, Model_name
+                    )
+                    processed_count += 1
+                    logging.info('Serie processed: %s, %s, %s', patient, study, serie)
+                    
+                except FileNotFoundError as e:
+                    error_msg = f"File not found - Patient: {patient}, Study: {study}, Serie: {serie}, Error: {str(e)}"
+                    logging.error(error_msg)
+                    print(f"ERROR: {error_msg}")
+                    
+                    # Add error entry to results
+                    resultados.append(create_error_result(
+                        patient, study, serie, "FileNotFoundError", str(e)
+                    ))
+                    error_count += 1
+                    
+                except Exception as e:
+                    error_msg = f"Unexpected error - Patient: {patient}, Study: {study}, Serie: {serie}, Error: {str(e)}"
+                    logging.error(error_msg)
+                    logging.error(traceback.format_exc())
+                    print(f"ERROR: {error_msg}")
+                    
+                    # Add error entry to results
+                    resultados.append(create_error_result(
+                        patient, study, serie, "UnexpectedError", str(e)
+                    ))
+                    error_count += 1
+                
+                # Save results after each serie to prevent data loss
+                save_results_incrementally(resultados, excel_path_out)
+                
+                # Update processed_series set
+                processed_series.add((str(patient), str(study), str(serie)))
+
+        else: 
+            path_adquisition=os.path.join(path_project, data.get('input_folder', 'ADQUISICIONES'))
+            
             try:
-                studies = os.listdir(path_patient)
+                patients = os.listdir(path_adquisition)
             except Exception as e:
-                error_msg = f"Error accessing patient directory {path_patient}: {str(e)}"
-                logging.error(error_msg)
-                print(f"ERROR: {error_msg}")
-                continue  # Skip to next patient
+                logging.error(f"Error accessing acquisition folder {path_adquisition}: {str(e)}")
+                raise
                 
-            for study in studies:
-                path_study = os.path.join(path_patient, study)
+            for patient in tqdm(patients, desc="Processing patients"):
+                print(f"\nProcessing patient: {patient}")
+                path_patient = os.path.join(path_adquisition, patient)
                 
-                if not os.path.isdir(path_study):
+                if not os.path.isdir(path_patient):
                     continue
                     
                 try:
-                    series = os.listdir(path_study)
+                    studies = os.listdir(path_patient)
                 except Exception as e:
-                    error_msg = f"Error accessing study directory {path_study}: {str(e)}"
+                    error_msg = f"Error accessing patient directory {path_patient}: {str(e)}"
                     logging.error(error_msg)
                     print(f"ERROR: {error_msg}")
-                    continue  # Skip to next study
+                    continue  # Skip to next patient
                     
-                if 'MR' in study:
-                    for serie in series:
-                        path_serie = os.path.join(path_adquisition, patient, study, serie)
+                for study in studies:
+                    path_study = os.path.join(path_patient, study)
+                    
+                    if not os.path.isdir(path_study):
+                        continue
                         
-                        try:
-                            # Validate path exists before processing
-                            if not os.path.exists(path_serie):
-                                raise FileNotFoundError(f"Path does not exist: {path_serie}")
+                    try:
+                        series = os.listdir(path_study)
+                    except Exception as e:
+                        error_msg = f"Error accessing study directory {path_study}: {str(e)}"
+                        logging.error(error_msg)
+                        print(f"ERROR: {error_msg}")
+                        continue  # Skip to next study
+                        
+                    if 'MR' in study:
+                        for serie in series:
+                            # Check if already processed
+                            if is_series_processed(patient, study, serie, processed_series):
+                                logging.info(f"Skipping already processed: {patient}/{study}/{serie}")
+                                skipped_count += 1
+                                continue
+                            
+                            path_serie = os.path.join(path_adquisition, patient, study, serie)
+                            
+                            try:
+                                # Validate path exists before processing
+                                if not os.path.exists(path_serie):
+                                    raise FileNotFoundError(f"Path does not exist: {path_serie}")
+                                    
+                                resultados = classifier(
+                                    model_other, dicom_tags_others,
+                                    model_weighting, dicom_tags_weigthing,
+                                    model_fs, dicom_tags_fs,
+                                    model_family, dicom_tags_family,
+                                    model_c, model,
+                                    path_serie, Etiquetas_dicom, Error, 
+                                    resultados, excel_path_out, Img_size, Model_name
+                                )
+                                processed_count += 1
+                                logging.info('Serie processed: %s, %s, %s', patient, study, serie)
                                 
-                            resultados = classifier(
-                                model_other, dicom_tags_others,
-                                model_weighting, dicom_tags_weigthing,
-                                model_fs, dicom_tags_fs,
-                                model_family, dicom_tags_family,
-                                model_c, model,
-                                path_serie, Etiquetas_dicom, Error, 
-                                resultados, excel_path_out, Img_size, Model_name
-                            )
-                            logging.info('Serie processed: %s, %s, %s', patient, study, serie)
+                            except FileNotFoundError as e:
+                                error_msg = f"File not found - Patient: {patient}, Study: {study}, Serie: {serie}, Error: {str(e)}"
+                                logging.error(error_msg)
+                                print(f"ERROR: {error_msg}")
+                                
+                                # Add error entry to results
+                                resultados.append(create_error_result(
+                                    patient, study, serie, "FileNotFoundError", str(e)
+                                ))
+                                error_count += 1
+                                
+                            except Exception as e:
+                                error_msg = f"Unexpected error - Patient: {patient}, Study: {study}, Serie: {serie}, Error: {str(e)}"
+                                logging.error(error_msg)
+                                logging.error(traceback.format_exc())
+                                print(f"ERROR: {error_msg}")
+                                
+                                # Add error entry to results
+                                resultados.append(create_error_result(
+                                    patient, study, serie, "UnexpectedError", str(e)
+                                ))
+                                error_count += 1
                             
-                        except FileNotFoundError as e:
-                            error_msg = f"File not found - Patient: {patient}, Study: {study}, Serie: {serie}, Error: {str(e)}"
-                            logging.error(error_msg)
-                            print(f"ERROR: {error_msg}")
+                            # Save results after each serie to prevent data loss
+                            save_results_incrementally(resultados, excel_path_out)
                             
-                            # Add error entry to results
-                            resultados.append(create_error_result(
-                                patient, study, serie, "FileNotFoundError", str(e)
-                            ))
-                            
-                        except Exception as e:
-                            error_msg = f"Unexpected error - Patient: {patient}, Study: {study}, Serie: {serie}, Error: {str(e)}"
-                            logging.error(error_msg)
-                            logging.error(traceback.format_exc())
-                            print(f"ERROR: {error_msg}")
-                            
-                            # Add error entry to results
-                            resultados.append(create_error_result(
-                                patient, study, serie, "UnexpectedError", str(e)
-                            ))
-                        
-                        # Save results after each serie to prevent data loss
-                        try:
-                            df = pd.DataFrame(resultados)
-                            df.to_excel(excel_path_out, index=False, engine="openpyxl")
-                        except Exception as e:
-                            logging.error(f"Error saving results after serie {serie}: {str(e)}")
+                            # Update processed_series set
+                            processed_series.add((str(patient), str(study), str(serie)))
 
-    logging.info('Clasificacion acabada')
-    print("Clasificacion acabada")
+        # Final summary
+        summary_msg = f"""
+        ========== PROCESSING COMPLETE ==========
+        Total series in results: {len(resultados)}
+        Newly processed: {processed_count}
+        Skipped (already processed): {skipped_count}
+        Errors: {error_count}
+        Results saved to: {excel_path_out}
+        Log saved to: {log_path}
+        =========================================
+        """
+        logging.info(summary_msg)
+        print(summary_msg)
 
-    logging.shutdown()
+    except Exception as e:
+        error_msg = f"FATAL ERROR in main: {str(e)}\n{traceback.format_exc()}"
+        logging.error(error_msg)
+        print(f"FATAL ERROR: {error_msg}")
+        
+        # Create a minimal results file with error info
+        try:
+            resultados = [{
+                "Paciente": "FATAL_ERROR",
+                "Estudio": "FATAL_ERROR",
+                "Serie": "FATAL_ERROR",
+                "Error": str(e)
+            }]
+            df = pd.DataFrame(resultados)
+            df.to_excel(excel_path_out, index=False, engine="openpyxl")
+        except:
+            pass
+        
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
