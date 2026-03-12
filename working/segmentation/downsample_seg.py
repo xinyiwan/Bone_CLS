@@ -159,7 +159,7 @@ def process_session(session_dir: Path) -> None:
         transform = register_rigid(fixed=tgt_img, moving=src_img)
 
         seg_registered = resample_to_reference(
-            seg_native, tgt_img,
+            seg, tgt_img,
             interpolator=sitk.sitkNearestNeighbor,
             transform=transform,
         )
