@@ -29,9 +29,9 @@ ORIENT_COLOR = {"Axial": "#4e79a7", "Coronal": "#f28e2b",
 
 def build_modality_label(row: pd.Series) -> str:
     parts = [row["sequence_type"]]
-    if row["fat_sat"]:
+    if row["fat_sat"] == "fatsat":
         parts.append("FS")
-    if row["contrast"]:
+    if row["contrast"] == "contrast":
         parts.append("CE")
     return "-".join(parts)
 
@@ -51,9 +51,10 @@ def _hbar(ax, y, values, labels, color, xlabel, title):
 
 
 def visualise(input_csv: Path, output_fig: Path) -> None:
-    df = pd.read_csv(input_csv, dtype=str).fillna("")
+    df = pd.read_csv(input_csv, dtype=str)
+    df['sequence_type'] = df['sequence_type'].fillna("NA")
 
-    df = df[df["sequence_type"].str.strip() != ""]
+    # df = df[df["sequence_type"].str.strip() != ""]
     print(f"{len(df)} labelled rows retained")
 
     df["modality"]         = df.apply(build_modality_label, axis=1)

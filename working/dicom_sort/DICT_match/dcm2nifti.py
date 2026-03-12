@@ -26,7 +26,7 @@ import logging
 import os
 import shutil
 from pathlib import Path
-from Bone_CLS.working.dicom_sort.DICT_match.utils import find_scan_dirs
+from utils import find_scan_dirs
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
