@@ -138,7 +138,7 @@ def process_session(session_dir: Path) -> None:
     src_img = sitk.ReadImage(str(source_ref))
     seg_native = resample_to_reference(seg, src_img)
 
-    out_source = session_dir / source_scan / seg_path.name
+    out_source = session_dir / source_scan / "segmentation.nii.gz"
     sitk.WriteImage(seg_native, str(out_source))
     os.chmod(out_source, 0o666)
     print(f"  [{source_scan}] downsampled  {seg.GetSize()} → {seg_native.GetSize()}  saved → {out_source}")
@@ -164,7 +164,7 @@ def process_session(session_dir: Path) -> None:
             transform=transform,
         )
 
-        out_path = scan_dir / seg_path.name
+        out_path = scan_dir / "segmentation.nii.gz"
         sitk.WriteImage(seg_registered, str(out_path))
         os.chmod(out_path, 0o666)
         print(f"done  {seg_registered.GetSize()}  saved → {out_path}")
