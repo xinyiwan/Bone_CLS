@@ -153,12 +153,12 @@ def plot_crosstab(cross: pd.DataFrame, out_path: Path) -> None:
     """Save a heatmap of the crosstab (without the TOTAL margin row/col)."""
     data = cross.drop(index="TOTAL", columns="TOTAL", errors="ignore")
 
-    # Order both axes by dict label frequency (row sums), descending
-    row_order = data.sum(axis=1).sort_values(ascending=False).index
-    # Keep only columns that exist in row_order; append any extras at the end
-    col_order = [l for l in row_order if l in data.columns] + \
-                [l for l in data.columns if l not in row_order]
-    data = data.loc[row_order, col_order]
+    # # Order both axes by dict label frequency (row sums), descending
+    # row_order = data.sum(axis=1).sort_values(ascending=False).index
+    # # Keep only columns that exist in row_order; append any extras at the end
+    # col_order = [l for l in row_order if l in data.columns] + \
+    #             [l for l in data.columns if l not in row_order]
+    # data = data.loc[row_order, col_order]
 
     # Annotation: count + percentage of column total (per DCM clf prediction)
     col_totals = data.sum(axis=0)
