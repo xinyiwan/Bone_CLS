@@ -9,6 +9,19 @@ import numpy as np
 from datetime import datetime
 
 
+def format_ref_label(row):
+    """Format reference sequence info as e.g. 'T1W   FS  CE' or 'T2W   noFS  noCE'.
+    Returns an empty string when no reference data is available."""
+    seq = row.get("sequence_type", "")
+    fs  = row.get("fat_sat",       "")
+    ce  = row.get("contrast",      "")
+    if pd.isna(seq) or str(seq).strip() == "":
+        return ""
+    fs_str = "noFS" if (pd.isna(fs) or str(fs).strip() == "") else "FS"
+    ce_str = "noCE" if (pd.isna(ce) or str(ce).strip() == "") else "CE"
+    return f"{seq}   {fs_str}  {ce_str}"
+
+
 def read_pixel_array(ds):
     """Read pixel data from a pydicom dataset.
 
@@ -180,6 +193,13 @@ def update_view():
                                  fg=color, bg="black", font=("Arial", 10))
             label_img.pack(side="right", padx=20)
 
+            # Reference label (sequence_type / fat_sat / contrast from external CSV)
+            ref_text = format_ref_label(row)
+            if ref_text:
+                ref_label = tk.Label(button_frame, text=ref_text,
+                                     fg="cyan", bg="black", font=("Arial", 9))
+                ref_label.pack(side="right", padx=5)
+
             def on_select(selection, path=dcm_path):
                 on_button_click(selection, path)
 
@@ -229,6 +249,12 @@ def update_view():
 excel_path = r"Z:\home\ext_xinwan\Bone_AI\output\DCM_CLF\Results\Sequence_Classifier_test.csv"
 output_folder = r"c:\Users\E78357656\Documents\output_viewer"
 
+# Optional reference CSV with ground-truth labels.
+# Columns: subject (=Paciente), session (=Estudio), scan (=Serie),
+#          sequence_type, fat_sat, contrast
+# Set to None to disable.
+ref_csv_path = None  # e.g. r"Z:\path\to\reference.csv"
+
 # Columns and values used to filter the sequence type to review
 secuencia_colum = ["Predicción Clases W", "Predicción Clases FS", "Predicción Clases C"]
 sequence_filter = ["T1W", "N", "Y"]
@@ -268,6 +294,16 @@ df_filtered = df.copy()
 # Keep only rows matching the target sequence
 for index, col in enumerate(secuencia_colum):
     df_filtered = df_filtered[df_filtered[col] == sequence_filter[index]].reset_index(drop=True)
+
+# Load and merge optional reference labels
+if ref_csv_path:
+    df_ref = pd.read_csv(ref_csv_path).rename(columns={
+        "subject": "Serie", "session": "Estudio", "scan": "Patiente"
+    })
+    df_filtered = df_filtered.merge(
+        df_ref[["Paciente", "Estudio", "Serie", "sequence_type", "fat_sat", "contrast"]],
+        on=["Paciente", "Estudio", "Serie"], how="left"
+    )
 
 # Skip images already marked as viewed in a previous session
 try:
