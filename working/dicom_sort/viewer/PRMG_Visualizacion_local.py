@@ -176,13 +176,7 @@ def update_view():
             padded_img = pad_image(img, target_height, target_width)
 
             axes[i].imshow(padded_img, cmap="gray")
-            # Show a slim light-gray border so image cells are visually separated
-            for spine in axes[i].spines.values():
-                spine.set_visible(True)
-                spine.set_edgecolor("#888888")
-                spine.set_linewidth(1.5)
-            axes[i].set_xticks([])
-            axes[i].set_yticks([])
+            axes[i].axis("off")
             axes[i].set_facecolor("black")
             valid_images += 1
 
@@ -190,35 +184,35 @@ def update_view():
             col = i % n_columns
             x_pos = int(win_w / n_columns * col)
 
-            # Vertical positions: top bar (dropdown + Img count), bottom bar (ref label)
+            # Vertical positions: top (dropdown + ref label), bottom (Img count)
             row_idx = i // n_columns
             fig_height_px = fig.get_figheight() * fig.dpi
             cell_h = fig_height_px / n_row
             y_pos        = int(cell_h * row_idx * 0.9 + mov_y)
             y_pos_bottom = int(cell_h * (row_idx + 1) * 0.9 + mov_y - 22)
 
-            # Top bar: dropdown + image count
+            # Top bar: dropdown + ref label
             button_frame = tk.Frame(root, bg="black")
             button_frame.place(x=int(x_pos), y=int(y_pos))
 
             selected_option = tk.StringVar()
             selected_option.set("Choose")
 
-            # Highlight series with few images in red as a quality-control cue
-            color = "red" if num_img < 10 else "white"
-            label_img = tk.Label(button_frame, text=f"Img: {num_img}",
-                                 fg=color, bg="black", font=("Arial", 10))
-            label_img.pack(side="right", padx=20)
-
-            # Bottom bar: reference label below the image
+            # Reference label next to dropdown
             if ref_csv_path:
                 ref_text = format_ref_label(row)
-                ref_frame = tk.Frame(root, bg="black")
-                ref_frame.place(x=int(x_pos), y=int(y_pos_bottom))
-                ref_label = tk.Label(ref_frame, text=ref_text,
+                ref_label = tk.Label(button_frame, text=ref_text,
                                      fg="cyan", bg="black", font=("Arial", 9))
-                ref_label.pack(side="left", padx=2)
-                button_containers.append(ref_frame)
+                ref_label.pack(side="right", padx=5)
+
+            # Bottom bar: Img count below the image
+            img_frame = tk.Frame(root, bg="black")
+            img_frame.place(x=int(x_pos), y=int(y_pos_bottom))
+            color = "red" if num_img < 10 else "white"
+            label_img = tk.Label(img_frame, text=f"Img: {num_img}",
+                                 fg=color, bg="black", font=("Arial", 10))
+            label_img.pack(side="left", padx=2)
+            button_containers.append(img_frame)
 
             def on_select(selection, path=dcm_path):
                 on_button_click(selection, path)
