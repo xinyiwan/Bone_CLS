@@ -12,15 +12,16 @@ from datetime import datetime
 def read_pixel_array(ds):
     """Read pixel data from a pydicom dataset.
 
-    Some GE scanners incorrectly tag pixel data as signed int16
-    (PixelRepresentation=1) even though values exceed the int16 range
-    (e.g. 32768).  In that case we fall back to reading the raw bytes
-    directly as uint16.
+    Some GE scanners incorrectly set PixelRepresentation=1 (signed int16)
+    even when pixel values exceed the int16 range (e.g. 32768).  pydicom
+    raises an overflow error when decoding such files.  The fix is to
+    override the tag to unsigned (0) so pydicom decodes as uint16 instead.
     """
     try:
         return ds.pixel_array
     except Exception:
-        return np.frombuffer(ds.PixelData, dtype=np.uint16).reshape(ds.Rows, ds.Columns)
+        ds.PixelRepresentation = 0
+        return ds.pixel_array
 
 
 def load_batch(start_index):
