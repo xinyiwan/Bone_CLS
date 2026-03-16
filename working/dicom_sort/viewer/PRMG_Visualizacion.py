@@ -21,8 +21,8 @@ def on_button_click(label, dcm_path):
 
 def save_to_excel():
     df_output = df_filtered.copy()
-    df_output["seleccion"] = df_output["Nombre DICOM"].apply(lambda x: selections.get(path_img + x[6:], ""))
-    df_output["viewed"] = df_output["Nombre DICOM"].apply(lambda x: "X" if path_img + x[6:] in viewed_images else "")
+    df_output["seleccion"] = df_output["Nombre DICOM"].apply(lambda x: selections.get(x, ""))
+    df_output["viewed"] = df_output["Nombre DICOM"].apply(lambda x: "X" if x in viewed_images else "")
     try:
         df_output["seleccion"] = df_filtered["seleccion"].where(df_filtered["seleccion"] == "X", df_output["seleccion"])
         df_output["viewed"] = df_filtered["viewed"].where(df_filtered["viewed"] == "X", df_output["viewed"])
@@ -39,7 +39,7 @@ def on_click(event):
     if event.inaxes in axes_list:
         idx = axes_list.tolist().index(event.inaxes)
         row = df_to_analyse.iloc[current_index + idx]
-        dcm_path = path_img + row["Nombre DICOM"][5:]
+        dcm_path = row["Nombre DICOM"]
         print(f"Imagen seleccionada: {dcm_path}")
 
 # Conectar el evento de clic
@@ -112,12 +112,11 @@ def update_view():
         fact_x=0.35
 
     for i, (idx, row) in enumerate(batch.iterrows()):
-        name = row["Nombre DICOM"][6:]
+        dcm_path = row["Nombre DICOM"]
         try:
             num_img=row["num_img"]
         except:
             num_img=0
-        dcm_path = path_img+name
         folder_name = os.path.basename(os.path.dirname(dcm_path))
         viewed_images.add(dcm_path)
 
