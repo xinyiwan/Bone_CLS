@@ -109,7 +109,9 @@ def update_view():
     button_containers = []
 
     batch = load_batch(current_index)
-    fig, axes = plt.subplots(n_row, n_columns, figsize=(screen_width, screen_height))
+    fig_width  = max(root.winfo_width(),  int(min_fig_width  * 100)) / 100
+    fig_height = max(root.winfo_height(), int(min_fig_height * 100)) / 100 * 0.9
+    fig, axes = plt.subplots(n_row, n_columns, figsize=(fig_width, fig_height))
     fig.suptitle(f"{sequence_name} {current_index // batch_size + 1} / {len(df_to_analyse) // batch_size + 1}",
                  color="white", fontsize=12)
     fig.patch.set_facecolor("black")
@@ -280,17 +282,18 @@ root.configure(bg="black")
 root.state("zoomed")
 
 frame = tk.Frame(root, bg="black")
-frame.pack()
+frame.pack(fill=tk.BOTH, expand=True)
 
 # Persistent bottom button bar (lives outside update_view so it is never recreated)
 button_frame = tk.Frame(root, bg="black")
 button_frame.pack(pady=20)
 
-screen_width = root.winfo_screenwidth() / 100
-screen_height = root.winfo_screenheight() / 100 * 0.9
+# Minimum figure size (fallback before the window is fully rendered)
+min_fig_width  = root.winfo_screenwidth()  / 100
+min_fig_height = root.winfo_screenheight() / 100 * 0.9
 
-canvas = FigureCanvasTkAgg(plt.figure(figsize=(screen_width, screen_height)), master=frame)
-canvas.get_tk_widget().pack()
+canvas = FigureCanvasTkAgg(plt.figure(figsize=(min_fig_width, min_fig_height)), master=frame)
+canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 canvas.mpl_connect("button_press_event", on_click)
 
 next_button = tk.Button(root, text="Next Batch", command=next_batch, fg="white", bg="black")
@@ -300,6 +303,17 @@ save_button = tk.Button(root, text="Save and exit",
                         command=lambda: [save_to_excel(), root.quit()],
                         fg="white", bg="black")
 save_button.pack()
+
+# Redraw when the window is resized (debounced to avoid rapid redraws)
+_resize_id = None
+def on_resize(event):
+    global _resize_id
+    if event.widget is root:
+        if _resize_id:
+            root.after_cancel(_resize_id)
+        _resize_id = root.after(300, update_view)
+
+root.bind("<Configure>", on_resize)
 
 # Render the first batch and start the event loop
 update_view()
