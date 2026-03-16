@@ -1,4 +1,5 @@
 import os
+import argparse
 import pandas as pd
 import pydicom
 import matplotlib.pyplot as plt
@@ -253,19 +254,34 @@ def update_view():
     canvas.draw()
 
 
-# ── Configuration ─────────────────────────────────────────────────────────────
-excel_path = r"Z:\home\ext_xinwan\Bone_AI\output\DCM_CLF\Results\Sequence_Classifier_test.csv"
-output_folder = r"c:\Users\E78357656\Documents\output_viewer"
+# ── CLI arguments ──────────────────────────────────────────────────────────────
+_parser = argparse.ArgumentParser(description="DICOM sequence reviewer")
+_parser.add_argument("--modality", default="T1W",
+                     choices=["T1W", "T2W", "DWI", "OTHERS"],
+                     help="Sequence modality to review (default: T1W)")
+_parser.add_argument("--fatsat",   default="N", choices=["Y", "N"],
+                     help="Fat saturation filter  Y/N (default: N)")
+_parser.add_argument("--contrast", default="Y", choices=["Y", "N"],
+                     help="Contrast-enhanced filter Y/N (default: Y)")
+_parser.add_argument("--excel",
+                     default=r"Z:\home\ext_xinwan\Bone_AI\output\DCM_CLF\Results\Sequence_Classifier_test.csv",
+                     help="Path to classifier output CSV")
+_parser.add_argument("--output",
+                     default=r"c:\Users\E78357656\Documents\output_viewer",
+                     help="Folder for saving review results")
+_parser.add_argument("--ref",
+                     default=r"Z:\home\ext_xinwan\Bone_AI\output\DCM_DICT\dicom_header_labelled_Mar10.csv",
+                     help="Path to reference CSV (leave empty to disable)")
+_args = _parser.parse_args()
 
-# Optional reference CSV with ground-truth labels.
-# Columns: subject (=Paciente), session (=Estudio), scan (=Serie),
-#          sequence_type, fat_sat, contrast
-# Set to None to disable.
-ref_csv_path = r"Z:\home\ext_xinwan\Bone_AI\output\DCM_DICT\dicom_header_labelled_Mar10.csv"  # e.g. r"Z:\path\to\reference.csv"
+# ── Configuration ─────────────────────────────────────────────────────────────
+excel_path    = _args.excel
+output_folder = _args.output
+ref_csv_path  = _args.ref if _args.ref else None
 
 # Columns and values used to filter the sequence type to review
 secuencia_colum = ["Predicción Clases W", "Predicción Clases FS", "Predicción Clases C"]
-sequence_filter = ["T1W", "N", "Y"]
+sequence_filter = [_args.modality, _args.fatsat, _args.contrast]
 
 # Build a human-readable name for the sequence being reviewed
 sequence_name = sequence_filter[0]
