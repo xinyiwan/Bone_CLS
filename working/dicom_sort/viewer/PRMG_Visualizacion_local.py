@@ -39,16 +39,18 @@ def save_to_excel():
     """Write the current selections and viewed flags to both the main output
     file and a timestamped traceability backup."""
     df_output = df_filtered.copy()
-    df_output["seleccion"] = df_output["Nombre DICOM"].apply(lambda x: selections.get(x, ""))
-    df_output["viewed"] = df_output["Nombre DICOM"].apply(lambda x: "X" if x in viewed_images else "")
+    def to_local(x):
+        return os.path.normpath(str(x).replace("/Project", r"Z:\mnt\rimp\PROJECTS\BONE-AI"))
+    df_output["seleccion"] = df_output["Nombre DICOM"].apply(lambda x: selections.get(to_local(x), ""))
+    df_output["viewed"] = df_output["Nombre DICOM"].apply(lambda x: "X" if to_local(x) in viewed_images else "")
     # Preserve any labels/viewed marks that were loaded from a previous session
     try:
         df_output["seleccion"] = df_filtered["seleccion"].where(df_filtered["seleccion"] == "X", df_output["seleccion"])
         df_output["viewed"] = df_filtered["viewed"].where(df_filtered["viewed"] == "X", df_output["viewed"])
     except Exception:
         pass
-    df_output.to_excel(output_excel, index=False)
-    df_output.to_excel(output_excel_traz, index=False)
+    df_output.to_csv(output_excel, index=False)
+    df_output.to_csv(output_excel_traz, index=False)
     print("Saved to", output_excel)
 
 
@@ -132,7 +134,7 @@ def update_view():
 
     for i, (idx, row) in enumerate(batch.iterrows()):
         dcm_path = row["Nombre DICOM"]
-        dcm_path = dcm_path.replace("/Project", "Z:\mnt\rimp\PROJECTS\BONE-AI")
+        dcm_path = os.path.normpath(dcm_path.replace("/Project", r"Z:\mnt\rimp\PROJECTS\BONE-AI"))
         try:
             num_img = row["num_img"]
         except Exception:
