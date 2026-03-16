@@ -118,21 +118,25 @@ def update_view():
     axes = axes.flatten()
     axes_list = axes
 
+    # Use current window size so layout tracks the window when resized
+    win_w = root.winfo_width()
+    win_h = root.winfo_height()
+
     # Target cell size in pixels (used for resizing and widget placement)
-    target_width = int(root.winfo_screenwidth() / n_columns)
-    target_height = int(root.winfo_screenheight() / n_row)
+    target_width  = int(win_w / n_columns)
+    target_height = int(win_h / n_row)
     valid_images = 0
 
-    # Adjust dropdown vertical offset based on screen aspect ratio
-    resol = root.winfo_screenwidth() / root.winfo_screenheight()
+    # Adjust dropdown vertical offset based on current window aspect ratio
+    resol = win_w / win_h
     if 1.7 < resol < 1.8:
-        mov_y = 0.082 * root.winfo_screenheight()
+        mov_y = 0.082 * win_h
     elif 1.55 < resol < 1.61:
-        mov_y = 0.092 * root.winfo_screenheight()
+        mov_y = 0.092 * win_h
     elif 1.3 < resol < 1.4:
-        mov_y = 0.085 * root.winfo_screenheight()
+        mov_y = 0.085 * win_h
     else:
-        mov_y = 0.089 * root.winfo_screenheight()
+        mov_y = 0.089 * win_h
 
     for i, (idx, row) in enumerate(batch.iterrows()):
         dcm_path = row["Nombre DICOM"]
@@ -155,13 +159,12 @@ def update_view():
             valid_images += 1
 
             # Horizontal position: left edge of each grid column
-            screen_width_px = root.winfo_screenwidth()
             col = i % n_columns
-            x_pos = int(screen_width_px / n_columns * col)
+            x_pos = int(win_w / n_columns * col)
 
-            # Vertical position: proportional to row within grid
+            # Vertical position: based on new figure pixel height
             row_idx = i // n_columns
-            fig_height_px = canvas.figure.bbox.height
+            fig_height_px = fig.get_figheight() * fig.dpi
             y_pos = int((fig_height_px / n_row) * row_idx * 0.9 + mov_y)
 
             # Dropdown widget for sequence labelling
