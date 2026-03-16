@@ -184,42 +184,36 @@ def update_view():
             col = i % n_columns
             x_pos = int(win_w / n_columns * col)
 
-            # Vertical positions: top (dropdown + ref label), bottom (Img count)
+            # Vertical position: top bar per grid row
             row_idx = i // n_columns
             fig_height_px = fig.get_figheight() * fig.dpi
             cell_h = fig_height_px / n_row
-            y_pos        = int(cell_h * row_idx * 0.9 + mov_y)
-            y_pos_bottom = int(cell_h * (row_idx + 1) * 0.9 + mov_y - 22)
+            y_pos = int(cell_h * row_idx * 0.9 + mov_y)
 
-            # Top bar: dropdown + ref label
+            # Single bar: [Choose▼]  Img:N  ref_label
             button_frame = tk.Frame(root, bg="black")
             button_frame.place(x=int(x_pos), y=int(y_pos))
 
             selected_option = tk.StringVar()
             selected_option.set("Choose")
 
-            # Reference label next to dropdown
-            if ref_csv_path:
-                ref_text = format_ref_label(row)
-                ref_label = tk.Label(button_frame, text=ref_text,
-                                     fg="cyan", bg="black", font=("Arial", 9))
-                ref_label.pack(side="right", padx=5)
-
-            # Bottom bar: Img count below the image
-            img_frame = tk.Frame(root, bg="black")
-            img_frame.place(x=int(x_pos), y=int(y_pos_bottom))
-            color = "red" if num_img < 10 else "white"
-            label_img = tk.Label(img_frame, text=f"Img: {num_img}",
-                                 fg=color, bg="black", font=("Arial", 10))
-            label_img.pack(side="left", padx=2)
-            button_containers.append(img_frame)
-
             def on_select(selection, path=dcm_path):
                 on_button_click(selection, path)
 
             dropdown = tk.OptionMenu(button_frame, selected_option, *button_labels, command=on_select)
-            dropdown.config(bg="gray", fg="white")
-            dropdown.pack()
+            dropdown.config(bg="gray", fg="white", font=("Arial", 9))
+            dropdown.pack(side="left")
+
+            color = "red" if num_img < 10 else "#aaaaaa"
+            label_img = tk.Label(button_frame, text=f"Img:{num_img}",
+                                 fg=color, bg="black", font=("Arial", 9))
+            label_img.pack(side="left", padx=(4, 2))
+
+            if ref_csv_path:
+                ref_text = format_ref_label(row)
+                ref_label = tk.Label(button_frame, text=ref_text,
+                                     fg="cyan", bg="black", font=("Arial", 9))
+                ref_label.pack(side="left", padx=(2, 4))
 
             # Colour-code dropdown entries by sequence type for quick identification
             menu = dropdown["menu"]
