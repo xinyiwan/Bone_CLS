@@ -16,7 +16,7 @@ def format_ref_label(row):
     fs  = row.get("fat_sat",       "")
     ce  = row.get("contrast",      "")
     if pd.isna(seq) or str(seq).strip() == "":
-        return ""
+        return "no matching"
     fs_str = "noFS" if (pd.isna(fs) or str(fs).strip() == "") else "FS"
     ce_str = "noCE" if (pd.isna(ce) or str(ce).strip() == "") else "CE"
     return f"{seq}   {fs_str}  {ce_str}"
@@ -97,10 +97,22 @@ def next_batch():
 def pad_image(img, target_height, target_width):
     """Resize *img* to fit within (target_height, target_width) while
     preserving aspect ratio, then centre-pad with zeros to exact target size."""
+    # Flatten to 2D if multi-frame (take first frame)
+    if img.ndim == 3:
+        img = img[0]
     height, width = img.shape
+
+    # Guard against degenerate sizes (window not yet rendered, or bad DICOM)
+    if height == 0 or width == 0 or target_height == 0 or target_width == 0:
+        return np.zeros((max(target_height, 1), max(target_width, 1)))
+
     scale_factor_h = target_height / height
     scale_factor_w = target_width / width
     scale_factor = scale_factor_w if scale_factor_h > scale_factor_w else scale_factor_h
+
+    if not np.isfinite(scale_factor):
+        return np.zeros((target_height, target_width))
+
     new_height = int(height * scale_factor)
     new_width = int(width * scale_factor)
     img = resize(img, (new_height, new_width), anti_aliasing=True)
@@ -194,8 +206,8 @@ def update_view():
             label_img.pack(side="right", padx=20)
 
             # Reference label (sequence_type / fat_sat / contrast from external CSV)
-            ref_text = format_ref_label(row)
-            if ref_text:
+            if ref_csv_path:
+                ref_text = format_ref_label(row)
                 ref_label = tk.Label(button_frame, text=ref_text,
                                      fg="cyan", bg="black", font=("Arial", 9))
                 ref_label.pack(side="right", padx=5)
