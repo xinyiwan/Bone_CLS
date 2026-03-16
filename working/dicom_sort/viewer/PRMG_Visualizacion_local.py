@@ -265,7 +265,7 @@ output_folder = r"c:\Users\E78357656\Documents\output_viewer"
 # Columns: subject (=Paciente), session (=Estudio), scan (=Serie),
 #          sequence_type, fat_sat, contrast
 # Set to None to disable.
-ref_csv_path = None  # e.g. r"Z:\path\to\reference.csv"
+ref_csv_path = r"Z:\home\ext_xinwan\Bone_AI\output\DCM_DICT\dicom_header_labelled_Mar10.csv"  # e.g. r"Z:\path\to\reference.csv"
 
 # Columns and values used to filter the sequence type to review
 secuencia_colum = ["Predicción Clases W", "Predicción Clases FS", "Predicción Clases C"]
@@ -310,7 +310,7 @@ for index, col in enumerate(secuencia_colum):
 # Load and merge optional reference labels
 if ref_csv_path:
     df_ref = pd.read_csv(ref_csv_path).rename(columns={
-        "subject": "Serie", "session": "Estudio", "scan": "Patiente"
+        "subject": "Serie", "session": "Estudio", "scan": "Paciente"
     })
     df_filtered = df_filtered.merge(
         df_ref[["Paciente", "Estudio", "Serie", "sequence_type", "fat_sat", "contrast"]],
