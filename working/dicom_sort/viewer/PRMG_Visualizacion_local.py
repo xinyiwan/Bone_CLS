@@ -277,7 +277,7 @@ current_index = 0
 root = tk.Tk()
 root.title("DICOM image viewer")
 root.configure(bg="black")
-root.attributes("-fullscreen", True)
+root.state("zoomed")
 
 frame = tk.Frame(root, bg="black")
 frame.pack()
