@@ -52,7 +52,7 @@ coverage.xml
 .pytest_cache/
 cover/
 .nninteractive_weights
-.xlsx
+*.xlsx
 # Translations
 *.mo
 *.pot
