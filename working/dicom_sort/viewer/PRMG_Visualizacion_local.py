@@ -166,10 +166,7 @@ def update_view():
     for i, (idx, row) in enumerate(batch.iterrows()):
         dcm_path = row["Nombre DICOM"]
         dcm_path = os.path.normpath(dcm_path.replace("/Project", r"Z:\mnt\rimp\PROJECTS\BONE-AI"))
-        try:
-            num_img = row["num_img"]
-        except Exception:
-            num_img = 0
+        num_img = row.get("num_img", row.get("Num_img", 0))
         folder_name = os.path.basename(os.path.dirname(dcm_path))
         viewed_images.add(dcm_path)
 
