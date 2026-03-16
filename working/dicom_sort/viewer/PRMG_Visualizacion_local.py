@@ -176,7 +176,13 @@ def update_view():
             padded_img = pad_image(img, target_height, target_width)
 
             axes[i].imshow(padded_img, cmap="gray")
-            axes[i].axis("off")
+            # Show a slim light-gray border so image cells are visually separated
+            for spine in axes[i].spines.values():
+                spine.set_visible(True)
+                spine.set_edgecolor("#888888")
+                spine.set_linewidth(1.5)
+            axes[i].set_xticks([])
+            axes[i].set_yticks([])
             axes[i].set_facecolor("black")
             valid_images += 1
 
@@ -184,12 +190,14 @@ def update_view():
             col = i % n_columns
             x_pos = int(win_w / n_columns * col)
 
-            # Vertical position: based on new figure pixel height
+            # Vertical positions: top bar (dropdown + Img count), bottom bar (ref label)
             row_idx = i // n_columns
             fig_height_px = fig.get_figheight() * fig.dpi
-            y_pos = int((fig_height_px / n_row) * row_idx * 0.9 + mov_y)
+            cell_h = fig_height_px / n_row
+            y_pos        = int(cell_h * row_idx * 0.9 + mov_y)
+            y_pos_bottom = int(cell_h * (row_idx + 1) * 0.9 + mov_y - 22)
 
-            # Dropdown widget for sequence labelling
+            # Top bar: dropdown + image count
             button_frame = tk.Frame(root, bg="black")
             button_frame.place(x=int(x_pos), y=int(y_pos))
 
@@ -202,12 +210,15 @@ def update_view():
                                  fg=color, bg="black", font=("Arial", 10))
             label_img.pack(side="right", padx=20)
 
-            # Reference label (sequence_type / fat_sat / contrast from external CSV)
+            # Bottom bar: reference label below the image
             if ref_csv_path:
                 ref_text = format_ref_label(row)
-                ref_label = tk.Label(button_frame, text=ref_text,
+                ref_frame = tk.Frame(root, bg="black")
+                ref_frame.place(x=int(x_pos), y=int(y_pos_bottom))
+                ref_label = tk.Label(ref_frame, text=ref_text,
                                      fg="cyan", bg="black", font=("Arial", 9))
-                ref_label.pack(side="right", padx=5)
+                ref_label.pack(side="left", padx=2)
+                button_containers.append(ref_frame)
 
             def on_select(selection, path=dcm_path):
                 on_button_click(selection, path)
