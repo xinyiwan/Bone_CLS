@@ -66,8 +66,8 @@ def label_sequence_type(series_desc: str, scan_options: str = "") -> str:
     if re.search(r"PERFUSION", upper):
         return "perfusion"
 
-    # LAVA is a GE T1W gradient echo sequence
-    if re.search(r"\bLAVA\b", upper):
+    # LAVA / FAME are GE T1W gradient echo sequences
+    if re.search(r"\bLAVA\b|\bFAME\b", upper):
         return "T1W"
 
     # STIR is always T2W (SE-based inversion recovery)
@@ -77,8 +77,8 @@ def label_sequence_type(series_desc: str, scan_options: str = "") -> str:
     # Use the raw string so "AX GRE T2 (MERGE)" → T2, not lost as "T"
     if re.search(r"T1", upper):
         return "T1W"
-    # T2* explicit label
-    if re.search(r"T2\*", series_desc, re.IGNORECASE):
+    # T2* explicit label; MERGE is a GE multi-echo GRE sequence → T2*
+    if re.search(r"T2\*|\bMERGE\b", series_desc, re.IGNORECASE):
         return "T2*"
     if re.search(r"T2", upper) or re.search(r"STIR", upper):
         # GRE sequences produce T2* contrast, SE sequences produce T2W contrast
