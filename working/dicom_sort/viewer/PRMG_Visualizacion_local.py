@@ -12,15 +12,30 @@ from datetime import datetime
 
 def format_ref_label(row):
     """Format reference sequence info as e.g. 'T1W   FS  CE' or 'T2W   noFS  noCE'.
-    Returns an empty string when no reference data is available."""
+    Returns 'NaN' when no reference data is available."""
     seq = row.get("sequence_type", "")
     fs  = row.get("fat_sat",       "")
     ce  = row.get("contrast",      "")
     if pd.isna(seq) or str(seq).strip() == "":
-        return "no matching"
+        return "NaN"
     fs_str = "noFS" if (pd.isna(fs) or str(fs).strip() == "") else "FS"
     ce_str = "noCE" if (pd.isna(ce) or str(ce).strip() == "") else "CE"
     return f"{seq}   {fs_str}  {ce_str}"
+
+
+def ref_label_color(row, modality, fatsat, contrast):
+    """Return green if the reference label matches the current filter, red otherwise.
+    Returns gray when there is no reference data."""
+    seq = row.get("sequence_type", "")
+    fs  = row.get("fat_sat",       "")
+    ce  = row.get("contrast",      "")
+    if pd.isna(seq) or str(seq).strip() == "":
+        return "#888888"
+    ref_fs = "N" if (pd.isna(fs) or str(fs).strip() == "") else "Y"
+    ref_ce = "N" if (pd.isna(ce) or str(ce).strip() == "") else "Y"
+    if str(seq).strip() == modality and ref_fs == fatsat and ref_ce == contrast:
+        return "#44dd44"   # green — agrees
+    return "#ff4444"       # red — disagrees
 
 
 def read_pixel_array(ds):
@@ -205,15 +220,16 @@ def update_view():
             dropdown.config(bg="gray", fg="white", font=("Arial", 9))
             dropdown.pack(side="left")
 
-            color = "red" if num_img < 10 else "#aaaaaa"
+            img_color = "orange" if num_img < 10 else "#555555"
             label_img = tk.Label(button_frame, text=f"Img:{num_img}",
-                                 fg=color, bg="black", font=("Arial", 9))
+                                 fg=img_color, bg="black", font=("Arial", 9))
             label_img.pack(side="left", padx=(4, 2))
 
             if ref_csv_path:
-                ref_text = format_ref_label(row)
+                ref_text  = format_ref_label(row)
+                ref_color = ref_label_color(row, _args.modality, _args.fatsat, _args.contrast)
                 ref_label = tk.Label(button_frame, text=ref_text,
-                                     fg="cyan", bg="black", font=("Arial", 9))
+                                     fg=ref_color, bg="black", font=("Arial", 9, "bold"))
                 ref_label.pack(side="left", padx=(2, 4))
 
             # Colour-code dropdown entries by sequence type for quick identification
