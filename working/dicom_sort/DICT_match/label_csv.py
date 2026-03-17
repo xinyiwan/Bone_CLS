@@ -74,6 +74,35 @@ def label_sequence_type(series_desc: str) -> str:
     return ""
 
 
+def reclassify_pd(tr_ms: float, te_ms: float) -> str:
+    """Sub-classify a PD-labelled GRE sequence using TR/TE dominance rules.
+
+    Decision tree (see module docstring for rationale):
+      TE < 10 ms (short TE — T2* suppressed):
+        TR < 600 ms  → T1W
+        TR > 1500 ms → PD
+        otherwise    → PD  (ambiguous but closer to PD intent)
+      TE > 15 ms (long TE — T2* decay present):
+        TR > 1000 ms → T2*
+        TR < 600 ms  → mixed (T1 + T2* effects)
+      10 ≤ TE ≤ 15 ms (borderline) → PD (keep)
+    """
+    short_te = te_ms < 10
+    long_te   = te_ms > 15
+
+    if short_te:
+        if tr_ms < 600:
+            return "T1W"
+        # TR ≥ 600: T1 effects fading; label stays PD regardless of exact threshold
+        return "PD"
+    elif long_te:
+        if tr_ms > 1000:
+            return "T2*"
+        return "mixed"
+    # 10 ≤ TE ≤ 15: borderline — leave as PD
+    return "PD"
+
+
 def label_fat_sat(series_desc: str, scan_options: str) -> str:
     upper = series_desc.upper()
     for text in (series_desc, scan_options):
@@ -87,7 +116,7 @@ def label_contrast(series_desc: str, Contrast_Agent: str, volume: str, total_dos
     upper = series_desc.upper()
     tokens = _tokens(series_desc)
     agent_tokens = _tokens(Contrast_Agent.upper())
-    if any(t in ("GD", "GAD") for t in tokens) or re.search(r"/+C | /+CTE", upper):
+    if any(t in ("GD", "GAD") for t in tokens) or re.search(r"\+C(?:TE)?|\bCTE\b", upper):
         return "contrast"
     elif any(t in ("YES", "Y", "GD", "CONTRASTE", "DOTAREM", "GADO", "GAD", "MH", "MULTIHANCE") for t in agent_tokens) \
         and total_dose != "0":
@@ -121,6 +150,17 @@ def label(input_csv: Path, output_csv: Path) -> None:
     print(f"Dropped {before - len(df)} rows with missing required fields ({len(df)} remaining)")
 
     df["sequence_type"] = df["series_description"].apply(label_sequence_type)
+
+    # Sub-classify PD rows using TR/TE dominance rules
+    pd_mask = df["sequence_type"] == "PD"
+    if pd_mask.any():
+        tr = pd.to_numeric(df.loc[pd_mask, "repetition_time_ms"], errors="coerce")
+        te = pd.to_numeric(df.loc[pd_mask, "echo_time_ms"], errors="coerce")
+        df.loc[pd_mask, "sequence_type"] = [
+            reclassify_pd(tr_val, te_val) if pd.notna(tr_val) and pd.notna(te_val) else "PD"
+            for tr_val, te_val in zip(tr, te)
+        ]
+
     df["fat_sat"]       = df.apply(
         lambda r: label_fat_sat(r["series_description"], r["scan_options"]), axis=1
     )
