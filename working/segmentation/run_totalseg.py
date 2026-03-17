@@ -60,6 +60,22 @@ def chmod_r(path: Path, mode: int = 0o777) -> None:
 
 IMAGE_FILENAME = "images.nii.gz"
 
+
+def find_scan_input(scan_dir: Path) -> Path | None:
+    """
+    Return the input to pass to TotalSegmentator for this scan folder:
+      - scan_dir/images.nii.gz  if it exists
+      - scan_dir itself         if it contains any .dcm files
+      - None                    if neither is found
+    """
+    nifti = scan_dir / IMAGE_FILENAME
+    if nifti.exists():
+        return nifti
+    if any(scan_dir.glob("*.dcm")):
+        return scan_dir
+    return None
+
+
 # Scan folder name patterns to skip (case-insensitive substring match)
 SKIP_PATTERNS = re.compile(
     r"localiz|calib|scout|survey|planning|loc_|_loc$|phantom|dummy",
@@ -193,9 +209,9 @@ def extract_bone_labels(
 # ---------------------------------------------------------------------------
 
 def process_scan(scan_dir: Path, out_scan_dir: Path, fast: bool, device: str) -> None:
-    image_path = scan_dir / IMAGE_FILENAME
-    if not image_path.exists():
-        print(f"  [SKIP] no {IMAGE_FILENAME} in {scan_dir}")
+    image_path = find_scan_input(scan_dir)
+    if image_path is None:
+        print(f"  [SKIP] {scan_dir.name}  (no images.nii.gz or .dcm files)")
         return
 
     if should_skip_scan(scan_dir.name):
@@ -246,10 +262,10 @@ def process_session(
     """Process all scans within a single session directory."""
     scan_dirs = sorted(
         p for p in session_dir.iterdir()
-        if p.is_dir() and (p / IMAGE_FILENAME).exists()
+        if p.is_dir() and find_scan_input(p) is not None
     )
     if not scan_dirs:
-        print(f"  [SKIP] session {session_dir.name}  (no scan dirs with {IMAGE_FILENAME})")
+        print(f"  [SKIP] session {session_dir.name}  (no scan dirs with images.nii.gz or .dcm files)")
         return
 
     print(f"\n{'='*60}")
