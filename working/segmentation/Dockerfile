@@ -36,7 +36,7 @@ RUN pip install --no-cache-dir /app \
     && find /usr/local/lib/python3.11 -type f -name "*.pyc" -delete \
     && find /usr/local/lib/python3.11 -type f -name "*.pyo" -delete
 
-RUN pip install nninteractive-slicer-server
+RUN pip install totalsegmentator
 
 # expose not needed if using -p
 # If using only expose and not -p then will not work
