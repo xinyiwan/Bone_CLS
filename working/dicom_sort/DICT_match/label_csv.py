@@ -35,7 +35,21 @@ def _tokens(text: str) -> list[str]:
     return [t for t in re.split(r"[^A-Z]+", text.upper()) if t]
 
 
-def label_sequence_type(series_desc: str) -> str:
+# Tokens that indicate a Gradient Echo acquisition (→ T2* not T2W)
+_GRE_TOKENS = {"GRE", "GE", "SPGR", "FLASH", "FISP", "FIESTA", "TRUFI", "FFE", "VIBE", "LAVA"}
+# Tokens that indicate a Spin Echo acquisition (→ T2W)
+_SE_TOKENS  = {"SE", "FSE", "TSE", "HASTE", "RARE", "CPMG"}
+
+
+def _is_gre(series_desc: str, scan_options: str) -> bool:
+    """Return True if the sequence is Gradient Echo based on series_desc or scan_options."""
+    tokens = set(_tokens(series_desc)) | set(_tokens(scan_options))
+    if tokens & _SE_TOKENS:
+        return False  # explicit SE marker overrides
+    return bool(tokens & _GRE_TOKENS)
+
+
+def label_sequence_type(series_desc: str, scan_options: str = "") -> str:
     # Tokens are alpha-only, so T1/T2 become "T" — search the original string
     # for those. Purely alpha markers (LOC, DP, PD) still use tokens.
     upper = series_desc.upper()
@@ -52,18 +66,23 @@ def label_sequence_type(series_desc: str) -> str:
     if re.search(r"PERFUSION", upper):
         return "perfusion"
 
-    # STIR is T2-weighted
+    # LAVA is a GE T1W gradient echo sequence
+    if re.search(r"\bLAVA\b", upper):
+        return "T1W"
+
+    # STIR is always T2W (SE-based inversion recovery)
     if "STIR" in tokens:
         return "T2W"
 
     # Use the raw string so "AX GRE T2 (MERGE)" → T2, not lost as "T"
     if re.search(r"T1", upper):
         return "T1W"
-    # T2* must be checked before plain T2
+    # T2* explicit label
     if re.search(r"T2\*", series_desc, re.IGNORECASE):
         return "T2*"
     if re.search(r"T2", upper) or re.search(r"STIR", upper):
-        return "T2W"
+        # GRE sequences produce T2* contrast, SE sequences produce T2W contrast
+        return "T2*" if _is_gre(series_desc, scan_options) else "T2W"
 
     if "PDW" in tokens:
         return "PD"
@@ -118,7 +137,10 @@ def label_contrast(series_desc: str, Contrast_Agent: str, volume: str, total_dos
     agent_tokens = _tokens(Contrast_Agent.upper())
     if any(t in ("GD", "GAD") for t in tokens) or re.search(r"\+C(?:TE)?|\bCTE\b", upper):
         return "contrast"
-    elif any(t in ("YES", "Y", "GD", "CONTRASTE", "DOTAREM", "GADO", "GAD", "MH", "MULTIHANCE") for t in agent_tokens) \
+    # Agent field populated and dose administered → contrast given
+    if Contrast_Agent.strip() and total_dose.strip() not in ("", "0"):
+        return "contrast"
+    if any(t in ("YES", "Y", "GD", "CONTRASTE", "DOTAREM", "GADO", "GAD", "MH", "MULTIHANCE") for t in agent_tokens) \
         and total_dose != "0":
         return "contrast"
     return ""
@@ -149,7 +171,9 @@ def label(input_csv: Path, output_csv: Path) -> None:
     df = df[df[REQUIRED_COLS].apply(lambda r: r.str.strip().ne("")).all(axis=1)]
     print(f"Dropped {before - len(df)} rows with missing required fields ({len(df)} remaining)")
 
-    df["sequence_type"] = df["series_description"].apply(label_sequence_type)
+    df["sequence_type"] = df.apply(
+        lambda r: label_sequence_type(r["series_description"], r["scan_options"]), axis=1
+    )
 
     # Sub-classify PD rows using TR/TE dominance rules
     pd_mask = df["sequence_type"] == "PD"
