@@ -108,6 +108,18 @@ T2W_SUBTYPES = {
     ("Y", "Y"): "T2W-fs-c",
     ("N", "Y"): "T2W-no-c"
 }
+T2STAR_SUBTYPES = {
+    ("N", "N"): "T2*-no-no",
+    ("Y", "N"): "T2*-fs-no",
+    ("Y", "Y"): "T2*-fs-c",
+    ("N", "Y"): "T2*-no-c"
+}
+PD_SUBTYPES = {
+    ("N", "N"): "PD-no-no",
+    ("Y", "N"): "PD-fs-no",
+    ("Y", "Y"): "PD-fs-c",
+    ("N", "Y"): "PD-no-c"
+}
 # DCM clf uses "-" for "not applicable" (when modality != T1W); treat as N
 DCM_NEG = {"N", "-"}
 
@@ -132,6 +144,10 @@ def make_combined_label_dict(row) -> str:
         return T1W_SUBTYPES.get((fs, c), f"T1W-{fs}-{c}")
     elif row["dict_modality"] == "T2W":
         return T2W_SUBTYPES.get((fs, c), f"T2W-{fs}-{c}")
+    elif row["dict_modality"] == "T2*":
+        return T2STAR_SUBTYPES.get((fs, c), f"T2*-{fs}-{c}")
+    elif row["dict_modality"] == "PD":
+        return PD_SUBTYPES.get((fs, c), f"PD-{fs}-{c}")
     else:
         return row["dict_modality"]
     
