@@ -47,12 +47,24 @@ import numpy as np
 import SimpleITK as sitk
 
 
-def chmod_r(path: Path, mode: int = 0o777) -> None:
-    """Recursively set permissions on *path* (file or directory tree)."""
+def chmod_r(path: Path, mode: int = 0o777, up_to: Path | None = None) -> None:
+    """
+    Recursively set permissions on *path* (file or directory tree).
+    If *up_to* is given, also chmod every ancestor of *path* up to and
+    including *up_to* (so parent directories created by mkdir are accessible).
+    """
     path.chmod(mode)
     if path.is_dir():
         for child in path.rglob("*"):
             child.chmod(mode)
+    if up_to is not None:
+        for parent in path.parents:
+            try:
+                parent.chmod(mode)
+            except PermissionError:
+                pass
+            if parent == up_to:
+                break
 
 # ---------------------------------------------------------------------------
 # Constants
