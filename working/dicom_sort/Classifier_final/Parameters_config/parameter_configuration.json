@@ -1,7 +1,7 @@
 { 
 	"CLASSIFIER": {
 		"excel_flag": false,	
-		"input_folder": "ADQUISICIONES",
+		"input_folder": "ADQUISICIONES_02_03_2026",
 		"excel_path":"/Proyecto/NB/Final.xlsx",
 		"excel_column":"path"
 		}

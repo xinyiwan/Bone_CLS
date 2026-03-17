@@ -316,7 +316,7 @@ def parse_args() -> argparse.Namespace:
         help="Use TotalSegmentator fast (lower-resolution) model",
     )
     p.add_argument(
-        "--device", default="cpu", choices=["cpu", "gpu", "mps"],
+        "--device", default="gpu", choices=["cpu", "gpu", "mps"],
         help="Inference device (default: cpu)",
     )
     return p.parse_args()
