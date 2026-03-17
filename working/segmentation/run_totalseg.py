@@ -114,7 +114,8 @@ def should_skip_scan(scan_name: str) -> bool:
 
 def run_totalseg(input_path: Path, output_dir: Path, fast: bool, device: str) -> bool:
     """
-    Run TotalSegmentator on *input_path*, writing per-structure masks to *output_dir*.
+    Run TotalSegmentator on *input_path* with ml=True, writing a single combined
+    multi-label NIfTI to output_dir/segmentations.nii.gz.
     Returns True on success, False on failure.
     """
     try:
@@ -133,7 +134,9 @@ def run_totalseg(input_path: Path, output_dir: Path, fast: bool, device: str) ->
             task="total_mr",
             fast=fast,
             device=device,
-            ml=False,       # individual per-structure masks
+            ml=True,        # single combined multi-label NIfTI
+            preview=True,   # saves a preview PNG alongside the segmentation
+            statistics=True,  # saves statistics.json with volume/intensity per structure
             verbose=False,
         )
         return True
@@ -143,37 +146,46 @@ def run_totalseg(input_path: Path, output_dir: Path, fast: bool, device: str) ->
 
 
 # ---------------------------------------------------------------------------
-# Bone mask merging
+# Bone label extraction from combined multi-label output
 # ---------------------------------------------------------------------------
 
-def merge_bone_masks(totalseg_dir: Path) -> tuple[sitk.Image | None, dict[int, str]]:
+def extract_bone_labels(
+    totalseg_dir: Path,
+) -> tuple[sitk.Image | None, dict[int, str]]:
     """
-    Collect all bone-related masks from *totalseg_dir*, assign sequential label IDs,
-    and return a merged multi-label SimpleITK image plus a {label_id: name} dict.
-    Returns (None, {}) if no bone masks are found.
+    Load the combined segmentations.nii.gz produced by TotalSegmentator (ml=True),
+    look up TotalSegmentator's own class map to find bone class IDs, zero out
+    all non-bone voxels, and return (filtered_image, {class_id: name}).
     """
-    bone_masks = sorted(
-        p for p in totalseg_dir.glob("*.nii.gz")
-        if is_bone_structure(p.stem)
-    )
-    if not bone_masks:
+    combined = totalseg_dir / "segmentations.nii.gz"
+    if not combined.exists():
+        print(f"    [WARN] {combined} not found")
         return None, {}
 
-    # Read all masks and accumulate into a uint16 array
-    ref = sitk.ReadImage(str(bone_masks[0]))
-    merged_arr = np.zeros(sitk.GetArrayFromImage(ref).shape, dtype=np.uint16)
-    label_map: dict[int, str] = {}
+    # Resolve bone class IDs from TotalSegmentator's built-in class map
+    bone_ids: dict[int, str] = {}
+    try:
+        from totalsegmentator.map_to_binary import class_map
+        id_to_name: dict[int, str] = class_map.get("total_mr", {})
+        bone_ids = {cid: name for cid, name in id_to_name.items() if is_bone_structure(name)}
+    except Exception:
+        pass  # fall back to keeping all labels if class map unavailable
 
-    for label_id, mask_path in enumerate(bone_masks, start=1):
-        mask_img = sitk.ReadImage(str(mask_path))
-        mask_arr = sitk.GetArrayFromImage(mask_img).astype(bool)
-        # Later labels overwrite earlier ones where they overlap (rare for bones)
-        merged_arr[mask_arr] = label_id
-        label_map[label_id] = mask_path.stem
+    img = sitk.ReadImage(str(combined))
+    arr = sitk.GetArrayFromImage(img).astype(np.uint16)
 
-    merged_img = sitk.GetImageFromArray(merged_arr)
-    merged_img.CopyInformation(ref)
-    return merged_img, label_map
+    if bone_ids:
+        # Zero out every voxel that is not a bone structure
+        bone_mask = np.isin(arr, list(bone_ids.keys()))
+        arr[~bone_mask] = 0
+        label_map = {int(cid): name for cid, name in bone_ids.items() if cid in np.unique(arr)}
+    else:
+        # Class map unavailable — keep the full combined segmentation as-is
+        label_map = {int(v): str(v) for v in np.unique(arr) if v != 0}
+
+    out = sitk.GetImageFromArray(arr)
+    out.CopyInformation(img)
+    return out, label_map
 
 
 # ---------------------------------------------------------------------------
@@ -203,7 +215,7 @@ def process_scan(scan_dir: Path, out_scan_dir: Path, fast: bool, device: str) ->
         return
     chmod_r(totalseg_dir)
 
-    merged, label_map = merge_bone_masks(totalseg_dir)
+    merged, label_map = extract_bone_labels(totalseg_dir)
     if merged is None:
         print(f"    [WARN] no bone structures found in TotalSegmentator output")
         return
