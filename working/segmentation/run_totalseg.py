@@ -165,44 +165,28 @@ def run_totalseg(input_path: Path, output_dir: Path, fast: bool, device: str) ->
 # Bone label extraction from combined multi-label output
 # ---------------------------------------------------------------------------
 
-def extract_bone_labels(
-    totalseg_dir: Path,
-) -> tuple[sitk.Image | None, dict[int, str]]:
+def extract_bone_labels(totalseg_dir: Path) -> dict[int, str]:
     """
-    Load the combined segmentations.nii.gz produced by TotalSegmentator (ml=True),
-    look up TotalSegmentator's own class map to find bone class IDs, zero out
-    all non-bone voxels, and return (filtered_image, {class_id: name}).
+    Read segmentations.nii.gz produced by TotalSegmentator (ml=True) and return
+    a label map {class_id: name} for bone structures that are actually present
+    (non-zero voxel count).
     """
     combined = totalseg_dir / "segmentations.nii.gz"
     if not combined.exists():
         print(f"    [WARN] {combined} not found")
-        return None, {}
+        return {}
 
-    # Resolve bone class IDs from TotalSegmentator's built-in class map
-    bone_ids: dict[int, str] = {}
+    arr = sitk.GetArrayFromImage(sitk.ReadImage(str(combined)))
+    present = set(np.unique(arr)) - {0}
+
     try:
         from totalsegmentator.map_to_binary import class_map
         id_to_name: dict[int, str] = class_map.get("total_mr", {})
-        bone_ids = {cid: name for cid, name in id_to_name.items() if is_bone_structure(name)}
+        return {int(cid): name for cid, name in id_to_name.items()
+                if is_bone_structure(name) and cid in present}
     except Exception:
-        pass  # fall back to keeping all labels if class map unavailable
-
-    img = sitk.ReadImage(str(combined))
-    arr = sitk.GetArrayFromImage(img).astype(np.uint16)
-
-    if bone_ids:
-        # Zero out every voxel that is not a bone structure
-        bone_mask = np.isin(arr, list(bone_ids.keys()))
-        arr[~bone_mask] = 0
-        present = set(np.unique(arr)) - {0}
-        label_map = {int(cid): name for cid, name in bone_ids.items() if cid in present}
-    else:
-        # Class map unavailable — keep the full combined segmentation as-is
-        label_map = {int(v): str(v) for v in np.unique(arr) if v != 0}
-
-    out = sitk.GetImageFromArray(arr)
-    out.CopyInformation(img)
-    return out, label_map
+        # Class map unavailable — label all present non-zero IDs numerically
+        return {int(v): str(v) for v in present}
 
 
 # ---------------------------------------------------------------------------
@@ -220,10 +204,10 @@ def process_scan(scan_dir: Path, out_scan_dir: Path, fast: bool, device: str) ->
         return
 
     seg_combined = out_scan_dir / "segmentations.nii.gz"   # TotalSegmentator ml=True output
-    bone_out     = out_scan_dir / "bone_seg.nii.gz"        # our filtered bone-only output
+    label_json   = out_scan_dir / "bone_seg_labels.json"
 
-    if bone_out.exists():
-        print(f"  [DONE] {scan_dir.name}  (bone_seg.nii.gz already exists)")
+    if label_json.exists():
+        print(f"  [DONE] {scan_dir.name}  (bone_seg_labels.json already exists)")
         return
 
     print(f"  [RUN ] {scan_dir.name}")
@@ -236,23 +220,19 @@ def process_scan(scan_dir: Path, out_scan_dir: Path, fast: bool, device: str) ->
             return
         chmod_r(out_scan_dir)
 
-    merged, label_map = extract_bone_labels(out_scan_dir)
-    if merged is None:
+    label_map = extract_bone_labels(out_scan_dir)
+    if not label_map:
         print(f"    [WARN] no bone structures found in TotalSegmentator output")
         return
 
-    sitk.WriteImage(merged, str(bone_out))
-    bone_out.chmod(0o777)
-
-    label_json = out_scan_dir / "bone_seg_labels.json"
     with open(label_json, "w") as fh:
         json.dump(label_map, fh, indent=2)
     label_json.chmod(0o777)
 
-    chmod_r(out_scan_dir)   # ensure all parent dirs in the output tree are accessible
+    chmod_r(out_scan_dir)
 
     print(
-        f"    saved {len(label_map)} bone labels  →  {bone_out.relative_to(out_scan_dir.parent.parent)}"
+        f"    saved {len(label_map)} bone labels  →  {label_json.relative_to(out_scan_dir.parent.parent)}"
     )
 
 
