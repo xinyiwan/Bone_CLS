@@ -59,7 +59,7 @@ def label_sequence_type(series_desc: str, scan_options: str = "") -> str:
         return "localizer"
 
     # DWI / diffusion
-    if re.search(r"DWI|DIFF|DIFUSION|ADC|DIFU", upper):
+    if re.search(r"DWI|DIFF|DIFUSION|ADC|DIFU|DIF", upper):
         return "DWI"
 
     # Perfusion
