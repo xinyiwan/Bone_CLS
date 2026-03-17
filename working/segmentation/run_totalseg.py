@@ -194,7 +194,8 @@ def extract_bone_labels(
         # Zero out every voxel that is not a bone structure
         bone_mask = np.isin(arr, list(bone_ids.keys()))
         arr[~bone_mask] = 0
-        label_map = {int(cid): name for cid, name in bone_ids.items() if cid in np.unique(arr)}
+        present = set(np.unique(arr)) - {0}
+        label_map = {int(cid): name for cid, name in bone_ids.items() if cid in present}
     else:
         # Class map unavailable — keep the full combined segmentation as-is
         label_map = {int(v): str(v) for v in np.unique(arr) if v != 0}
@@ -218,25 +219,28 @@ def process_scan(scan_dir: Path, out_scan_dir: Path, fast: bool, device: str) ->
         print(f"  [SKIP] {scan_dir.name}  (matches skip pattern)")
         return
 
-    bone_out = out_scan_dir / "bone_seg.nii.gz"
+    seg_combined = out_scan_dir / "segmentations.nii.gz"   # TotalSegmentator ml=True output
+    bone_out     = out_scan_dir / "bone_seg.nii.gz"        # our filtered bone-only output
+
     if bone_out.exists():
         print(f"  [DONE] {scan_dir.name}  (bone_seg.nii.gz already exists)")
         return
 
     print(f"  [RUN ] {scan_dir.name}")
 
-    totalseg_dir = out_scan_dir / "totalseg"
-    success = run_totalseg(image_path, totalseg_dir, fast=fast, device=device)
-    if not success:
-        return
-    chmod_r(totalseg_dir)
+    # Write TotalSegmentator output directly into out_scan_dir (no sub-folder)
+    out_scan_dir.mkdir(parents=True, exist_ok=True)
+    if not seg_combined.exists():
+        success = run_totalseg(image_path, out_scan_dir, fast=fast, device=device)
+        if not success:
+            return
+        chmod_r(out_scan_dir)
 
-    merged, label_map = extract_bone_labels(totalseg_dir)
+    merged, label_map = extract_bone_labels(out_scan_dir)
     if merged is None:
         print(f"    [WARN] no bone structures found in TotalSegmentator output")
         return
 
-    out_scan_dir.mkdir(parents=True, exist_ok=True)
     sitk.WriteImage(merged, str(bone_out))
     bone_out.chmod(0o777)
 
