@@ -261,7 +261,7 @@ _parser.add_argument("--modality", default="T1W",
                      help="Sequence modality to review (default: T1W)")
 _parser.add_argument("--fatsat",   default="N", choices=["Y", "N"],
                      help="Fat saturation filter  Y/N (default: N)")
-_parser.add_argument("--contrast", default="Y", choices=["Y", "N"],
+_parser.add_argument("--contrast", default="N", choices=["Y", "N"],
                      help="Contrast-enhanced filter Y/N (default: Y)")
 _parser.add_argument("--excel",
                      default=r"Z:\home\ext_xinwan\Bone_AI\output\DCM_CLF\Results\Sequence_Classifier_test.csv",
@@ -290,6 +290,9 @@ for ind, name_seq in enumerate(sequence_filter):
         sequence_name += "_FS" if name_seq == "Y" else "_nFS"
     elif ind == 2:
         sequence_name += "_CE" if name_seq == "Y" else "_nCE"
+
+if sequence_filter[0] == "T2W":
+    sequence_filter = [_args.modality, _args.fatsat, "-"]
 
 n_row = 3
 n_columns = 8
