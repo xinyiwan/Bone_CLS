@@ -44,7 +44,30 @@ SE markers take priority if both are present.
 | Spin Echo (SE) | `SE`, `FSE`, `TSE`, `HASTE`, `RARE`, `CPMG` | → `T2W` |
 | Gradient Echo (GRE) | `GRE`, `GE`, `SPGR`, `FLASH`, `FISP`, `FIESTA`, `TRUFI`, `FFE`, `VIBE`, `LAVA` | → `T2*` |
 
-### Step 2: PD reclassification using TR / TE
+### Step 2: Fallback classification for unmatched rows (`sequence_type == ""`)
+
+Applied before PD reclassification. Determines GRE vs SE via `_is_gre()`, then applies thresholds.
+
+**GRE sequences** (T2* decay is fast, TE thresholds are tight):
+
+| TE | TR | Label |
+|---|---|---|
+| < 10 ms | < 600 ms | `T1W` |
+| < 10 ms | ≥ 600 ms | `PD` |
+| > 15 ms | > 1000 ms | `T2*` |
+| > 15 ms | ≤ 1000 ms | `mixed` |
+| 10 – 15 ms | any | `PD` |
+
+**SE sequences** (T2 decay is slower, TE thresholds are wider):
+
+| TE | TR | Label |
+|---|---|---|
+| < 25 ms | < 600 ms | `T1W` |
+| < 25 ms | > 1500 ms | `PD` |
+| > 60 ms | > 1500 ms | `T2W` |
+| other | any | `""` (truly ambiguous) |
+
+### Step 3: PD reclassification using TR / TE
 
 Applied after step 1 for all rows initially labelled `PD`.
 

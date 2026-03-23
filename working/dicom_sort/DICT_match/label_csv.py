@@ -93,6 +93,39 @@ def label_sequence_type(series_desc: str, scan_options: str = "") -> str:
     return ""
 
 
+def fallback_by_tr_te(tr_ms: float, te_ms: float, is_gre: bool) -> str:
+    """Classify an unmatched sequence using TR/TE thresholds.
+
+    GRE thresholds (T2* decay is fast):
+      TE < 10 ms, TR < 600 ms  → T1W
+      TE < 10 ms, TR ≥ 600 ms  → PD
+      TE > 15 ms, TR > 1000 ms → T2*
+      TE > 15 ms, TR ≤ 1000 ms → mixed
+
+    SE thresholds (T2 decay is slower):
+      TE < 25 ms, TR < 600 ms  → T1W
+      TE < 25 ms, TR > 1500 ms → PD
+      TE > 60 ms, TR > 1500 ms → T2W
+      otherwise                → "" (truly ambiguous)
+    """
+    if is_gre:
+        if te_ms < 10:
+            return "T1W" if tr_ms < 600 else "PD"
+        elif te_ms > 15:
+            return "T2*" if tr_ms > 1000 else "mixed"
+        return "PD"
+    else:
+        if te_ms < 25:
+            if tr_ms < 600:
+                return "T1W"
+            elif tr_ms > 1500:
+                return "PD"
+        elif te_ms > 60:
+            if tr_ms > 1500:
+                return "T2W"
+        return ""
+
+
 def reclassify_pd(tr_ms: float, te_ms: float) -> str:
     """Sub-classify a PD-labelled GRE sequence using TR/TE dominance rules.
 
@@ -183,6 +216,20 @@ def label(input_csv: Path, output_csv: Path) -> None:
         df.loc[pd_mask, "sequence_type"] = [
             reclassify_pd(tr_val, te_val) if pd.notna(tr_val) and pd.notna(te_val) else "PD"
             for tr_val, te_val in zip(tr, te)
+        ]
+
+    # Fallback: classify remaining empty sequence_type using TR/TE
+    empty_mask = df["sequence_type"] == ""
+    if empty_mask.any():
+        tr  = pd.to_numeric(df.loc[empty_mask, "repetition_time_ms"], errors="coerce")
+        te  = pd.to_numeric(df.loc[empty_mask, "echo_time_ms"], errors="coerce")
+        gre = df.loc[empty_mask].apply(
+            lambda r: _is_gre(r["series_description"], r["scan_options"]), axis=1
+        )
+        df.loc[empty_mask, "sequence_type"] = [
+            fallback_by_tr_te(tr_val, te_val, gre_flag)
+            if pd.notna(tr_val) and pd.notna(te_val) else ""
+            for tr_val, te_val, gre_flag in zip(tr, te, gre)
         ]
 
     df["fat_sat"]       = df.apply(
