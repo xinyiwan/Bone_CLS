@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import tkinter as tk
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from skimage.transform import resize
+from PIL import Image
 import numpy as np
 from datetime import datetime
 
@@ -53,6 +54,29 @@ def read_pixel_array(ds):
         return ds.pixel_array
 
 
+def _normalize_img(img):
+    """Normalize a 2-D array to uint8 for display/cache."""
+    if img.ndim == 3:
+        img = img[0]
+    lo, hi = float(img.min()), float(img.max())
+    if hi > lo:
+        return ((img.astype(float) - lo) / (hi - lo) * 255).astype(np.uint8)
+    return np.zeros_like(img, dtype=np.uint8)
+
+
+def load_image_cached(dcm_path):
+    """Return a uint8 image array, loading from JPEG cache when available."""
+    safe_name = dcm_path.replace("\\", "_").replace("/", "_").replace(":", "")
+    cache_path = os.path.join(cache_folder, safe_name + ".jpg")
+    if os.path.exists(cache_path):
+        return np.array(Image.open(cache_path).convert("L"))
+    ds  = pydicom.dcmread(dcm_path)
+    img = read_pixel_array(ds)
+    img_norm = _normalize_img(img)
+    Image.fromarray(img_norm, mode="L").save(cache_path, quality=90)
+    return img_norm
+
+
 def load_batch(start_index):
     """Return the next slice of rows from df_to_analyse."""
     return df_to_analyse.iloc[start_index:start_index + batch_size]
@@ -92,12 +116,22 @@ def on_click(event):
         print(f"Selected image: {dcm_path}")
 
 
-def next_batch():
-    """Save progress and advance to the next batch of images.
+def _update_nav_buttons():
+    """Enable/disable Previous and Next buttons based on current position."""
+    prev_button.config(state=tk.NORMAL if current_index > 0 else tk.DISABLED)
+    next_button.config(state=tk.NORMAL if current_index + batch_size < len(df_to_analyse) else tk.DISABLED)
 
-    Disables navigation buttons and schedules window close when the last
-    batch has been reached.
-    """
+
+def prev_batch():
+    """Go back to the previous batch without saving."""
+    global current_index
+    if current_index > 0:
+        current_index -= batch_size
+        update_view()
+
+
+def next_batch():
+    """Save progress and advance to the next batch of images."""
     global current_index
     save_to_excel()
     if current_index + batch_size < len(df_to_analyse):
@@ -187,8 +221,7 @@ def update_view():
         viewed_images.add(dcm_path)
 
         try:
-            ds = pydicom.dcmread(dcm_path)
-            img = read_pixel_array(ds)
+            img = load_image_cached(dcm_path)
             padded_img = pad_image(img, target_height, target_width)
 
             axes[i].imshow(padded_img, cmap="gray")
@@ -249,7 +282,10 @@ def update_view():
                 menu.entryconfigure(idx, foreground=color_mapping.get(label, "black"))
 
             button_containers.append(button_frame)
-            axes[i].set_title(folder_name, fontsize=10, color="white", loc="center")
+            already_viewed = str(row.get("viewed", "")).strip() == "X"
+            title_text  = ("✓ " if already_viewed else "") + folder_name
+            title_color = "#44dd44" if already_viewed else "white"
+            axes[i].set_title(title_text, fontsize=9, color=title_color, loc="center")
 
         except Exception as e:
             print(f"Error loading {dcm_path}: {e}")
@@ -268,6 +304,7 @@ def update_view():
     plt.subplots_adjust(left=0, right=1, top=0.9, bottom=0, wspace=0, hspace=0)
     canvas.figure = fig
     canvas.draw()
+    _update_nav_buttons()
 
 
 # ── CLI arguments ──────────────────────────────────────────────────────────────
@@ -294,6 +331,8 @@ _args = _parser.parse_args()
 excel_path    = _args.excel
 output_folder = _args.output
 ref_csv_path  = _args.ref if _args.ref else None
+cache_folder  = os.path.join(output_folder, "cache")
+os.makedirs(cache_folder, exist_ok=True)
 
 # Columns and values used to filter the sequence type to review
 secuencia_colum = ["Predicción Clases W", "Predicción Clases FS", "Predicción Clases C"]
@@ -348,14 +387,17 @@ if ref_csv_path:
         on=["Paciente", "Estudio", "Serie"], how="left"
     )
 
-# Skip images already marked as viewed in a previous session
+# Show all images but start at the first page that contains an unreviewed one
+df_to_analyse = df_filtered.copy()
 try:
-    df_to_analyse = df_filtered[df_filtered["viewed"] != "X"].reset_index(drop=True)
+    viewed_col    = df_to_analyse.get("viewed", pd.Series([""] * len(df_to_analyse)))
+    unreviewed    = (viewed_col != "X").values.nonzero()[0]
+    first_pos     = int(unreviewed[0]) if len(unreviewed) > 0 else 0
+    current_index = (first_pos // batch_size) * batch_size
 except Exception:
-    df_to_analyse = df_filtered
+    current_index = 0
 
 viewed_images = set()
-current_index = 0
 
 # ── Build main window ─────────────────────────────────────────────────────────
 root = tk.Tk()
@@ -378,13 +420,20 @@ canvas = FigureCanvasTkAgg(plt.figure(figsize=(min_fig_width, min_fig_height)), 
 canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 canvas.mpl_connect("button_press_event", on_click)
 
-next_button = tk.Button(root, text="Next Batch", command=next_batch, fg="white", bg="black")
-next_button.pack()
+nav_frame = tk.Frame(root, bg="black")
+nav_frame.pack(pady=6)
 
-save_button = tk.Button(root, text="Save and exit",
-                        command=lambda: [save_to_excel(), root.quit()],
-                        fg="white", bg="black")
-save_button.pack()
+prev_button = tk.Button(nav_frame, text="◀ Previous", command=prev_batch,
+                        fg="white", bg="#333333", state=tk.DISABLED)
+prev_button.pack(side="left", padx=8)
+
+next_button = tk.Button(nav_frame, text="Next ▶", command=next_batch,
+                        fg="white", bg="#333333")
+next_button.pack(side="left", padx=8)
+
+save_button = tk.Button(nav_frame, text="Save & Exit", command=lambda: [save_to_excel(), root.quit()],
+                        fg="white", bg="#333333")
+save_button.pack(side="left", padx=8)
 
 # Redraw when the window is resized (debounced to avoid rapid redraws)
 _resize_id = None
