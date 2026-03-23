@@ -317,7 +317,7 @@ _parser.add_argument("--fatsat",   default="N", choices=["Y", "N"],
 _parser.add_argument("--contrast", default="N", choices=["Y", "N"],
                      help="Contrast-enhanced filter Y/N (default: Y)")
 _parser.add_argument("--excel",
-                     default=r"Z:\home\ext_xinwan\Bone_AI\output\DCM_CLF\Results\Sequence_Classifier_test.csv",
+                     default=r"Z:\home\ext_xinwan\Bone_AI\output\DCM_CLF\batch_1\Results\Sequence_Classifier_test.csv",
                      help="Path to classifier output CSV")
 _parser.add_argument("--output",
                      default=r"c:\Users\E78357656\Documents\output_viewer",
