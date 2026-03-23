@@ -126,32 +126,27 @@ def fallback_by_tr_te(tr_ms: float, te_ms: float, is_gre: bool) -> str:
         return ""
 
 
-def reclassify_pd(tr_ms: float, te_ms: float) -> str:
-    """Sub-classify a PD-labelled GRE sequence using TR/TE dominance rules.
+def reclassify_pd(tr_ms: float, te_ms: float, is_gre: bool = True) -> str:
+    """Sub-classify a PD-labelled sequence using TR/TE dominance rules.
 
-    Decision tree (see module docstring for rationale):
-      TE < 10 ms (short TE — T2* suppressed):
+    Decision tree:
+      TE < 10 ms (short TE — T2*/T2 suppressed):
         TR < 600 ms  → T1W
-        TR > 1500 ms → PD
-        otherwise    → PD  (ambiguous but closer to PD intent)
-      TE > 15 ms (long TE — T2* decay present):
-        TR > 1000 ms → T2*
-        TR < 600 ms  → mixed (T1 + T2* effects)
+        TR ≥ 600 ms  → PD
+      TE > 15 ms (long TE — decay present):
+        TR > 1000 ms → T2*  (GRE)  or  T2W  (SE)
+        TR ≤ 1000 ms → mixed
       10 ≤ TE ≤ 15 ms (borderline) → PD (keep)
     """
     short_te = te_ms < 10
     long_te   = te_ms > 15
 
     if short_te:
-        if tr_ms < 600:
-            return "T1W"
-        # TR ≥ 600: T1 effects fading; label stays PD regardless of exact threshold
-        return "PD"
+        return "T1W" if tr_ms < 600 else "PD"
     elif long_te:
         if tr_ms > 1000:
-            return "T2*"
+            return "T2*" if is_gre else "T2W"
         return "mixed"
-    # 10 ≤ TE ≤ 15: borderline — leave as PD
     return "PD"
 
 
@@ -211,11 +206,14 @@ def label(input_csv: Path, output_csv: Path) -> None:
     # Sub-classify PD rows using TR/TE dominance rules
     pd_mask = df["sequence_type"] == "PD"
     if pd_mask.any():
-        tr = pd.to_numeric(df.loc[pd_mask, "repetition_time_ms"], errors="coerce")
-        te = pd.to_numeric(df.loc[pd_mask, "echo_time_ms"], errors="coerce")
+        tr  = pd.to_numeric(df.loc[pd_mask, "repetition_time_ms"], errors="coerce")
+        te  = pd.to_numeric(df.loc[pd_mask, "echo_time_ms"], errors="coerce")
+        gre = df.loc[pd_mask].apply(
+            lambda r: _is_gre(r["series_description"], r["scan_options"]), axis=1
+        )
         df.loc[pd_mask, "sequence_type"] = [
-            reclassify_pd(tr_val, te_val) if pd.notna(tr_val) and pd.notna(te_val) else "PD"
-            for tr_val, te_val in zip(tr, te)
+            reclassify_pd(tr_val, te_val, gre_flag) if pd.notna(tr_val) and pd.notna(te_val) else "PD"
+            for tr_val, te_val, gre_flag in zip(tr, te, gre)
         ]
 
     # Fallback: classify remaining empty sequence_type using TR/TE
