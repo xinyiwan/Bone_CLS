@@ -96,10 +96,13 @@ def save_to_excel():
         return os.path.normpath(str(x).replace("/Project", r"Z:\mnt\rimp\PROJECTS\BONE-AI"))
     df_output["seleccion"] = df_output["Nombre DICOM"].apply(lambda x: selections.get(to_local(x), ""))
     df_output["viewed"] = df_output["Nombre DICOM"].apply(lambda x: "X" if to_local(x) in viewed_images else "")
-    # Preserve any labels/viewed marks that were loaded from a previous session
+    # Preserve labels/viewed marks from a previous session where the current
+    # session hasn't produced a new value
     try:
-        df_output["seleccion"] = df_filtered["seleccion"].where(df_filtered["seleccion"] == "X", df_output["seleccion"])
-        df_output["viewed"] = df_filtered["viewed"].where(df_filtered["viewed"] == "X", df_output["viewed"])
+        old_sel = df_filtered.get("seleccion", pd.Series([""] * len(df_filtered), dtype=str)).fillna("")
+        df_output["seleccion"] = df_output["seleccion"].where(df_output["seleccion"] != "", old_sel)
+        old_view = df_filtered.get("viewed", pd.Series([""] * len(df_filtered), dtype=str)).fillna("")
+        df_output["viewed"] = df_output["viewed"].where(df_output["viewed"] != "", old_view)
     except Exception:
         pass
     df_output.to_csv(output_excel, index=False)
