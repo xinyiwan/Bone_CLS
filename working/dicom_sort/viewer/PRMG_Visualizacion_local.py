@@ -381,13 +381,17 @@ df_filtered = df.copy()
 for index, col in enumerate(secuencia_colum):
     df_filtered = df_filtered[df_filtered[col] == sequence_filter[index]].reset_index(drop=True)
 
-# Load and merge optional reference labels
+# Load and merge optional reference labels.
+# Drop any ref columns already present (e.g. saved from a previous session)
+# so the merge never produces _x / _y duplicates.
+_ref_cols = ["sequence_type", "fat_sat", "contrast"]
+df_filtered = df_filtered.drop(columns=[c for c in _ref_cols if c in df_filtered.columns])
 if ref_csv_path:
     df_ref = pd.read_csv(ref_csv_path).rename(columns={
         "subject": "Serie", "session": "Estudio", "scan": "Paciente"
     })
     df_filtered = df_filtered.merge(
-        df_ref[["Paciente", "Estudio", "Serie", "sequence_type", "fat_sat", "contrast"]],
+        df_ref[["Paciente", "Estudio", "Serie"] + _ref_cols],
         on=["Paciente", "Estudio", "Serie"], how="left"
     )
 
