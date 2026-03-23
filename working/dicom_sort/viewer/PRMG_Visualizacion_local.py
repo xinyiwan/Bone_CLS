@@ -323,10 +323,10 @@ _parser.add_argument("--excel",
                      default=r"Z:\home\ext_xinwan\Bone_AI\output\DCM_CLF\batch_1\Results\Sequence_Classifier_test.csv",
                      help="Path to classifier output CSV")
 _parser.add_argument("--output",
-                     default=r"c:\Users\E78357656\Documents\output_viewer",
+                     default=r"c:\Users\E78357656\Documents\output_viewer\batch_1",
                      help="Folder for saving review results")
 _parser.add_argument("--ref",
-                     default=r"Z:\home\ext_xinwan\Bone_AI\output\DCM_DICT\dicom_header_labelled_Mar10.csv",
+                     default=r"Z:\home\ext_xinwan\Bone_AI\output\DCM_DICT\dicom_header_labelled_Mar17.csv",
                      help="Path to reference CSV (leave empty to disable)")
 _args = _parser.parse_args()
 
