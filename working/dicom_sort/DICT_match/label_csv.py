@@ -49,7 +49,7 @@ def _is_gre(series_desc: str, scan_options: str) -> bool:
     return bool(tokens & _GRE_TOKENS)
 
 
-def label_sequence_type(series_desc: str, scan_options: str = "") -> str:
+def label_sequence_type(series_desc: str, scan_options: str = "", protocol_names: str = "") -> str:
     # Tokens are alpha-only, so T1/T2 become "T" — search the original string
     # for those. Purely alpha markers (LOC, DP, PD) still use tokens.
     upper = series_desc.upper()
@@ -78,11 +78,11 @@ def label_sequence_type(series_desc: str, scan_options: str = "") -> str:
     if re.search(r"T1", upper):
         return "T1W"
     # T2* explicit label; MERGE is a GE multi-echo GRE sequence → T2*
-    if re.search(r"T2\*|\bMERGE\b", series_desc, re.IGNORECASE):
+    if re.search(r"T2\*|\bMERGE\b", upper, re.IGNORECASE):
         return "T2*"
-    if re.search(r"T2", upper) or re.search(r"STIR", upper):
+    if re.search(r"T2", upper) or re.search(r"STIR", upper) or re.search(r"T2", protocol_names):
         # GRE sequences produce T2* contrast, SE sequences produce T2W contrast
-        return "T2*" if _is_gre(series_desc, scan_options) else "T2W"
+        return "T2*" if _is_gre(upper, scan_options) else "T2W"
 
     if "PDW" in tokens:
         return "PD"
@@ -205,7 +205,7 @@ def label(input_csv: Path, output_csv: Path) -> None:
     print(f"Dropped {before - len(df)} rows with missing required fields ({len(df)} remaining)")
 
     df["sequence_type"] = df.apply(
-        lambda r: label_sequence_type(r["series_description"], r["scan_options"]), axis=1
+        lambda r: label_sequence_type(r["series_description"], r["scan_options"], r["protocol_name"]), axis=1
     )
 
     # Sub-classify PD rows using TR/TE dominance rules
