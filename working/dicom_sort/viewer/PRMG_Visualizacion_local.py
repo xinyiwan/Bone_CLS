@@ -369,9 +369,10 @@ button_labels = [
 ]
 selections = {}
 
-# Load from the latest backup if available, otherwise start from the classifier output
+# Resume from previous session's output if it exists, otherwise use classifier output.
+# output_excel_traz is only written for traceability, not used for loading.
 try:
-    df = pd.read_csv(output_excel_traz)
+    df = pd.read_csv(output_excel)
 except Exception:
     df = pd.read_csv(excel_path)
 
