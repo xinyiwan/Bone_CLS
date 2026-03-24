@@ -58,12 +58,42 @@ def _has_fat_sat(scan_options: str, series_desc: str = "") -> bool:
     return any(_FAT_SAT_RE.search(t) for t in (scan_options, series_desc))
 
 
-def _has_contrast(contrast_agent: str, total_dose: str) -> bool:
+_CONTRAST_AGENT_TOKENS = {
+    "YES", "Y", "GD", "GAD", "CONTRASTE", "DOTAREM", "GADO", "MH", "MULTIHANCE",
+}
+
+
+def _tokens(text: str) -> list[str]:
+    """Alpha-only tokens from an upper-cased string (mirrors label_csv.py)."""
+    if not text:
+        return []
+    return [t for t in re.split(r"[^A-Z]+", text.upper()) if t]
+
+
+def _has_contrast(series_desc: str, contrast_agent: str, total_dose: str) -> bool:
+    """True when contrast is detected from series description or agent/dose fields."""
+    upper = series_desc.upper()
+
+    # Series description keywords: GD/GAD tokens or +C / CTE patterns
+    desc_tokens = set(_tokens(series_desc))
+    if {"GD", "GAD"} & desc_tokens:
+        return True
+    if re.search(r"\+C(?:TE)?|\bCTE\b", upper):
+        return True
+
+    # Agent field populated with a meaningful value → contrast given
+    # Dose is not required: it is frequently missing even when contrast was administered.
     ca = str(contrast_agent).strip()
-    if not ca or ca.upper() in ("", "NONE", "NO", "0"):
-        return False
     dose = str(total_dose).strip()
-    return dose not in ("", "0")
+    if ca and ca.upper() not in ("", "NONE", "NO", "0"):
+        return True
+
+    # Agent token matches known contrast-agent names (dose must not be explicitly 0)
+    agent_tokens = set(_tokens(contrast_agent))
+    if agent_tokens & _CONTRAST_AGENT_TOKENS and dose != "0":
+        return True
+
+    return False
 
 
 def _acq(etl: float | None) -> str:
@@ -231,7 +261,14 @@ def classify_physics(row: pd.Series) -> dict:
     diff_orient = row.get("diffusion_gradient_orientation")
 
     has_chem_fs  = _has_fat_sat(scan_options, series_desc)
-    has_contrast = _has_contrast(contrast_agent, total_dose)
+    has_contrast = _has_contrast(series_desc, contrast_agent, total_dose)
+
+    # ------------------------------------------------------------------
+    # Step 0: Localizer — checked first, before any physics rules
+    # Uses the same keyword logic as label_csv.py.
+    # ------------------------------------------------------------------
+    if re.search(r"CAL|LOC|LOCAL|SCOUT|SURVEY|CALIBRATION", series_desc.upper()):
+        return _result("Localizer")
 
     # ------------------------------------------------------------------
     # Step 1: DWI — if DWI stop here, do not continue to step 2
