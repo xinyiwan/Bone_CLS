@@ -41,15 +41,21 @@ def _phys_contrast_yn(val) -> str:
 
 def format_ref_label(row) -> str:
     """Format all four physics columns as seq_fs_contrast_acq.
-    fat_sat and contrast use 'nFS'/'nCE' when absent; other fields use 'x'."""
+
+    fat_sat : show actual value (FS / STIR) when present, else 'nFS'
+    contrast: show 'CE' when present, else 'nCE'
+    others  : show actual value or 'x'
+    """
     def _val(key, empty="x"):
         v = str(row.get(key, "") or "").strip()
         return v if v and v.lower() not in ("nan", "none") else empty
 
+    ce = "CE" if str(row.get("phys_contrast", "") or "").strip() == "Contrast" else "nCE"
+
     return (
         f"{_val('phys_sequence')}"
         f"_{_val('phys_fat_sat', 'nFS')}"
-        f"_{_val('phys_contrast', 'nCE')}"
+        f"_{ce}"
         f"_{_val('phys_acquisition')}"
     )
 
