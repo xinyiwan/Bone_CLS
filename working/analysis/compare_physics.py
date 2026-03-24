@@ -219,18 +219,14 @@ def analyse(dcm_path: str, phys_path: str, out_dir: Path) -> None:
     merged["dcm_label"]  = merged.apply(make_label_dcm,     axis=1)
     merged["phys_label"] = merged.apply(make_label_physics, axis=1)
 
-    # ---- Crosstab  (skip pure Unknown / Localizer rows from physics side) --
-    exclude = {"Localizer", "Unknown", "Unknown_GRE", "UNKNOWN", "GENERIC_IR",
-               "GENERIC_GRE"}
-    mask = ~merged["phys_sequence"].isin(exclude)
-
+    # ---- Crosstab  (all rows, including Localizer and Unknown) --------------
     cross = pd.crosstab(
-        merged.loc[mask, "phys_label"],
-        merged.loc[mask, "dcm_label"],
+        merged["phys_label"],
+        merged["dcm_label"],
         margins=True, margins_name="TOTAL"
     )
     print(f"\n--- Combined-label crosstab  (physics rows vs DCM clf cols, "
-          f"n={mask.sum()}) ---")
+          f"n={len(merged):,}) ---")
     print(cross.to_string())
 
     plot_crosstab(cross, out_dir / "crosstab_physics_vs_dcm.png")
