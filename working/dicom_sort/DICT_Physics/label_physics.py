@@ -49,13 +49,28 @@ def _is_present(value) -> bool:
     return str(value).strip().lower() not in ("", "nan", "none", "null")
 
 
-_FAT_SAT_RE = re.compile(
-    r"\b(FS|FATSAT|FAT_SAT|FATSUPP|SPIR|SPAIR|CHEMSAT)\b", re.IGNORECASE
-)
+# Token-based fat-sat keywords (label_csv.py style).
+# STIR included: _fat_sat_label() always prioritises STIR when TI confirms it,
+# so including it here is safe and catches series named "STIR" without TI data.
+# FLAIR excluded: suppresses fluid, not fat.
+_FAT_SAT_TOKENS = {"FS", "FATSAT", "FATSUPP", "SPIR", "SPAIR", "FAT", "CHEMSAT", "STIR"}
+
+# Regex fallback for forms that _tokens() would fragment (e.g. "FAT_SAT" → ["FAT","SAT"])
+_FAT_SAT_RE = re.compile(r"\bFAT[_\-]SAT\b", re.IGNORECASE)
 
 
 def _has_fat_sat(scan_options: str, series_desc: str = "") -> bool:
-    return any(_FAT_SAT_RE.search(t) for t in (scan_options, series_desc))
+    """Fat suppression detected from series description or scan options.
+
+    Combines token matching (label_csv.py) with a regex fallback for
+    underscore/hyphen forms. Checks both series_desc and scan_options.
+    """
+    for text in (series_desc, scan_options):
+        if set(_tokens(text)) & _FAT_SAT_TOKENS:
+            return True
+        if _FAT_SAT_RE.search(text):
+            return True
+    return False
 
 
 _CONTRAST_AGENT_TOKENS = {
@@ -101,16 +116,16 @@ def _acq(etl: float | None) -> str:
     return "FSE" if (etl is not None and etl >= 2) else "SE"
 
 
-def _fat_sat_label(is_stir: bool, has_chem_fs: bool) -> str:
+def _fat_sat_label(is_stir: bool, has_fs: bool) -> str:
     """Combine STIR-based and chemical fat-suppression into one field.
 
     STIR takes priority: when TI places the sequence in the STIR range,
     that is the operative fat-suppression mechanism regardless of any
-    additional chemical-FS scan option.
+    additional FS scan option.
     """
     if is_stir:
         return "STIR"
-    if has_chem_fs:
+    if has_fs:
         return "FS"
     return ""
 
@@ -142,7 +157,7 @@ def _classify_ir(
     TE: float | None,
     TR: float | None,
     B0: float | None,
-    has_chem_fs: bool,
+    has_fs: bool,
     has_contrast: bool,
 ) -> dict:
     """Step 2: Inversion Recovery branch."""
@@ -152,17 +167,17 @@ def _classify_ir(
 
     # STIR — fat suppression is STIR-based; chemical FS may co-occur
     if (is_15T and 140 <= TI <= 190) or (is_3T and 180 <= TI <= 240):
-        return _result("STIR", fat_sat=_fat_sat_label(True, has_chem_fs), contrast=contrast)
+        return _result("STIR", fat_sat=_fat_sat_label(True, has_fs), contrast=contrast)
 
     # FLAIR — fluid suppression, not fat; record chemical FS independently
     if (is_15T and 1900 <= TI <= 2600) or (is_3T and 2400 <= TI <= 3200):
-        return _result("FLAIR", fat_sat=_fat_sat_label(False, has_chem_fs), contrast=contrast)
+        return _result("FLAIR", fat_sat=_fat_sat_label(False, has_fs), contrast=contrast)
 
     # T1_IR
     if TE is not None and TR is not None and TE <= 30 and TR < 4000:
-        return _result("T1_IR", fat_sat=_fat_sat_label(False, has_chem_fs), contrast=contrast)
+        return _result("T1_IR", fat_sat=_fat_sat_label(False, has_fs), contrast=contrast)
 
-    return _result("GENERIC_IR", fat_sat=_fat_sat_label(False, has_chem_fs), contrast=contrast)
+    return _result("GENERIC_IR", fat_sat=_fat_sat_label(False, has_fs), contrast=contrast)
 
 
 def _classify_gre(
@@ -170,11 +185,11 @@ def _classify_gre(
     TE: float | None,
     FA: float | None,
     B0: float | None,
-    has_chem_fs: bool,
+    has_fs: bool,
     has_contrast: bool,
 ) -> dict:
     """Step 3: GRE branch."""
-    fs      = "FS" if has_chem_fs else ""
+    fs      = "FS" if has_fs else ""
     contrast = "Contrast" if has_contrast else ""
 
     if TR is None or TE is None:
@@ -203,14 +218,14 @@ def _classify_fse(
     TE: float | None,
     ETL: float | None,
     B0: float | None,
-    has_chem_fs: bool,
+    has_fs: bool,
     has_contrast: bool,
 ) -> dict:
     """Step 4: (F)SE branch. Always returns a result."""
     acquisition = _acq(ETL)
     is_15T = B0 is not None and B0 < 2.0
     is_3T  = B0 is not None and B0 >= 2.0
-    fs       = "FS" if has_chem_fs else ""
+    fs       = "FS" if has_fs else ""
     contrast = "Contrast" if has_contrast else ""
 
     seq = ""
@@ -260,7 +275,7 @@ def classify_physics(row: pd.Series) -> dict:
     b_value     = row.get("diffusion_b_value")
     diff_orient = row.get("diffusion_gradient_orientation")
 
-    has_chem_fs  = _has_fat_sat(scan_options, series_desc)
+    has_fs  = _has_fat_sat(scan_options, series_desc)
     has_contrast = _has_contrast(series_desc, contrast_agent, total_dose)
 
     # ------------------------------------------------------------------
@@ -282,7 +297,7 @@ def classify_physics(row: pd.Series) -> dict:
         or "DIFFUSION" in image_type
     )
     if is_dwi:
-        fs       = "FS" if has_chem_fs else ""
+        fs       = "FS" if has_fs else ""
         contrast = "Contrast" if has_contrast else ""
         return _result("DWI", acquisition=_acq(ETL), fat_sat=fs, contrast=contrast)
 
@@ -290,18 +305,18 @@ def classify_physics(row: pd.Series) -> dict:
     # Step 2: Inversion Recovery — if TI > 0 stop here
     # ------------------------------------------------------------------
     if TI is not None and TI > 0:
-        return _classify_ir(TI, TE, TR, B0, has_chem_fs, has_contrast)
+        return _classify_ir(TI, TE, TR, B0, has_fs, has_contrast)
 
     # ------------------------------------------------------------------
     # Step 3: GRE — if scanning_sequence contains GR stop here
     # ------------------------------------------------------------------
     if "GR" in scanning_seq:
-        return _classify_gre(TR, TE, FA, B0, has_chem_fs, has_contrast)
+        return _classify_gre(TR, TE, FA, B0, has_fs, has_contrast)
 
     # ------------------------------------------------------------------
     # Step 4: (F)SE — all remaining
     # ------------------------------------------------------------------
-    return _classify_fse(TR, TE, ETL, B0, has_chem_fs, has_contrast)
+    return _classify_fse(TR, TE, ETL, B0, has_fs, has_contrast)
 
 
 # ---------------------------------------------------------------------------
