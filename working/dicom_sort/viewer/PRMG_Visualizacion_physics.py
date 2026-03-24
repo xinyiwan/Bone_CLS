@@ -38,17 +38,17 @@ def _phys_contrast_yn(val) -> str:
     return "Y" if str(val).strip() == "Contrast" else "N"
 
 
+_EMPTY = "x"   # placeholder when a physics field has no value
+
+
 def format_ref_label(row) -> str:
-    """Format physics label as e.g. 'T2W  STIR  [IR]'.
-    Returns 'NaN' when no physics data is available."""
-    seq = row.get("phys_sequence",    "")
-    fs  = row.get("phys_fat_sat",     "")
-    acq = row.get("phys_acquisition", "")
-    if pd.isna(seq) or str(seq).strip() == "":
-        return "NaN"
-    fs_str  = str(fs).strip()  if str(fs).strip()  else "noFS"
-    acq_str = f"[{acq}]"       if str(acq).strip() else ""
-    return f"{seq}_{fs_str}_{acq_str}".strip()
+    """Format all four physics columns as seq_fs_acq_contrast.
+    Each missing field is replaced with '—' rather than omitted."""
+    def _val(key):
+        v = str(row.get(key, "") or "").strip()
+        return v if v and v.lower() not in ("nan", "none") else _EMPTY
+
+    return f"{_val('phys_sequence')}_{_val('phys_fat_sat')}_{_val('phys_contrast')}_{_val('phys_acquisition')}"
 
 
 def ref_label_color(row, modality: str, fatsat: str, contrast: str) -> str:
@@ -277,7 +277,7 @@ def update_view():
                                             _args.fatsat,
                                             _args.contrast)
                 tk.Label(button_frame, text=ref_text,
-                         fg=ref_color, bg="black", font=("Arial", 9, "bold")
+                         fg=ref_color, bg="black", font=("Arial", 7)
                          ).pack(side="left", padx=(2, 4))
 
             # Colour-code dropdown entries
