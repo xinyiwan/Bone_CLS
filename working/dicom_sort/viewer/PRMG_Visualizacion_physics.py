@@ -292,10 +292,12 @@ def update_view():
             # Colour-code dropdown entries
             menu = dropdown["menu"]
             color_mapping = {
-                "T1W   noFS  noCE": "black", "T1W   FS  noCE":  "black",
-                "T1W   noFS  CE":   "red",   "T1W   FS  CE":    "red",
+                "T1W   noFS  noCE": "black",  "T1W   FS  noCE":  "black",
+                "T1W   noFS  CE":   "red",    "T1W   FS  CE":    "red",
                 "T2W   noFS":       "green",  "T2W   FS":        "green",
-                "DWI":  "black", "OTHERS": "black", "To_review": "black",
+                "T2*   noFS  noCE": "orange", "T2*   other":     "orange",
+                "DWI":  "black", "Localizer": "gray",
+                "OTHERS": "black", "To_review": "black",
             }
             for idx_lbl, lbl in enumerate(button_labels):
                 menu.entryconfigure(idx_lbl, foreground=color_mapping.get(lbl, "black"))
@@ -383,7 +385,8 @@ output_excel_traz = os.path.join(output_traz_dir, f"Review_{sequence_name}_{time
 button_labels = [
     "T1W   noFS  noCE", "T1W   FS  noCE", "T1W   noFS  CE", "T1W   FS  CE",
     "T2W   noFS",       "T2W   FS",
-    "DWI", "OTHERS", "To_review",
+    "T2*   noFS  noCE", "T2*   other",
+    "DWI", "Localizer", "OTHERS", "To_review",
 ]
 button_containers = []
 selections    = {}
