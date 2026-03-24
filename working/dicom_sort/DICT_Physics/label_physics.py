@@ -167,15 +167,19 @@ def _classify_ir(
 
     # STIR — fat suppression is STIR-based; chemical FS may co-occur
     if (is_15T and 140 <= TI <= 190) or (is_3T and 180 <= TI <= 240):
-        return _result("STIR", fat_sat=_fat_sat_label(True, has_fs), contrast=contrast)
+        # return _result("STIR", acquisition="IR", fat_sat=_fat_sat_label(True, has_fs), contrast=contrast)
+        # TODO: check if I could make STIR automatically T2W
+        return _result("T2W", acquisition="IR", fat_sat=_fat_sat_label(True, has_fs), contrast=contrast)
+        
 
     # FLAIR — fluid suppression, not fat; record chemical FS independently
     if (is_15T and 1900 <= TI <= 2600) or (is_3T and 2400 <= TI <= 3200):
-        return _result("FLAIR", fat_sat=_fat_sat_label(False, has_fs), contrast=contrast)
+        # TODO: check if I could make FLAIR automatically T2W.
+        return _result("T2W", acquisition="FLAIR", fat_sat=_fat_sat_label(False, has_fs), contrast=contrast)
 
     # T1W_IR
     if TE is not None and TR is not None and TE <= 30 and TR < 4000:
-        return _result("T1W_IR", fat_sat=_fat_sat_label(False, has_fs), contrast=contrast)
+        return _result("T1W", acquisition="IR", fat_sat=_fat_sat_label(False, has_fs), contrast=contrast)
 
     return _result("GENERIC_IR", fat_sat=_fat_sat_label(False, has_fs), contrast=contrast)
 
@@ -211,7 +215,7 @@ def _classify_gre(
     if TE >= 14:
         return _result("T2*", acquisition="GRE", fat_sat=fs, contrast=contrast)
 
-    return _result("GENERIC_GRE", acquisition="GRE", fat_sat=fs, contrast=contrast)
+    return _result("unknown_GRE", acquisition="GRE", fat_sat=fs, contrast=contrast)
 
 
 def _classify_fse(
@@ -229,27 +233,28 @@ def _classify_fse(
     fs       = "FS" if has_fs else ""
     contrast = "Contrast" if has_contrast else ""
 
-    seq = ""
+    seq = "UNKNOWN"
 
     if TR is not None and TE is not None:
-        # Primary rules
-        # Simplify the rules to just TR/TE thresholds for both 1.5T and 3T, with no overlap.
-        if TR <= 1100 and TE <= 25:
-            seq = "T1W"
-        elif TR >= 2500 and TE >= 70:
-            seq = "T2W"
-        elif TR >= 1800 and TE <= 30:
-            seq = "PD"
-        # Overlap fallbacks
-        elif TE < 40 and TR < 1500:
-            seq = "T1"
-        elif TE < 40 and TR >= 1500:
-            seq = "PD"
-        else:
-            seq = "T2W"
+        # TE is the primary determinant; TR breaks ties.
+        #
+        #  TE ≤ 25 ms  (short TE — T2* suppressed)
+        #    TR ≤ 1100 → T1W   (short TR, short TE)
+        #    TR > 1100 → PD    (long TR, short TE — T1 suppressed too)
+        #
+        #  TE ≥ 70 ms  (long TE — T2 decay dominant)
+        #    → T2W
+        #
+        #  25 < TE < 70 ms  (borderline — neither fully T2W nor fully T1W)
+        #    TR < 1500 → T1W  (short TR keeps some T1 weighting)
+        #    TR ≥ 1500 → T2W  (long TR, moderate TE → T2-like)
 
-    if not seq:
-        return _result("UNKNOWN", acquisition=acquisition, fat_sat=fs, contrast=contrast)
+        if TE <= 25:
+            seq = "T1W" if TR <= 1100 else "PD"
+        elif TE >= 70:
+            seq = "T2W"
+        else:  # 25 < TE < 70
+            seq = "T1W" if TR < 1500 else "T2W"
 
     return _result(seq, acquisition=acquisition, fat_sat=fs, contrast=contrast)
 
