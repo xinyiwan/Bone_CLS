@@ -182,7 +182,7 @@ def _classify_ir(
     if TE is not None and TR is not None and TE <= 30 and TR < 4000:
         return _result("T1W", acquisition="IR", fat_sat=_fat_sat_label(False, has_fs), contrast=contrast)
 
-    return _result("Unknown_IR", fat_sat=_fat_sat_label(False, has_fs), contrast=contrast)
+    return _result("Unknown", acquisition="IR", fat_sat=_fat_sat_label(False, has_fs), contrast=contrast)
 
 
 def _classify_gre(
@@ -217,7 +217,7 @@ def _classify_gre(
     if TE >= 11:
         return _result("T2*", acquisition="GRE", fat_sat=fs, contrast=contrast)
 
-    return _result("unknown_GRE", acquisition="GRE", fat_sat=fs, contrast=contrast)
+    return _result("unknown", acquisition="GRE", fat_sat=fs, contrast=contrast)
 
 
 def _classify_fse(
