@@ -198,7 +198,7 @@ def _classify_gre(
     contrast = "Contrast" if has_contrast else ""
 
     if TR is None or TE is None:
-        return _result("GENERIC_GRE", acquisition="GRE", fat_sat=fs, contrast=contrast)
+        return _result("Unknown_GRE", acquisition="GRE", fat_sat=fs, contrast=contrast)
 
     is_15T = B0 is not None and B0 < 2.0
     is_3T  = B0 is not None and B0 >= 2.0
@@ -217,7 +217,7 @@ def _classify_gre(
     if TE >= 11:
         return _result("T2*", acquisition="GRE", fat_sat=fs, contrast=contrast)
 
-    return _result("unknown", acquisition="GRE", fat_sat=fs, contrast=contrast)
+    return _result("Unknown", acquisition="GRE", fat_sat=fs, contrast=contrast)
 
 
 def _classify_fse(
@@ -235,7 +235,7 @@ def _classify_fse(
     fs       = "FS" if has_fs else ""
     contrast = "Contrast" if has_contrast else ""
 
-    seq = "UNKNOWN"
+    seq = "Unknown"
 
     if TR is not None and TE is not None:
         # TE is the primary determinant; TR breaks ties.
