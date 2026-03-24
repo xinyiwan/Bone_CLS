@@ -185,13 +185,19 @@ def plot_crosstab(cross: pd.DataFrame, out_path: Path) -> None:
 # Main analysis
 # ---------------------------------------------------------------------------
 
-# Subtypes included in per-subtype binary agreement
+# Subtypes included in per-subtype binary agreement.
+# Covers all modality × fat_sat × contrast combinations the DCM clf can produce.
 _COMPARE_SUBTYPES = [
+    # T1W
     "T1W-no-no", "T1W-fs-no", "T1W-no-c", "T1W-fs-c",
-    "T2W-no-no", "T2W-fs-no",
-    "T2*-no-no",
-    "PD-no-no",
-    "DWI-no-no",
+    # T2W (DCM clf does not separate CE for T2W but physics can produce it)
+    "T2W-no-no", "T2W-fs-no", "T2W-no-c", "T2W-fs-c",
+    # T2*
+    "T2*-no-no", "T2*-fs-no", "T2*-no-c", "T2*-fs-c",
+    # PD
+    "PD-no-no",  "PD-fs-no",
+    # DWI
+    "DWI-no-no", "DWI-fs-no",
 ]
 
 
