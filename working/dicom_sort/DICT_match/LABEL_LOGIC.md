@@ -46,7 +46,7 @@ SE markers take priority if both are present.
 
 ### Step 2: Fallback classification for unmatched rows (`sequence_type == ""`)
 
-Applied before PD reclassification. Determines GRE vs SE via `_is_gre()`, then applies thresholds.
+Determines GRE vs SE via `_is_gre()`, then applies thresholds.
 
 **GRE sequences** (T2* decay is fast, TE thresholds are tight):
 
