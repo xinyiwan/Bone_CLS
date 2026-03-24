@@ -38,17 +38,20 @@ def _phys_contrast_yn(val) -> str:
     return "Y" if str(val).strip() == "Contrast" else "N"
 
 
-_EMPTY = "x"   # placeholder when a physics field has no value
-
 
 def format_ref_label(row) -> str:
-    """Format all four physics columns as seq_fs_acq_contrast.
-    Each missing field is replaced with '—' rather than omitted."""
-    def _val(key):
+    """Format all four physics columns as seq_fs_contrast_acq.
+    fat_sat and contrast use 'nFS'/'nCE' when absent; other fields use 'x'."""
+    def _val(key, empty="x"):
         v = str(row.get(key, "") or "").strip()
-        return v if v and v.lower() not in ("nan", "none") else _EMPTY
+        return v if v and v.lower() not in ("nan", "none") else empty
 
-    return f"{_val('phys_sequence')}_{_val('phys_fat_sat')}_{_val('phys_contrast')}_{_val('phys_acquisition')}"
+    return (
+        f"{_val('phys_sequence')}"
+        f"_{_val('phys_fat_sat', 'nFS')}"
+        f"_{_val('phys_contrast', 'nCE')}"
+        f"_{_val('phys_acquisition')}"
+    )
 
 
 def ref_label_color(row, modality: str, fatsat: str, contrast: str) -> str:
