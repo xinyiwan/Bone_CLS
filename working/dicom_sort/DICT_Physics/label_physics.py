@@ -242,7 +242,6 @@ def classify_physics(row: pd.Series) -> dict:
 
     is_dwi = (
         b_value_is_dwi
-        or _is_present(diff_orient)
         or "DIFFUSION" in image_type
     )
     if is_dwi:
