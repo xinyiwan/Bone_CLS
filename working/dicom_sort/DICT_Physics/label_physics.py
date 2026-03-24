@@ -212,7 +212,8 @@ def _classify_gre(
 
     # T2*_GRE
     # Simplify the rules to just TE thresholds for both 1.5T and 3T.
-    if TE >= 14:
+    # TODO change the range to include more typical T2* with TEs around 11 and above.
+    if TE >= 11:
         return _result("T2*", acquisition="GRE", fat_sat=fs, contrast=contrast)
 
     return _result("unknown_GRE", acquisition="GRE", fat_sat=fs, contrast=contrast)
