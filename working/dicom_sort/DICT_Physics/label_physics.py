@@ -166,7 +166,8 @@ def _classify_ir(
     contrast = "Contrast" if has_contrast else ""
 
     # STIR — fat suppression is STIR-based; chemical FS may co-occur
-    if (is_15T and 140 <= TI <= 190) or (is_3T and 180 <= TI <= 240):
+    # TODO: change the range here to include more errors on STIR
+    if (is_15T and 110 <= TI <= 190) or (is_3T and 150 <= TI <= 240):
         # return _result("STIR", acquisition="IR", fat_sat=_fat_sat_label(True, has_fs), contrast=contrast)
         # TODO: check if I could make STIR automatically T2W
         return _result("T2W", acquisition="IR", fat_sat=_fat_sat_label(True, has_fs), contrast=contrast)
@@ -181,7 +182,7 @@ def _classify_ir(
     if TE is not None and TR is not None and TE <= 30 and TR < 4000:
         return _result("T1W", acquisition="IR", fat_sat=_fat_sat_label(False, has_fs), contrast=contrast)
 
-    return _result("GENERIC_IR", fat_sat=_fat_sat_label(False, has_fs), contrast=contrast)
+    return _result("Unknown_IR", fat_sat=_fat_sat_label(False, has_fs), contrast=contrast)
 
 
 def _classify_gre(
