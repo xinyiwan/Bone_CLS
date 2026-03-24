@@ -171,6 +171,11 @@ TAGS: list[tuple[str, tuple | None, object]] = [
     ("pixel_spacing",       (0x28, 0x30),   get_pixel_spacing),
     ("spacing_btw_slices",  (0x18, 0x88),   None),
     ("orientation_type",    None,            get_orientation_type),
+    # --- diffusion --------------------------------------------------------
+    ("image_type",              (0x08, 0x08),   None),
+    ("echo_numbers",            (0x18, 0x86),   None),
+    ("diffusion_b_value",       (0x18, 0x9087), None),
+    ("diffusion_gradient_orientation", (0x18, 0x9089), None),
 ]
 
 COLUMNS = ["subject", "session", "scan", "n_slices"] + [t[0] for t in TAGS]
