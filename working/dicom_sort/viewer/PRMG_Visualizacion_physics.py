@@ -333,7 +333,7 @@ _parser.add_argument("--excel",
 _parser.add_argument("--output",
                      default=r"c:\Users\E78357656\Documents\output_viewer\physics",
                      help="Folder for saving review results")
-_parser.add_argument("--ref", default="",
+_parser.add_argument("--ref", default=f"Z:\home\ext_xinwan\Bone_AI\output\DCM_Physics\dicom_headers_labelled_Mar24.csv",
                      help="Path to physics-label CSV (label_physics.py output) for overlay")
 _args = _parser.parse_args()
 
