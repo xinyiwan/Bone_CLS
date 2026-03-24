@@ -235,9 +235,13 @@ def classify_physics(row: pd.Series) -> dict:
 
     # ------------------------------------------------------------------
     # Step 1: DWI — if DWI stop here, do not continue to step 2
+    # b_value == 0 is the non-diffusion-weighted reference volume; not DWI.
     # ------------------------------------------------------------------
+    b_val_float = _safe_float(b_value)
+    b_value_is_dwi = _is_present(b_value) and b_val_float is not None and b_val_float > 0
+
     is_dwi = (
-        _is_present(b_value)
+        b_value_is_dwi
         or _is_present(diff_orient)
         or "DIFFUSION" in image_type
     )
