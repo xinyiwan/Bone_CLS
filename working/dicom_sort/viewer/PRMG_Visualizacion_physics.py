@@ -296,6 +296,8 @@ def update_view():
                 "T1W   noFS  CE":   "red",    "T1W   FS  CE":    "red",
                 "T2W   noFS":       "green",  "T2W   FS":        "green",
                 "T2*   noFS  noCE": "orange", "T2*   other":     "orange",
+                "PD   noFS  noCE":  "purple", "PD   FS  noCE":   "purple",
+                "PD   noFS  CE":    "purple", "PD   FS  CE":     "purple",
                 "DWI":  "black", "Localizer": "gray",
                 "OTHERS": "black", "To_review": "black",
             }
@@ -386,6 +388,7 @@ button_labels = [
     "T1W   noFS  noCE", "T1W   FS  noCE", "T1W   noFS  CE", "T1W   FS  CE",
     "T2W   noFS",       "T2W   FS",
     "T2*   noFS  noCE", "T2*   other",
+    "PD   noFS  noCE",  "PD   FS  noCE", "PD   noFS  CE", "PD   FS  CE",
     "DWI", "Localizer", "OTHERS", "To_review",
 ]
 button_containers = []
