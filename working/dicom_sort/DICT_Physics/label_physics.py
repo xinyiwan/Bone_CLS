@@ -100,7 +100,7 @@ def _has_contrast(series_desc: str, contrast_agent: str, total_dose: str) -> boo
     # Dose is not required: it is frequently missing even when contrast was administered.
     ca = str(contrast_agent).strip()
     dose = str(total_dose).strip()
-    if ca and ca.upper() not in ("", "NONE", "NO", "0"):
+    if ca and ca.upper() not in ("", "NONE", "NO", "0") and dose != "0":
         return True
 
     # Agent token matches known contrast-agent names (dose must not be explicitly 0)
