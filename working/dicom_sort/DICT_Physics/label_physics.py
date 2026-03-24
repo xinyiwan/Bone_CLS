@@ -5,7 +5,7 @@ Applies physics-based rules using DICOM acquisition parameters
 (TR, TE, TI, ETL, FA, field strength, diffusion tags) to classify
 each scan.  Four output columns are produced:
 
-  phys_sequence   – T1 | T2 | T2* | PD | DWI | STIR | FLAIR | T1_IR |
+  phys_sequence   – T1W | T2@ | T2* | PD | DWI | STIR | FLAIR | T1W_IR |
                     GENERIC_IR | Localizer | GENERIC_GRE | UNKNOWN
   phys_acquisition – FSE | SE | GRE | ""   (empty for IR / Localizer)
   phys_fat_sat    – FS | STIR | STIR+FS | ""
@@ -14,7 +14,7 @@ each scan.  Four output columns are produced:
 Classification steps (mutually exclusive, applied in order)
 ------------------------------------------------------------
 1. DWI    – diffusion_b_value present, or diffusion_gradient_orientation present
-2. IR     – InversionTime > 0  →  STIR / FLAIR / T1_IR / GENERIC_IR
+2. IR     – InversionTime > 0  →  STIR / FLAIR / T1W_IR / GENERIC_IR
 3. GRE    – scanning_sequence contains "GR"
 4. (F)SE  – all remaining
 
@@ -173,9 +173,9 @@ def _classify_ir(
     if (is_15T and 1900 <= TI <= 2600) or (is_3T and 2400 <= TI <= 3200):
         return _result("FLAIR", fat_sat=_fat_sat_label(False, has_fs), contrast=contrast)
 
-    # T1_IR
+    # T1W_IR
     if TE is not None and TR is not None and TE <= 30 and TR < 4000:
-        return _result("T1_IR", fat_sat=_fat_sat_label(False, has_fs), contrast=contrast)
+        return _result("T1W_IR", fat_sat=_fat_sat_label(False, has_fs), contrast=contrast)
 
     return _result("GENERIC_IR", fat_sat=_fat_sat_label(False, has_fs), contrast=contrast)
 
@@ -204,10 +204,11 @@ def _classify_gre(
 
     # T1_GRE
     if TR <= 20 and TE <= 6:
-        return _result("T1", acquisition="GRE", fat_sat=fs, contrast=contrast)
+        return _result("T1W", acquisition="GRE", fat_sat=fs, contrast=contrast)
 
     # T2*_GRE
-    if (is_15T and TE >= 15) or (is_3T and TE >= 18):
+    # Simplify the rules to just TE thresholds for both 1.5T and 3T.
+    if TE >= 14:
         return _result("T2*", acquisition="GRE", fat_sat=fs, contrast=contrast)
 
     return _result("GENERIC_GRE", acquisition="GRE", fat_sat=fs, contrast=contrast)
@@ -232,10 +233,11 @@ def _classify_fse(
 
     if TR is not None and TE is not None:
         # Primary rules
-        if (is_15T and TR <= 900 and TE <= 25) or (is_3T and TR <= 1100 and TE <= 25):
-            seq = "T1"
+        # Simplify the rules to just TR/TE thresholds for both 1.5T and 3T, with no overlap.
+        if TR <= 1100 and TE <= 25:
+            seq = "T1W"
         elif TR >= 2500 and TE >= 70:
-            seq = "T2"
+            seq = "T2W"
         elif TR >= 1800 and TE <= 30:
             seq = "PD"
         # Overlap fallbacks
@@ -244,7 +246,7 @@ def _classify_fse(
         elif TE < 40 and TR >= 1500:
             seq = "PD"
         else:
-            seq = "T2"
+            seq = "T2W"
 
     if not seq:
         return _result("UNKNOWN", acquisition=acquisition, fat_sat=fs, contrast=contrast)
