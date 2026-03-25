@@ -26,7 +26,7 @@ def pad_image(img, target_height=256, target_width=256):
         return np.zeros((target_height, target_width))
 
 def load_dicom_dataframe(excel_path):
-    """Carga el DataFrame y asegura que existan las columnas de control."""
+    """Load DataFrame from Excel and ensure control columns exist."""
     try:
         df = pd.read_excel(excel_path)
         if 'seleccion' not in df.columns:
@@ -35,7 +35,19 @@ def load_dicom_dataframe(excel_path):
             df['viewed'] = ""
         return df
     except Exception as e:
-        st.error(f"Error al cargar el Excel: {e}")
+        st.error(f"Error loading Excel: {e}")
         return None
+
+
+def load_dicom_dataframe_csv(csv_path) -> pd.DataFrame:
+    """Load a CSV (path or uploaded file object) and ensure control columns exist."""
+    try:
+        df = pd.read_csv(csv_path, dtype=str).fillna("")
+        if "viewed" not in df.columns:
+            df["viewed"] = ""
+        return df
+    except Exception as e:
+        st.error(f"Error loading CSV: {e}")
+        return pd.DataFrame()
     
     
