@@ -272,7 +272,8 @@ def main():
                 estudio  = str(row.get("Estudio",  ""))
                 serie    = str(row.get("Serie",    ""))
 
-                img_path = os.path.join(path_img_base, paciente, estudio, serie, "Img.png")
+                # here the order is only to adapt with current structure
+                img_path = os.path.join(path_img_base, serie, estudio, paciente, "Img.png")
                 try:
                     img_pil    = Image.open(img_path).convert("L")
                     img_padded = pad_image(np.array(img_pil))
