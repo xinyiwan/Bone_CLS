@@ -5,246 +5,315 @@ import numpy as np
 import subprocess
 from datetime import datetime
 from PIL import Image
-from utils import pad_image, load_dicom_dataframe
+from utils import pad_image, load_dicom_dataframe, load_dicom_dataframe_csv
 
 st.set_page_config(layout="wide", page_title="DICOM Classifier")
 
 n_cols = 4
 n_rows = 3
 
-def obtener_clase_inicial(w, fs, c):
-    """Genera la etiqueta de clase por defecto basada en las columnas del Excel."""
+# ---------------------------------------------------------------------------
+# Label helpers
+# ---------------------------------------------------------------------------
+
+BUTTON_LABELS = [
+    "T1W noFS noCE", "T1W FS noCE", "T1W noFS CE", "T1W FS CE",
+    "T2W noFS",       "T2W FS",      "T2W noFS CE", "T2W FS CE",
+    "T2* noFS noCE",  "T2* other",
+    "PD noFS noCE",   "PD FS noCE",  "PD noFS CE",  "PD FS CE",
+    "DWI", "Localizer", "Other", "To_review",
+]
+
+_DECODE_MAP = {
+    "T1W noFS noCE":  ("T1W",       "N",         "N"),
+    "T1W FS noCE":    ("T1W",       "Y",         "N"),
+    "T1W noFS CE":    ("T1W",       "N",         "Y"),
+    "T1W FS CE":      ("T1W",       "Y",         "Y"),
+    "T2W noFS":       ("T2W",       "N",         "-"),
+    "T2W FS":         ("T2W",       "Y",         "-"),
+    "T2W noFS CE":    ("T2W",       "N",         "Y"),
+    "T2W FS CE":      ("T2W",       "Y",         "Y"),
+    "T2* noFS noCE":  ("T2*",       "N",         "N"),
+    "T2* other":      ("T2*",       "-",         "-"),
+    "PD noFS noCE":   ("PD",        "N",         "N"),
+    "PD FS noCE":     ("PD",        "Y",         "N"),
+    "PD noFS CE":     ("PD",        "N",         "Y"),
+    "PD FS CE":       ("PD",        "Y",         "Y"),
+    "DWI":            ("DW",        "-",         "-"),
+    "Localizer":      ("Localizer", "-",         "-"),
+    "Other":          ("Other",     "-",         "-"),
+    "To_review":      ("To_review", "To_review", "To_review"),
+}
+
+
+def decode_selection(sel, orig_w, orig_fs, orig_c):
+    return _DECODE_MAP.get(sel, (orig_w, orig_fs, orig_c))
+
+
+def get_default_label(w, fs, c):
     w, fs, c = str(w).strip(), str(fs).strip(), str(c).strip()
-    
     if w == "T1W":
-        str_fs = "FS" if fs == "Y" else "noFS"
-        str_c = "CE" if c == "Y" else "noCE"
-        return f"T1W {str_fs} {str_c}"
-    elif w == "T2W":
-        str_fs = "FS" if fs == "Y" else "noFS"
-        return f"T2W {str_fs}"
-    elif w in ["DW"]:
-        return "DW"
-    elif w == "Other":
+        return f"T1W {'FS' if fs=='Y' else 'noFS'} {'CE' if c=='Y' else 'noCE'}"
+    if w == "T2W":
+        return f"T2W {'FS' if fs=='Y' else 'noFS'}"
+    if w == "DW":
+        return "DWI"
+    if w == "Other":
         return "Other"
     return "To_review"
 
-def decodificar_seleccion(seleccion, orig_w, orig_fs, orig_c):
-    """Convierte la pastilla seleccionada de nuevo a las 3 variables individuales."""
-    mapeo = {
-        "T1W noFS noCE": ("T1W", "N", "N"),
-        "T1W FS noCE": ("T1W", "Y", "N"),
-        "T1W noFS CE": ("T1W", "N", "Y"),
-        "T1W FS CE": ("T1W", "Y", "Y"),
-        "T2W noFS": ("T2W", "N", "-"),
-        "T2W FS": ("T2W", "Y", "-"),
-        "DW": ("DW", "-", "-"),
-        "Other": ("Other", "-", "-"),
-        "To_review": ("To_review", "To_review", "To_review")
-    }
-    return mapeo.get(seleccion, (orig_w, orig_fs, orig_c))
 
-def ejecutar_script_generacion(ruta_excel, ruta_img_base):
-    """Ejecuta un script externo para generar las imágenes."""
-    # Sustituye 'generar_imagenes.py' por el nombre real de tu script
-    script_path = "img_generator.py" 
-    
-    if not os.path.exists(script_path):
-        st.error(f"No se encontró el script de generación: {script_path}")
+# ---------------------------------------------------------------------------
+# Physics reference helpers
+# ---------------------------------------------------------------------------
+
+def _phys_fat_yn(val) -> str:
+    return "Y" if str(val).strip() in ("FS", "STIR") else "N"
+
+
+def _phys_contrast_yn(val) -> str:
+    return "Y" if str(val).strip() == "Contrast" else "N"
+
+
+def phys_ref_label(row) -> str:
+    """Format physics label as seq_fatsat_CE_acq, with nFS/nCE for absent fields."""
+    def _v(key, empty="x"):
+        v = str(row.get(key, "") or "").strip()
+        return v if v and v.lower() not in ("nan", "none") else empty
+    ce = "CE" if str(row.get("phys_contrast", "") or "").strip() == "Contrast" else "nCE"
+    return f"{_v('phys_sequence')}_{_v('phys_fat_sat','nFS')}_{ce}_{_v('phys_acquisition')}"
+
+
+def phys_ref_color(row, filter_w, filter_fs, filter_c) -> str:
+    seq = str(row.get("phys_sequence", "") or "").strip()
+    if not seq or seq.lower() in ("nan", "none", "x", ""):
+        return "#888888"
+    dcm_to_phys = {"T1W": "T1W", "T2W": "T2W", "T2*": "T2*", "PD": "PD", "DW": "DWI"}
+    expected = dcm_to_phys.get(filter_w)
+    if expected is None:
+        return "#888888"
+    mod_ok = seq == expected
+    fs_ok  = (_phys_fat_yn(row.get("phys_fat_sat",  "")) == filter_fs) if filter_fs != "-" else True
+    ce_ok  = (_phys_contrast_yn(row.get("phys_contrast", "")) == filter_c) if filter_c != "-" else True
+    return "#44dd44" if (mod_ok and fs_ok and ce_ok) else "#ff4444"
+
+
+def phys_badge(row, filter_w, filter_fs, filter_c) -> str:
+    label = phys_ref_label(row)
+    color = phys_ref_color(row, filter_w, filter_fs, filter_c)
+    return (f'<span style="color:{color}; font-size:0.72em; '
+            f'font-family:monospace; font-weight:bold">{label}</span>')
+
+
+# ---------------------------------------------------------------------------
+# Image generator
+# ---------------------------------------------------------------------------
+
+def run_img_generator(excel_path, img_base):
+    script = os.path.join(os.path.dirname(__file__), "img_generator.py")
+    if not os.path.exists(script):
+        st.error(f"img_generator.py not found: {script}")
         return False
-
     try:
-        # Llamamos al script pasando como argumentos el excel y la ruta base
-        st.info("Ejecutando script de generación... Por favor, espera.")
-        resultado = subprocess.run(
-            ["python3", script_path, "--excel", ruta_excel, "--out_dir", ruta_img_base],
-            capture_output=True, text=True, check=True
+        st.info("Generating missing images… please wait.")
+        subprocess.run(
+            ["python3", script, "--excel", excel_path, "--out_dir", img_base],
+            capture_output=True, text=True, check=True,
         )
-        st.success("¡Imágenes generadas con éxito!")
-        # Opcional: st.code(resultado.stdout) para ver el log del script
+        st.success("Images generated successfully.")
         return True
     except subprocess.CalledProcessError as e:
-        st.error(f"Error al ejecutar el script:\n{e.stderr}")
+        st.error(f"Image generation failed:\n{e.stderr}")
         return False
-    except Exception as e:
-        st.error(f"Error inesperado:\n{e}")
-        return False
-    
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 
 def main():
-    
-    st.sidebar.title("Configuración de Carga")
-    
-    path_results = st.sidebar.text_input("1. Ruta guardado revisión", value="/Proyecto/Results")
-    path_img_base = st.sidebar.text_input("2. Ruta base de imágenes", value="/Proyecto/IMG")
-    uploaded_file = st.sidebar.file_uploader("3. Sube el Excel original", type=["xlsx"])
+    st.sidebar.title("Configuration")
 
+    path_results  = st.sidebar.text_input("1. Output folder",     value="/Proyecto/Results")
+    path_img_base = st.sidebar.text_input("2. Image base folder", value="/Proyecto/IMG")
+    uploaded_file = st.sidebar.file_uploader("3. Classifier CSV / Excel", type=["csv", "xlsx"])
+    uploaded_ref  = st.sidebar.file_uploader("4. Physics-label CSV (optional)", type=["csv"])
 
     if uploaded_file is None:
-        st.title("🩻 Clasificador DICOM")
-        st.info("Esperando archivo Excel... Por favor, súbelo desde la barra lateral.")
+        st.title("DICOM Classifier")
+        st.info("Upload the classifier file from the sidebar to start.")
         return
-    
-    # --- BOTÓN PARA GENERAR IMÁGENES ---
-    st.sidebar.divider()
-    if st.sidebar.button("🛠️ Generar imágenes faltantes", help="Ejecuta un script externo para crear las imágenes .png a partir del Excel subido."):
-        # Necesitamos la ruta real del archivo excel subido.
-        # En Streamlit, uploaded_file está en memoria, así que lo guardamos temporalmente.
-        temp_excel_path = os.path.join(path_results, "temp_upload.xlsx")
-        os.makedirs(path_results, exist_ok=True)
-        with open(temp_excel_path, "wb") as f:
-            f.write(uploaded_file.getbuffer())
-            
-        if ejecutar_script_generacion(temp_excel_path, path_img_base):
-            st.toast("Proceso de generación finalizado.")
-            
-        # Opcional: borrar el archivo temporal
-        if os.path.exists(temp_excel_path):
-            os.remove(temp_excel_path)
 
-    # --- LÓGICA DE DETECCIÓN DE PROGRESO PREVIO ---
-    # Creamos el nombre del archivo maestro actualizado basándonos en el original
-    master_filename = f"Review_{uploaded_file.name}"
+    # ── Image generator ────────────────────────────────────────────────────
+    st.sidebar.divider()
+    if st.sidebar.button("Generate missing images",
+                         help="Runs img_generator.py to create .png previews"):
+        os.makedirs(path_results, exist_ok=True)
+        ext     = ".csv" if uploaded_file.name.endswith(".csv") else ".xlsx"
+        tmp     = os.path.join(path_results, f"_tmp_upload{ext}")
+        with open(tmp, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+        run_img_generator(tmp, path_img_base)
+        if os.path.exists(tmp):
+            os.remove(tmp)
+
+    # ── Resume detection ───────────────────────────────────────────────────
+    master_filename = f"Review_{uploaded_file.name.rsplit('.',1)[0]}.csv"
     master_filepath = os.path.join(path_results, master_filename)
-    
+
     usar_progreso = False
     if os.path.exists(master_filepath):
-        st.sidebar.warning(f"⚠️ Se ha detectado un progreso previo:\n**{master_filename}**")
-        usar_progreso = st.sidebar.checkbox("Cargar este progreso", value=True, help="Desmarca esto si quieres empezar de cero con el Excel original.")
+        st.sidebar.warning(f"Previous progress found:\n**{master_filename}**")
+        usar_progreso = st.sidebar.checkbox("Resume from progress", value=True)
 
-    # --- LÓGICA DE CARGA DE DATOS ---
-    if 'df_master' not in st.session_state or st.sidebar.button("🔄 Cargar / Recargar"):
+    # ── Load data ──────────────────────────────────────────────────────────
+    if "df_master" not in st.session_state or st.sidebar.button("Reload"):
         if usar_progreso and os.path.exists(master_filepath):
-            # Cargar el archivo que ya tiene los avances
-            df_temp = pd.read_excel(master_filepath)
-            st.toast("Progreso anterior cargado con éxito", icon="📁")
-        else:  
-            df_temp = load_dicom_dataframe(uploaded_file)
+            df_temp = pd.read_csv(master_filepath, dtype=str).fillna("")
+            st.toast("Previous progress loaded", icon="📁")
+        else:
+            if uploaded_file.name.endswith(".csv"):
+                df_temp = load_dicom_dataframe_csv(uploaded_file)
+            else:
+                df_temp = load_dicom_dataframe(uploaded_file)
 
-            if "viewed" not in df_temp.columns:
-                df_temp["viewed"] = ""
-            if "Clase W Final" not in df_temp.columns:
-                df_temp["Clase W Final"] = df_temp["Predicción Clases W"]
-            if "Clase FS Final" not in df_temp.columns:
-                df_temp["Clase FS Final"] = df_temp["Predicción Clases FS"]
-            if "Clase C Final" not in df_temp.columns:
-                df_temp["Clase C Final"] = df_temp["Predicción Clases C"]
-                
-            st.toast("Excel original cargado desde cero", icon="📄")
-            
-        st.session_state.df_master = df_temp
+            for col, src in [
+                ("viewed",        ""),
+                ("Clase W Final",  "Predicción Clases W"),
+                ("Clase FS Final", "Predicción Clases FS"),
+                ("Clase C Final",  "Predicción Clases C"),
+            ]:
+                if col not in df_temp.columns:
+                    df_temp[col] = df_temp[src].fillna("") if isinstance(src, str) and src in df_temp.columns else ""
+            st.toast("File loaded from scratch", icon="📄")
+
+        # Merge physics reference
+        _phys_cols = ["phys_sequence", "phys_acquisition", "phys_fat_sat", "phys_contrast"]
+        df_temp = df_temp.drop(columns=[c for c in _phys_cols if c in df_temp.columns])
+        if uploaded_ref is not None:
+            df_ref = pd.read_csv(uploaded_ref, dtype=str).fillna("").rename(columns={
+                "subject": "Serie", "session": "Estudio", "scan": "Paciente"
+            })
+            join_keys = [k for k in ["Paciente", "Estudio", "Serie"]
+                         if k in df_temp.columns and k in df_ref.columns]
+            if join_keys:
+                df_temp = df_temp.merge(
+                    df_ref[join_keys + [c for c in _phys_cols if c in df_ref.columns]],
+                    on=join_keys, how="left",
+                )
+        for c in _phys_cols:
+            if c not in df_temp.columns:
+                df_temp[c] = ""
+
+        st.session_state.df_master       = df_temp
         st.session_state.master_filepath = master_filepath
+        st.session_state.has_phys        = uploaded_ref is not None
 
-    df = st.session_state.df_master
-    
-    # --- TABLA RESUMEN ---
-    with st.expander("📊 Ver Tabla Resumen de Casos", expanded=False):
-        resumen_df = df.groupby(["Predicción Clases W", "Predicción Clases FS", "Predicción Clases C"]).size().reset_index(name="Total")
-        revisados_df = df[df["viewed"] == "X"].groupby(["Predicción Clases W", "Predicción Clases FS", "Predicción Clases C"]).size().reset_index(name="Revisados")
-        
-        tabla_final = pd.merge(resumen_df, revisados_df, on=["Predicción Clases W", "Predicción Clases FS", "Predicción Clases C"], how="left").fillna(0)
-        tabla_final["Revisados"] = tabla_final["Revisados"].astype(int)
-        tabla_final["Pendientes"] = tabla_final["Total"] - tabla_final["Revisados"]
-        
-        st.dataframe(tabla_final, use_container_width=True, hide_index=True)
+    df       = st.session_state.df_master
+    has_phys = st.session_state.get("has_phys", False)
 
-    # --- FILTROS CONDICIONALES ---
+    # ── Summary table ──────────────────────────────────────────────────────
+    with st.expander("Summary table", expanded=False):
+        grp      = ["Predicción Clases W", "Predicción Clases FS", "Predicción Clases C"]
+        grp      = [c for c in grp if c in df.columns]
+        resumen  = df.groupby(grp).size().reset_index(name="Total")
+        reviewed = df[df["viewed"] == "X"].groupby(grp).size().reset_index(name="Reviewed")
+        tabla    = pd.merge(resumen, reviewed, on=grp, how="left").fillna(0)
+        tabla["Reviewed"]  = tabla["Reviewed"].astype(int)
+        tabla["Remaining"] = tabla["Total"] - tabla["Reviewed"]
+        st.dataframe(tabla, use_container_width=True, hide_index=True)
+
+    # ── Filters ────────────────────────────────────────────────────────────
     st.sidebar.divider()
-    st.sidebar.subheader("Filtros de Secuencia")
-    
-    val_w = st.sidebar.selectbox("Clase W", ["T1W", "T2W", "DW", "Other"])
-    mask = (df["Predicción Clases W"] == val_w)
+    st.sidebar.subheader("Sequence filters")
 
-    if val_w in ["DW", "Other"]:
-        val_fs = "-"
+    val_w = st.sidebar.selectbox("Modality (W)", ["T1W", "T2W", "T2*", "PD", "DW", "Other"])
+    mask  = df["Predicción Clases W"] == val_w
+
+    if val_w in ("DW", "Other"):
+        val_fs, val_c = "-", "-"
     else:
-        val_fs = st.sidebar.selectbox("Clase FS", ["N", "Y"])
-        mask = mask & (df["Predicción Clases FS"] == val_fs)
+        val_fs = st.sidebar.selectbox("Fat sat (FS)", ["N", "Y"])
+        mask   = mask & (df["Predicción Clases FS"] == val_fs)
+        val_c  = st.sidebar.selectbox("Contrast (C)", ["N", "Y"]) if val_w == "T1W" else "-"
+        if val_c != "-":
+            mask = mask & (df["Predicción Clases C"] == val_c)
 
-    if val_w != "T1W":
-        val_c = "-"
-    else:
-        val_c = st.sidebar.selectbox("Clase C", ["N", "Y"])
-        mask = mask & (df["Predicción Clases C"] == val_c)
-
-    show_only_pending = st.sidebar.checkbox("Mostrar solo pendientes", value=True)
-    if show_only_pending:
+    show_pending = st.sidebar.checkbox("Show only pending", value=True)
+    if show_pending:
         mask = mask & (df["viewed"] != "X")
 
     df_filtered = df[mask].reset_index()
 
-    # --- INTERFAZ PRINCIPAL ---
-    st.title(f"Revisión: {val_w} | FS: {val_fs} | CE: {val_c}")
-    
+    # ── Main view ──────────────────────────────────────────────────────────
+    st.title(f"Review: {val_w}  |  FS: {val_fs}  |  CE: {val_c}")
+    if has_phys:
+        st.caption("Physics ref shown below each image  •  green = agrees  •  red = disagrees  •  grey = no data")
+
     if df_filtered.empty:
-        st.success("✅ ¡Todo revisado para este filtro o no existen casos!")
+        st.success("All reviewed for this filter, or no cases found.")
         return
 
-
-    batch = df_filtered.head(n_cols*n_rows)  
-    button_labels = ["T1W noFS noCE", "T1W FS noCE", "T1W noFS CE", "T1W FS CE", "T2W noFS", "T2W FS", "DW", "Other", "To_review"]
-
+    batch        = df_filtered.head(n_cols * n_rows)
     user_actions = {}
 
     with st.form("batch_form"):
         cols = st.columns(n_cols)
-        for i, (f_idx, row) in enumerate(batch.iterrows()):
-            orig_idx = row['index']
+        for i, (_, row) in enumerate(batch.iterrows()):
+            orig_idx = row["index"]
             with cols[i % n_cols]:
                 paciente = str(row.get("Paciente", ""))
-                estudio = str(row.get("Estudio", ""))
-                serie = str(row.get("Serie", ""))
-                
-                full_path = os.path.join(path_img_base, paciente, estudio, serie, "Img.png")
-                
+                estudio  = str(row.get("Estudio",  ""))
+                serie    = str(row.get("Serie",    ""))
+
+                img_path = os.path.join(path_img_base, paciente, estudio, serie, "Img.png")
                 try:
-                    img_pil = Image.open(full_path).convert('L')
-                    img_array = np.array(img_pil)
-                    img_padded = pad_image(img_array)
+                    img_pil    = Image.open(img_path).convert("L")
+                    img_padded = pad_image(np.array(img_pil))
                     st.image(img_padded, use_container_width=True, clamp=True)
-                except Exception as e: 
-                    st.error(f"Img no encontrada o error al procesar:\n{serie[:10]}...\nDetalle del error: {e}")
+                except Exception as e:
+                    st.error(f"Image not found:\n{serie[:15]}…\n{e}")
 
-                orig_w = row.get("Predicción Clases W", "")
+                if has_phys:
+                    st.markdown(phys_badge(row, val_w, val_fs, val_c), unsafe_allow_html=True)
+
+                orig_w  = row.get("Predicción Clases W",  "")
                 orig_fs = row.get("Predicción Clases FS", "")
-                orig_c = row.get("Predicción Clases C", "")
-                
-                clase_por_defecto = obtener_clase_inicial(orig_w, orig_fs, orig_c)
-                
-                res = st.pills("Clase", button_labels, default=clase_por_defecto, key=f"p_{orig_idx}", label_visibility="collapsed")
-                user_actions[orig_idx] = res
+                orig_c  = row.get("Predicción Clases C",  "")
+                initial = get_default_label(orig_w, orig_fs, orig_c)
 
-        # --- GUARDADO DUAL ---
-        if st.form_submit_button("💾 Guardar y Siguiente", use_container_width=True):
-            for idx, seleccion_final in user_actions.items():
-                fila_original = st.session_state.df_master.loc[idx]
-                orig_w = fila_original.get("Predicción Clases W", "")
-                orig_fs = fila_original.get("Predicción Clases FS", "")
-                orig_c = fila_original.get("Predicción Clases C", "")
-                
-                if not seleccion_final:
-                    seleccion_final = obtener_clase_inicial(orig_w, orig_fs, orig_c)
-                
-                w_final, fs_final, c_final = decodificar_seleccion(seleccion_final, orig_w, orig_fs, orig_c)
-                
-                #st.session_state.df_master.at[idx, "seleccion"] = seleccion_final
-                st.session_state.df_master.at[idx, "viewed"] = "X"
-                st.session_state.df_master.at[idx, "Clase W Final"] = w_final
-                st.session_state.df_master.at[idx, "Clase FS Final"] = fs_final
-                st.session_state.df_master.at[idx, "Clase C Final"] = c_final
-                
+                sel = st.pills("Class", BUTTON_LABELS, default=initial,
+                               key=f"p_{orig_idx}", label_visibility="collapsed")
+                user_actions[orig_idx] = sel
+
+        if st.form_submit_button("Save & Next", use_container_width=True):
+            for idx, sel in user_actions.items():
+                fila    = st.session_state.df_master.loc[idx]
+                orig_w  = fila.get("Predicción Clases W",  "")
+                orig_fs = fila.get("Predicción Clases FS", "")
+                orig_c  = fila.get("Predicción Clases C",  "")
+
+                if not sel:
+                    sel = get_default_label(orig_w, orig_fs, orig_c)
+
+                w_f, fs_f, c_f = decode_selection(sel, orig_w, orig_fs, orig_c)
+
+                st.session_state.df_master.at[idx, "viewed"]        = "X"
+                st.session_state.df_master.at[idx, "Clase W Final"]  = w_f
+                st.session_state.df_master.at[idx, "Clase FS Final"] = fs_f
+                st.session_state.df_master.at[idx, "Clase C Final"]  = c_f
+
             os.makedirs(path_results, exist_ok=True)
-            
-            # 1. Guardar copia maestra (se sobreescribe constantemente con los nuevos avances)
-            st.session_state.df_master.to_excel(st.session_state.master_filepath, index=False)
-            
-            # 2. Guardar archivo de trazabilidad en subcarpeta "Reviews"
-            path_reviews = os.path.join(path_results, "Reviews")
-            os.makedirs(path_reviews, exist_ok=True)
-            output_name_traz = os.path.join(path_reviews, f"Revision_{val_w}_{datetime.now().strftime('%Y%m%d-%H%M')}.xlsx")
-            st.session_state.df_master.to_excel(output_name_traz, index=False)
-            
+            st.session_state.df_master.to_csv(st.session_state.master_filepath, index=False)
+
+            backup_dir = os.path.join(path_results, "Backups")
+            os.makedirs(backup_dir, exist_ok=True)
+            st.session_state.df_master.to_csv(
+                os.path.join(backup_dir, f"Review_{val_w}_{datetime.now().strftime('%Y%m%d-%H%M')}.csv"),
+                index=False,
+            )
             st.rerun()
+
 
 if __name__ == "__main__":
     main()
