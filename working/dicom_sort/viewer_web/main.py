@@ -109,17 +109,17 @@ def phys_badge(row, filter_w, filter_fs, filter_c) -> str:
 # Image generator
 # ---------------------------------------------------------------------------
 
-def run_img_generator(excel_path, img_base):
+def run_img_generator(excel_path, img_base, dcm_root="", dcm_orig="/Project"):
     script = os.path.join(os.path.dirname(__file__), "img_generator.py")
     if not os.path.exists(script):
         st.error(f"img_generator.py not found: {script}")
         return False
     try:
         st.info("Generating missing images… please wait.")
-        subprocess.run(
-            ["python3", script, "--excel", excel_path, "--out_dir", img_base],
-            capture_output=True, text=True, check=True,
-        )
+        cmd = ["python3", script, "--excel", excel_path, "--out_dir", img_base]
+        if dcm_root:
+            cmd += ["--dcm_root", dcm_root, "--dcm_orig", dcm_orig]
+        subprocess.run(cmd, capture_output=True, text=True, check=True)
         st.success("Images generated successfully.")
         return True
     except subprocess.CalledProcessError as e:
@@ -138,6 +138,12 @@ def main():
     path_img_base = st.sidebar.text_input("2. Image base folder", value="/Proyecto/IMG")
     uploaded_file = st.sidebar.file_uploader("3. Classifier CSV / Excel", type=["csv", "xlsx"])
     uploaded_ref  = st.sidebar.file_uploader("4. Physics-label CSV (optional)", type=["csv"])
+    st.sidebar.divider()
+    st.sidebar.subheader("DICOM path mapping")
+    dcm_orig = st.sidebar.text_input("Original path prefix (in CSV)",  value="/Project",
+                                     help="Prefix found in 'Nombre DICOM' column")
+    dcm_root = st.sidebar.text_input("Actual path prefix (on server)", value="",
+                                     help="Replace the prefix above with this real mount path")
 
     if uploaded_file is None:
         st.title("DICOM Classifier")
@@ -153,7 +159,7 @@ def main():
         tmp     = os.path.join(path_results, f"_tmp_upload{ext}")
         with open(tmp, "wb") as f:
             f.write(uploaded_file.getbuffer())
-        run_img_generator(tmp, path_img_base)
+        run_img_generator(tmp, path_img_base, dcm_root=dcm_root, dcm_orig=dcm_orig)
         if os.path.exists(tmp):
             os.remove(tmp)
 
