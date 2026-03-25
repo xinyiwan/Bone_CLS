@@ -49,9 +49,9 @@ def save_img(imgs_folder, path_serie):
 
 def main():
     # --- 1. CAPTURAR ARGUMENTOS DESDE STREAMLIT ---
-    parser = argparse.ArgumentParser(description="Generar imágenes PNG desde DICOM")
-    parser.add_argument("--excel", required=True, help="Ruta al archivo Excel temporal")
-    parser.add_argument("--out_dir", required=True, help="Ruta base para guardar las imágenes generadas")
+    parser = argparse.ArgumentParser(description="Generate PNG previews from DICOM files")
+    parser.add_argument("--excel",   required=True, help="Path to classifier CSV or Excel file")
+    parser.add_argument("--out_dir", required=True, help="Base directory for saving generated images")
     args = parser.parse_args()
 
     # Asignamos las variables basándonos en los argumentos del parser
@@ -78,16 +78,16 @@ def main():
     serie_column = data.get('serie_column', 'Serie')
     dicom_column = data.get('dicom_column', 'DICOM') # o 'DICOM'
 
-    print(f"Cargando Excel desde: {path_excel}")
-    df_datos = pd.read_excel(path_excel)
+    print(f"Loading file: {path_excel}")
+    if path_excel.lower().endswith(".csv"):
+        df_datos = pd.read_csv(path_excel, dtype=str).fillna("")
+    else:
+        df_datos = pd.read_excel(path_excel)
 
-    # Validar que existan las columnas en el Excel
     for col in [patient_column, study_column, serie_column]:
         if col not in df_datos.columns:
-            raise ValueError(f"La columna '{col}' no existe en el Excel. Columnas encontradas: {df_datos.columns.tolist()}")
+            raise ValueError(f"Column '{col}' not found. Available columns: {df_datos.columns.tolist()}")
 
-    # 3. RECOLECTAR TODAS LAS RUTAS A PROCESAR
-    # (Construimos la ruta base de la serie, ajusta si tu dicom_column incluye el nombre del archivo)
     df_datos['ruta_completa'] = df_datos.apply(
         lambda row: os.path.join(
             path_project, 
@@ -99,30 +99,24 @@ def main():
         axis=1
     )
 
-    # Obtener la lista de rutas únicas para no procesar la misma carpeta dos veces
     rutas_a_procesar = df_datos['ruta_completa'].unique().tolist()
-    print(f"Total de carpetas DICOM únicas a procesar: {len(rutas_a_procesar)}")
+    print(f"Unique DICOM paths to process: {len(rutas_a_procesar)}")
 
-    # 4. CONFIGURAR LA FUNCIÓN PARCIAL
-    # Al poner imgs_folder como primer argumento en save_img, partial lo "congela"
-    # y los workers solo le enviarán el 'path' como segundo argumento.
     worker_func = partial(save_img, path_jpg)
+    results = []
 
-    resultados_totales = []
-
-    # 5. LANZAR EL PROCESAMIENTO EN PARALELO
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
         futures = {executor.submit(worker_func, path): path for path in rutas_a_procesar}
-        
-        for i, future in enumerate(tqdm(concurrent.futures.as_completed(futures), total=len(rutas_a_procesar), desc="Procesando MRI"), 1):
+        for future in tqdm(concurrent.futures.as_completed(futures),
+                           total=len(rutas_a_procesar), desc="Processing DICOM"):
             try:
-                resultado_dict = future.result()
-                if resultado_dict:
-                    resultados_totales.append(resultado_dict)
+                r = future.result()
+                if r:
+                    results.append(r)
             except Exception as exc:
-                print(f"Fallo en hilo: {exc}")
+                print(f"Worker failed: {exc}")
 
-    print("¡Proceso de generación finalizado!")
+    print("Image generation complete.")
 
 if __name__ == "__main__":
     main()
