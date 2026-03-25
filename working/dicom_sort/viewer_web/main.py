@@ -273,6 +273,8 @@ def main():
                 serie    = str(row.get("Serie",    ""))
 
                 # here the order is only to adapt with current structure
+                st.caption(paciente)
+
                 img_path = os.path.join(path_img_base, serie, estudio, paciente, "Img.png")
                 try:
                     img_pil    = Image.open(img_path).convert("L")
@@ -310,15 +312,20 @@ def main():
                 st.session_state.df_master.at[idx, "Clase FS Final"] = fs_f
                 st.session_state.df_master.at[idx, "Clase C Final"]  = c_f
 
+            def _save_csv(path: str) -> None:
+                st.session_state.df_master.to_csv(path, index=False)
+                os.chmod(path, 0o777)
+
             os.makedirs(path_results, exist_ok=True)
-            st.session_state.df_master.to_csv(st.session_state.master_filepath, index=False)
+            os.chmod(path_results, 0o777)
+            _save_csv(st.session_state.master_filepath)
 
             backup_dir = os.path.join(path_results, "Backups")
             os.makedirs(backup_dir, exist_ok=True)
-            st.session_state.df_master.to_csv(
-                os.path.join(backup_dir, f"Review_{val_w}_{datetime.now().strftime('%Y%m%d-%H%M')}.csv"),
-                index=False,
-            )
+            os.chmod(backup_dir, 0o777)
+            _save_csv(os.path.join(
+                backup_dir, f"Review_{val_w}_{datetime.now().strftime('%Y%m%d-%H%M')}.csv"
+            ))
             st.rerun()
 
 
