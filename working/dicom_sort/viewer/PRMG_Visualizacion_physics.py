@@ -334,7 +334,7 @@ def update_view():
 
 _parser = argparse.ArgumentParser(description="DICOM sequence reviewer — physics reference")
 _parser.add_argument("--modality", default="T1W",
-                     choices=["T1W", "T2W", "DWI", "OTHERS"],
+                     choices=["T1W", "T2W", "DW", "Other"],
                      help="Sequence modality to review (default: T1W)")
 _parser.add_argument("--fatsat",   default="N", choices=["Y", "N"],
                      help="Fat saturation filter  Y/N (default: N)")
@@ -373,6 +373,10 @@ for ind, name_seq in enumerate(sequence_filter):
 
 if sequence_filter[0] == "T2W":
     sequence_filter = [_args.modality, _args.fatsat, "-"]
+if sequence_filter[0] == "Other":
+    sequence_filter = [_args.modality, "-", "-"]
+if sequence_filter[0] == "DW":
+    sequence_filter = [_args.modality, "-", "-"]
 
 n_row      = 3
 n_columns  = 8
@@ -400,7 +404,7 @@ viewed_images = set()
 # ---------------------------------------------------------------------------
 
 try:
-    df = pd.read_csv(output_excel)
+    df = pd.read_csv(excel_path)
 except Exception:
     df = pd.read_csv(excel_path)
 
