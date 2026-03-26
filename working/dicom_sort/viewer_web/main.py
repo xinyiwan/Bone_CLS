@@ -114,21 +114,10 @@ def phys_badge(row, filter_w, filter_fs, filter_c) -> str:
 def inject_pill_styles() -> None:
     st.markdown("""
 <style>
-/* Streamlit pills — try multiple selectors to cover different versions */
-button[data-testid="stPillsOptionButton"],
-button[data-testid="stPillsOption"],
-div[data-testid="stPills"] button,
-div[data-testid="stPillsContainer"] button,
-.stPills button,
-.stPillsOptionButton {
+button[data-testid="stBaseButton-pills"] {
     font-size: 0.65em !important;
     padding: 1px 6px !important;
     line-height: 1.2 !important;
-}
-button[data-testid="stPillsOptionButton"][aria-checked="true"],
-div[data-testid="stPills"] button[aria-checked="true"],
-div[data-testid="stPillsContainer"] button[aria-pressed="true"] {
-    font-weight: 700 !important;
 }
 </style>
 """, unsafe_allow_html=True)
