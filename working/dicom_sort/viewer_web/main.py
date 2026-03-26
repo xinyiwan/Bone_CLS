@@ -53,10 +53,16 @@ def decode_selection(sel, orig_w, orig_fs, orig_c):
 
 def get_default_label(w, fs, c):
     w, fs, c = str(w).strip(), str(fs).strip(), str(c).strip()
+    fs_str = "FS"   if fs == "Y" else "noFS"
+    ce_str = "CE"   if c  == "Y" else "noCE"
     if w == "T1W":
-        return f"T1W {'FS' if fs=='Y' else 'noFS'} {'CE' if c=='Y' else 'noCE'}"
+        return f"T1W {fs_str} {ce_str}"
     if w == "T2W":
-        return f"T2W {'FS' if fs=='Y' else 'noFS'}"
+        return f"T2W {fs_str} {ce_str}"
+    if w == "T2*":
+        return f"T2* {fs_str} {ce_str}" if f"T2* {fs_str} {ce_str}" in BUTTON_LABELS else "T2* other"
+    if w == "PD":
+        return f"PD {fs_str} {ce_str}"
     if w == "DW":
         return "DWI"
     if w == "Other":
