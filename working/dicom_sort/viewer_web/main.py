@@ -17,10 +17,11 @@ n_rows = 3
 # ---------------------------------------------------------------------------
 
 BUTTON_LABELS = [
-    "T1W noFS noCE", "T1W FS noCE", "T1W noFS CE", "T1W FS CE",
-    "T2W noFS",       "T2W FS",      "T2W noFS CE", "T2W FS CE",
-    "T2* noFS noCE",  "T2* other",
-    "PD noFS noCE",   "PD FS noCE",  "PD noFS CE",  "PD FS CE",
+    "T1W noFS noCE",  "T1W FS noCE",  "T1W noFS CE", "T1W FS CE",
+    "T2W noFS noCE",  "T2W FS noCE",  "T2W noFS CE", "T2W FS CE",
+    "T2W STIR noCE",  "T2W STIR CE",
+    "T2* noFS noCE",  "T2* FS noCE",  "T2* noFS CE",  "T2* FS CE",
+    "PD noFS noCE",   "PD FS noCE",   "PD noFS CE",  "PD FS CE",
     "DWI", "Localizer", "Other", "To_review",
 ]
 
@@ -103,6 +104,65 @@ def phys_badge(row, filter_w, filter_fs, filter_c) -> str:
     color = phys_ref_color(row, filter_w, filter_fs, filter_c)
     return (f'<span style="color:{color}; font-size:0.72em; '
             f'font-family:monospace; font-weight:bold">{label}</span>')
+
+
+# ---------------------------------------------------------------------------
+# Pill styling
+# ---------------------------------------------------------------------------
+
+_PILL_COLORS = {
+    "T1W":       "#cce0ff",   # blue
+    "T2W":       "#c8ecd4",   # green
+    "T2*":       "#ffe5b4",   # amber
+    "PD":        "#e8d0f5",   # purple
+    "DWI":       "#ffd0d0",   # red
+    "Localizer": "#dcdcdc",   # grey
+    "Other":     "#f0f0f0",
+    "To_review": "#fff3b0",   # yellow
+}
+
+
+def inject_pill_styles() -> None:
+    """Inject CSS (bold selected) + JS (group colours) into the Streamlit page."""
+    color_js = "\n".join(
+        f'            "{k}": "{v}",' for k, v in _PILL_COLORS.items()
+    )
+    st.markdown(f"""
+<style>
+/* Smaller font so all options fit on one line */
+button[data-testid="stPillsOptionButton"] {{
+    font-size: 0.72em !important;
+    padding: 2px 7px !important;
+}}
+/* Bold + thicker border on the selected pill */
+button[data-testid="stPillsOptionButton"][aria-checked="true"] {{
+    font-weight: 700 !important;
+    border-width: 2px !important;
+}}
+</style>
+<script>
+(function() {{
+    const COLORS = {{
+{color_js}
+    }};
+    function applyColors() {{
+        document.querySelectorAll('button[data-testid="stPillsOptionButton"]').forEach(btn => {{
+            const text = (btn.innerText || btn.textContent || '').trim();
+            for (const [prefix, color] of Object.entries(COLORS)) {{
+                if (text.startsWith(prefix)) {{
+                    btn.style.background  = color;
+                    btn.style.borderColor = color;
+                    break;
+                }}
+            }}
+        }});
+    }}
+    // Retry for up to ~6 s to catch pills rendered after this script runs
+    let tries = 0;
+    const iv = setInterval(() => {{ applyColors(); if (++tries > 20) clearInterval(iv); }}, 300);
+}})();
+</script>
+""", unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------------------
@@ -263,7 +323,9 @@ def main():
     batch        = df_filtered.head(n_cols * n_rows)
     user_actions = {}
 
+    inject_pill_styles()
     with st.form("batch_form"):
+
         cols = st.columns(n_cols)
         for i, (_, row) in enumerate(batch.iterrows()):
             orig_idx = row["index"]
