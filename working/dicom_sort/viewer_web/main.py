@@ -112,49 +112,24 @@ def phys_badge(row, filter_w, filter_fs, filter_c) -> str:
 
 
 def inject_pill_styles() -> None:
-    """
-    Pure-CSS pill styling via st.markdown.
-    <style> tags are reliably rendered; <script> tags are not.
-
-    Group colours use :nth-child based on the fixed order of BUTTON_LABELS:
-      1-4   T1W   blue
-      5-10  T2W   green
-      11-14 T2*   amber
-      15-18 PD    purple
-      19    DWI   red
-      20    Localizer  grey
-      21    Other
-      22    To_review  yellow
-    """
-    # Build nth-child selectors scoped to any element that directly contains
-    # stPillsOptionButton children (works in Chrome/Edge/Firefox/Safari >= 2023).
-    _SEL = "div:has(>button[data-testid='stPillsOptionButton'])>button[data-testid='stPillsOptionButton']"
-
-    def _nth(start, end, color):
-        selectors = ",\n".join(f"{_SEL}:nth-child({i})" for i in range(start, end + 1))
-        return f"{selectors} {{ background-color:{color} !important; border-color:{color} !important; }}"
-
-    color_css = "\n".join([
-        _nth(1,  4,  "#cce0ff"),   # T1W  – blue
-        _nth(5,  10, "#c8ecd4"),   # T2W  – green
-        _nth(11, 14, "#ffe5b4"),   # T2*  – amber
-        _nth(15, 18, "#e8d0f5"),   # PD   – purple
-        _nth(19, 19, "#ffd0d0"),   # DWI  – red
-        _nth(20, 20, "#dcdcdc"),   # Localizer – grey
-        _nth(22, 22, "#fff3b0"),   # To_review – yellow
-    ])
-
-    st.markdown(f"""
+    st.markdown("""
 <style>
-button[data-testid="stPillsOptionButton"] {{
-    font-size: 0.72em !important;
-    padding: 2px 7px !important;
-}}
-button[data-testid="stPillsOptionButton"][aria-checked="true"] {{
+/* Streamlit pills — try multiple selectors to cover different versions */
+button[data-testid="stPillsOptionButton"],
+button[data-testid="stPillsOption"],
+div[data-testid="stPills"] button,
+div[data-testid="stPillsContainer"] button,
+.stPills button,
+.stPillsOptionButton {
+    font-size: 0.65em !important;
+    padding: 1px 6px !important;
+    line-height: 1.2 !important;
+}
+button[data-testid="stPillsOptionButton"][aria-checked="true"],
+div[data-testid="stPills"] button[aria-checked="true"],
+div[data-testid="stPillsContainer"] button[aria-pressed="true"] {
     font-weight: 700 !important;
-    border-width: 2px !important;
-}}
-{color_css}
+}
 </style>
 """, unsafe_allow_html=True)
 
