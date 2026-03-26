@@ -1,5 +1,7 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import os
+import json
 import pandas as pd
 import numpy as np
 import subprocess
@@ -123,31 +125,40 @@ _PILL_COLORS = {
 
 
 def inject_pill_styles() -> None:
-    """Inject CSS (bold selected) + JS (group colours) into the Streamlit page."""
-    color_js = "\n".join(
-        f'            "{k}": "{v}",' for k, v in _PILL_COLORS.items()
-    )
-    st.markdown(f"""
-<style>
-/* Smaller font so all options fit on one line */
-button[data-testid="stPillsOptionButton"] {{
-    font-size: 0.72em !important;
-    padding: 2px 7px !important;
-}}
-/* Bold + thicker border on the selected pill */
-button[data-testid="stPillsOptionButton"][aria-checked="true"] {{
-    font-weight: 700 !important;
-    border-width: 2px !important;
-}}
-</style>
+    """
+    Inject pill styles via a hidden iframe component so the script actually runs.
+    CSS is appended to parent.document.head; colours are applied by matching
+    button text prefixes against _PILL_COLORS.
+    """
+    colors_json = json.dumps(_PILL_COLORS)
+    components.html(f"""
 <script>
 (function() {{
-    const COLORS = {{
-{color_js}
-    }};
-    function applyColors() {{
-        document.querySelectorAll('button[data-testid="stPillsOptionButton"]').forEach(btn => {{
-            const text = (btn.innerText || btn.textContent || '').trim();
+    const COLORS = {colors_json};
+
+    function applyAll() {{
+        const doc = parent.document;
+
+        // Inject CSS once
+        if (!doc.getElementById('_pill_custom_css')) {{
+            const style = doc.createElement('style');
+            style.id = '_pill_custom_css';
+            style.textContent = `
+                button[data-testid="stPillsOptionButton"] {{
+                    font-size: 0.72em !important;
+                    padding: 2px 7px !important;
+                }}
+                button[data-testid="stPillsOptionButton"][aria-checked="true"] {{
+                    font-weight: 700 !important;
+                    border-width: 2px !important;
+                }}
+            `;
+            doc.head.appendChild(style);
+        }}
+
+        // Apply group colours by text prefix
+        doc.querySelectorAll('button[data-testid="stPillsOptionButton"]').forEach(btn => {{
+            const text = (btn.innerText || '').trim();
             for (const [prefix, color] of Object.entries(COLORS)) {{
                 if (text.startsWith(prefix)) {{
                     btn.style.background  = color;
@@ -157,12 +168,13 @@ button[data-testid="stPillsOptionButton"][aria-checked="true"] {{
             }}
         }});
     }}
-    // Retry for up to ~6 s to catch pills rendered after this script runs
+
+    // Poll for up to ~6 s to catch pills rendered after this script
     let tries = 0;
-    const iv = setInterval(() => {{ applyColors(); if (++tries > 20) clearInterval(iv); }}, 300);
+    const iv = setInterval(() => {{ applyAll(); if (++tries > 20) clearInterval(iv); }}, 300);
 }})();
 </script>
-""", unsafe_allow_html=True)
+""", height=0)
 
 
 # ---------------------------------------------------------------------------
