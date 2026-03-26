@@ -1,7 +1,5 @@
 import streamlit as st
-import streamlit.components.v1 as components
 import os
-import json
 import pandas as pd
 import numpy as np
 import subprocess
@@ -112,69 +110,53 @@ def phys_badge(row, filter_w, filter_fs, filter_c) -> str:
 # Pill styling
 # ---------------------------------------------------------------------------
 
-_PILL_COLORS = {
-    "T1W":       "#cce0ff",   # blue
-    "T2W":       "#c8ecd4",   # green
-    "T2*":       "#ffe5b4",   # amber
-    "PD":        "#e8d0f5",   # purple
-    "DWI":       "#ffd0d0",   # red
-    "Localizer": "#dcdcdc",   # grey
-    "Other":     "#f0f0f0",
-    "To_review": "#fff3b0",   # yellow
-}
-
 
 def inject_pill_styles() -> None:
     """
-    Inject pill styles via a hidden iframe component so the script actually runs.
-    CSS is appended to parent.document.head; colours are applied by matching
-    button text prefixes against _PILL_COLORS.
+    Pure-CSS pill styling via st.markdown.
+    <style> tags are reliably rendered; <script> tags are not.
+
+    Group colours use :nth-child based on the fixed order of BUTTON_LABELS:
+      1-4   T1W   blue
+      5-10  T2W   green
+      11-14 T2*   amber
+      15-18 PD    purple
+      19    DWI   red
+      20    Localizer  grey
+      21    Other
+      22    To_review  yellow
     """
-    colors_json = json.dumps(_PILL_COLORS)
-    components.html(f"""
-<script>
-(function() {{
-    const COLORS = {colors_json};
+    # Build nth-child selectors scoped to any element that directly contains
+    # stPillsOptionButton children (works in Chrome/Edge/Firefox/Safari >= 2023).
+    _SEL = "div:has(>button[data-testid='stPillsOptionButton'])>button[data-testid='stPillsOptionButton']"
 
-    function applyAll() {{
-        const doc = parent.document;
+    def _nth(start, end, color):
+        selectors = ",\n".join(f"{_SEL}:nth-child({i})" for i in range(start, end + 1))
+        return f"{selectors} {{ background-color:{color} !important; border-color:{color} !important; }}"
 
-        // Inject CSS once
-        if (!doc.getElementById('_pill_custom_css')) {{
-            const style = doc.createElement('style');
-            style.id = '_pill_custom_css';
-            style.textContent = `
-                button[data-testid="stPillsOptionButton"] {{
-                    font-size: 0.72em !important;
-                    padding: 2px 7px !important;
-                }}
-                button[data-testid="stPillsOptionButton"][aria-checked="true"] {{
-                    font-weight: 700 !important;
-                    border-width: 2px !important;
-                }}
-            `;
-            doc.head.appendChild(style);
-        }}
+    color_css = "\n".join([
+        _nth(1,  4,  "#cce0ff"),   # T1W  – blue
+        _nth(5,  10, "#c8ecd4"),   # T2W  – green
+        _nth(11, 14, "#ffe5b4"),   # T2*  – amber
+        _nth(15, 18, "#e8d0f5"),   # PD   – purple
+        _nth(19, 19, "#ffd0d0"),   # DWI  – red
+        _nth(20, 20, "#dcdcdc"),   # Localizer – grey
+        _nth(22, 22, "#fff3b0"),   # To_review – yellow
+    ])
 
-        // Apply group colours by text prefix
-        doc.querySelectorAll('button[data-testid="stPillsOptionButton"]').forEach(btn => {{
-            const text = (btn.innerText || '').trim();
-            for (const [prefix, color] of Object.entries(COLORS)) {{
-                if (text.startsWith(prefix)) {{
-                    btn.style.background  = color;
-                    btn.style.borderColor = color;
-                    break;
-                }}
-            }}
-        }});
-    }}
-
-    // Poll for up to ~6 s to catch pills rendered after this script
-    let tries = 0;
-    const iv = setInterval(() => {{ applyAll(); if (++tries > 20) clearInterval(iv); }}, 300);
-}})();
-</script>
-""", height=0)
+    st.markdown(f"""
+<style>
+button[data-testid="stPillsOptionButton"] {{
+    font-size: 0.72em !important;
+    padding: 2px 7px !important;
+}}
+button[data-testid="stPillsOptionButton"][aria-checked="true"] {{
+    font-weight: 700 !important;
+    border-width: 2px !important;
+}}
+{color_css}
+</style>
+""", unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------------------
