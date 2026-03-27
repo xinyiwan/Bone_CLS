@@ -30,7 +30,7 @@ b = 0 images (non-diffusion-weighted reference volumes) are **not** classified a
 
 ---
 
-### Step 2 — Inversion Recovery (TI > 0)
+### Step 2 — Inversion Time (TI > 0)
 
 | Condition | Result |
 |---|---|
@@ -51,7 +51,7 @@ STIR and FLAIR are both mapped to **T2W** with their acquisition type recorded s
 |---|---|
 | TR ≤ 8 ms and TE ≤ 4 ms and FA 35–100° | Localizer |
 | TR ≤ 20 ms and TE ≤ 6 ms | T1W / GRE |
-| TE ≥ 11 ms | T2\* / GRE |
+| TE ≥ 6 ms | T2\* / GRE |
 | Otherwise | Unknown / GRE |
 
 ---

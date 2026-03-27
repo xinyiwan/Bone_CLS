@@ -213,8 +213,8 @@ def _classify_gre(
 
     # T2*_GRE
     # Simplify the rules to just TE thresholds for both 1.5T and 3T.
-    # TODO change the range to include more typical T2* with TEs around 11 and above.
-    if TE >= 11:
+    # changed the threshold to 6 based on inspected errors
+    if TE >= 6:
         return _result("T2*", acquisition="GRE", fat_sat=fs, contrast=contrast)
 
     return _result("Unknown", acquisition="GRE", fat_sat=fs, contrast=contrast)
@@ -291,7 +291,7 @@ def classify_physics(row: pd.Series) -> dict:
     # Step 0: Localizer — checked first, before any physics rules
     # Uses the same keyword logic as label_csv.py.
     # ------------------------------------------------------------------
-    if re.search(r"CAL|LOC|LOCAL|SCOUT|SURVEY|CALIBRATION", series_desc.upper()):
+    if re.search(r"CALI|LOC|LOCAL|SCOUT|SURVEY|CALIBRATION", series_desc.upper()):
         return _result("Localizer")
 
     # ------------------------------------------------------------------
@@ -299,7 +299,7 @@ def classify_physics(row: pd.Series) -> dict:
     # b_value == 0 is the non-diffusion-weighted reference volume; not DWI.
     # ------------------------------------------------------------------
     b_val_float = _safe_float(b_value)
-    b_value_is_dwi = _is_present(b_value) and b_val_float is not None and b_val_float > 0
+    b_value_is_dwi = _is_present(b_value) and b_val_float is not None and b_val_float >= 0
 
     is_dwi = (
         b_value_is_dwi
