@@ -215,7 +215,8 @@ def process_scan(scan_dir: Path, out_scan_dir: Path, fast: bool, device: str) ->
         print(f"  [SKIP] {scan_dir.name}  (matches skip pattern)")
         return
 
-    seg_combined = out_scan_dir / "segmentations.nii.gz"   # TotalSegmentator ml=True output
+    totalseg_dir = out_scan_dir / "totalseg"
+    seg_combined = totalseg_dir / "segmentations.nii.gz"
     label_json   = out_scan_dir / "bone_seg_labels.json"
 
     if label_json.exists():
@@ -224,15 +225,16 @@ def process_scan(scan_dir: Path, out_scan_dir: Path, fast: bool, device: str) ->
 
     print(f"  [RUN ] {scan_dir.name}")
 
-    # Write TotalSegmentator output directly into out_scan_dir (no sub-folder)
+    # TotalSegmentator writes to totalseg/ so any files it spills one level up
+    # (e.g. DICOM→NIfTI conversion artifacts) still land inside out_scan_dir.
     out_scan_dir.mkdir(parents=True, exist_ok=True)
     if not seg_combined.exists():
-        success = run_totalseg(image_path, out_scan_dir, fast=fast, device=device)
+        success = run_totalseg(image_path, totalseg_dir, fast=fast, device=device)
         if not success:
             return
         chmod_r(out_scan_dir)
 
-    label_map = extract_bone_labels(out_scan_dir)
+    label_map = extract_bone_labels(totalseg_dir)
     if not label_map:
         print(f"    [WARN] no bone structures found in TotalSegmentator output")
         return
