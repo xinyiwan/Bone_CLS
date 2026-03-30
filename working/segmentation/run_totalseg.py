@@ -273,18 +273,41 @@ def process_session(
         process_scan(scan_dir, out_scan_dir, fast=fast, device=device)
 
 
+def find_session_dirs(root_dir: Path, max_depth: int = 6) -> list[Path]:
+    """
+    Recursively find all session directories under root_dir.
+    A session directory is one that contains at least one child directory
+    with a valid scan input (images.nii.gz or .dcm files).
+    Stops descending into a branch once a session is found.
+    """
+    sessions: list[Path] = []
+
+    def walk(d: Path, depth: int) -> None:
+        if depth > max_depth:
+            return
+        has_valid_scan = any(
+            child.is_dir() and find_scan_input(child) is not None
+            for child in d.iterdir()
+        )
+        if has_valid_scan:
+            sessions.append(d)
+        else:
+            for child in sorted(d.iterdir()):
+                if child.is_dir():
+                    walk(child, depth + 1)
+
+    walk(root_dir, 0)
+    return sorted(sessions)
+
+
 def process_root(root_dir: Path, out_dir: Path, fast: bool, device: str) -> None:
     """
-    Walk root / subject / session / scan, mirroring the structure under out_dir.
+    Recursively find all session directories under root_dir and process them,
+    mirroring the directory structure under out_dir.
     """
-    session_dirs = sorted(
-        p
-        for subject in sorted(root_dir.iterdir()) if subject.is_dir()
-        for p in sorted(subject.iterdir()) if p.is_dir()
-    )
+    session_dirs = find_session_dirs(root_dir)
     if not session_dirs:
-        # root is itself a session dir
-        process_session(root_dir, out_dir, fast=fast, device=device)
+        print(f"[WARN] No session directories with valid scans found under {root_dir}")
         return
 
     for session_dir in session_dirs:
