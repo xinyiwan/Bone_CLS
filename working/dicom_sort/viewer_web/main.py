@@ -95,7 +95,7 @@ def phys_ref_color(row, filter_w, filter_fs, filter_c) -> str:
     seq = str(row.get("phys_sequence", "") or "").strip()
     if not seq or seq.lower() in ("nan", "none", "x", ""):
         return "#888888"
-    dcm_to_phys = {"T1W": "T1W", "T2W": "T2W", "T2*": "T2*", "PD": "PD", "DW": "DWI"}
+    dcm_to_phys = {"T1W": "T1W", "T2W": "T2W", "T2*": "T2*", "PD": "PD", "DW": "DWI", "Other": "Localizer"}
     expected = dcm_to_phys.get(filter_w)
     if expected is None:
         return "#888888"
