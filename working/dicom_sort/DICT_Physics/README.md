@@ -25,7 +25,7 @@ Series description matches `CAL`, `LOC`, `LOCAL`, `SCOUT`, `SURVEY`, or `CALIBRA
 ---
 
 ### Step 1 — DWI
-Triggered when **b-value > 0** is present, or `DIFFUSION` appears in `ImageType`.
+Triggered when **b-value >= 0** is present, or `DIFFUSION` appears in `ImageType`.
 b = 0 images (non-diffusion-weighted reference volumes) are **not** classified as DWI.
 
 ---

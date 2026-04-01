@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import os
 import pandas as pd
 import numpy as np
@@ -16,14 +17,15 @@ n_rows = 3
 # Label helpers
 # ---------------------------------------------------------------------------
 
-BUTTON_LABELS = [
-    "T1W noFS noCE",  "T1W FS noCE",  "T1W noFS CE", "T1W FS CE",
-    "T2W noFS noCE",  "T2W FS noCE",  "T2W noFS CE", "T2W FS CE",
-    "T2W STIR noCE",  "T2W STIR CE",
-    "T2* noFS noCE",  "T2* FS noCE",  "T2* noFS CE",  "T2* FS CE",
-    "PD noFS noCE",   "PD FS noCE",   "PD noFS CE",  "PD FS CE",
-    "DWI", "Localizer", "Other", "To_review",
+BUTTON_GROUPS = [
+    ("T1W", ["T1W noFS noCE", "T1W FS noCE",  "T1W noFS CE",  "T1W FS CE"]),
+    ("T2W", ["T2W noFS noCE", "T2W FS noCE",  "T2W noFS CE",  "T2W FS CE",
+              "T2W STIR noCE", "T2W STIR CE"]),
+    ("T2*", ["T2* noFS noCE", "T2* FS noCE",  "T2* noFS CE",  "T2* FS CE"]),
+    ("PD",  ["PD noFS noCE",  "PD FS noCE",   "PD noFS CE",   "PD FS CE"]),
+    ("Sp",  ["DWI", "Localizer", "Other", "To_review"]),
 ]
+BUTTON_LABELS = [lbl for _, grp in BUTTON_GROUPS for lbl in grp]
 
 _DECODE_MAP = {
     "T1W noFS noCE":  ("T1W",       "N",         "N"),
@@ -124,9 +126,34 @@ button[data-testid="stBaseButton-pills"] {
     font-size: 0.65em !important;
     padding: 1px 6px !important;
     line-height: 1.2 !important;
+    border-width: 2px !important;
 }
 </style>
 """, unsafe_allow_html=True)
+    components.html("""
+<script>
+(function() {
+  function applyColors() {
+    var d = window.parent.document;
+    d.querySelectorAll('button[data-testid="stBaseButton-pills"]').forEach(function(btn) {
+      var t = btn.textContent.trim();
+      var c = t.startsWith('T1W') ? '#1565c0'
+            : t.startsWith('T2W') ? '#2e7d32'
+            : t.startsWith('T2*') ? '#e65100'
+            : t.startsWith('PD')  ? '#6a1b9a'
+            : t === 'DWI'         ? '#01579b'
+            : '#455a64';
+      btn.style.setProperty('border-color', c, 'important');
+      btn.style.setProperty('color',        c, 'important');
+    });
+  }
+  applyColors();
+  new MutationObserver(applyColors).observe(
+    window.parent.document.body, {childList: true, subtree: true}
+  );
+})();
+</script>
+""", height=0)
 
 
 # ---------------------------------------------------------------------------
@@ -156,6 +183,12 @@ def run_img_generator(excel_path, img_base, dcm_root="", dcm_orig="/Project"):
 # ---------------------------------------------------------------------------
 
 def main():
+    if st.session_state.pop("do_scroll_top", False):
+        components.html(
+            '<script>window.parent.scrollTo({top:0,behavior:"instant"});</script>',
+            height=0,
+        )
+
     st.sidebar.title("Configuration")
 
     path_results  = st.sidebar.text_input("1. Output folder",     value="/Proyecto/Results")
@@ -317,9 +350,16 @@ def main():
                 orig_c  = row.get("Predicción Clases C",  "")
                 initial = get_default_label(orig_w, orig_fs, orig_c)
 
-                sel = st.pills("Class", BUTTON_LABELS, default=initial,
-                               key=f"p_{orig_idx}", label_visibility="collapsed")
-                user_actions[orig_idx] = sel
+                grp_sels = [
+                    st.pills(gname, glabels,
+                             default=initial if initial in glabels else None,
+                             key=f"p_{orig_idx}_{gname}",
+                             label_visibility="collapsed")
+                    for gname, glabels in BUTTON_GROUPS
+                ]
+                user_actions[orig_idx] = next(
+                    (v for v in grp_sels if v is not None), None
+                )
 
         if st.form_submit_button("Save & Next", use_container_width=True):
             for idx, sel in user_actions.items():
@@ -352,6 +392,7 @@ def main():
             _save_csv(os.path.join(
                 backup_dir, f"Review_{val_w}_{datetime.now().strftime('%Y%m%d-%H%M')}.csv"
             ))
+            st.session_state.do_scroll_top = True
             st.rerun()
 
 
