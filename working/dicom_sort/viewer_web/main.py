@@ -36,6 +36,8 @@ _DECODE_MAP = {
     "T2W FS":         ("T2W",       "Y",         "-"),
     "T2W noFS CE":    ("T2W",       "N",         "Y"),
     "T2W FS CE":      ("T2W",       "Y",         "Y"),
+    "T2W STIR noCE":  ("T2W",  "Y-STIR",         "N"),
+    "T2W STIR CE":    ("T2W",  "Y-STIR",         "Y"),
     "T2* noFS noCE":  ("T2*",       "N",         "N"),
     "T2* other":      ("T2*",       "-",         "-"),
     "PD noFS noCE":   ("PD",        "N",         "N"),
@@ -46,6 +48,7 @@ _DECODE_MAP = {
     "Localizer":      ("Localizer", "-",         "-"),
     "Other":          ("Other",     "-",         "-"),
     "To_review":      ("To_review", "To_review", "To_review"),
+    "Zip/JPG":        ("Zip/JPG",   "-",         "-"),
 }
 
 
