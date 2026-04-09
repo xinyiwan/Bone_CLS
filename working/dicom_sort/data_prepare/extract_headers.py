@@ -20,13 +20,14 @@ from __future__ import annotations
 
 import csv
 from pathlib import Path
+import sys
 
 import numpy as np
 import pydicom
 from utils import find_scan_dirs
 
-DATADIR = Path("/data/")
-OUTPUT_CSV = Path("/results/dicom_headers_Mar24.csv")
+# DATADIR = Path("/data/")
+# OUTPUT_CSV = Path("/results/dicom_headers_Mar24.csv")
 
 
 # ---------------------------------------------------------------------------
@@ -244,4 +245,9 @@ def extract_all_headers(datadir: Path, output_csv: Path) -> None:
 
 
 if __name__ == "__main__":
-    extract_all_headers(DATADIR, OUTPUT_CSV)
+    args = sys.argv[1:]
+    if not args:
+        sys.exit("Usage: python extract_headers.py DATADIR OUTPUT_CSV")
+    datadir  = Path(args[0])
+    output_csv = Path(args[1])
+    extract_all_headers(datadir, output_csv)

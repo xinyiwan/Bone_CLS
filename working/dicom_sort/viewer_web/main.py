@@ -23,7 +23,7 @@ BUTTON_GROUPS = [
               "T2W STIR noCE", "T2W STIR CE"]),
     ("T2*", ["T2* noFS noCE", "T2* FS noCE",  "T2* noFS CE",  "T2* FS CE"]),
     ("PD",  ["PD noFS noCE",  "PD FS noCE",   "PD noFS CE",   "PD FS CE"]),
-    ("Sp",  ["DWI", "Localizer", "Other", "To_review"]),
+    ("Sp",  ["DWI", "Localizer", "Other", "To_review", "Zip/JPG"]),
 ]
 BUTTON_LABELS = [lbl for _, grp in BUTTON_GROUPS for lbl in grp]
 
@@ -123,10 +123,10 @@ def inject_pill_styles() -> None:
     st.markdown("""
 <style>
 button[data-testid="stBaseButton-pills"] {
-    font-size: 0.65em !important;
+    font-size: 0.5em !important;
     padding: 1px 6px !important;
     line-height: 1.2 !important;
-    border-width: 2px !important;
+    border-width: 1px !important;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -183,11 +183,6 @@ def run_img_generator(excel_path, img_base, dcm_root="", dcm_orig="/Project"):
 # ---------------------------------------------------------------------------
 
 def main():
-    if st.session_state.pop("do_scroll_top", False):
-        components.html(
-            '<script>window.parent.scrollTo({top:0,behavior:"instant"});</script>',
-            height=0,
-        )
 
     st.sidebar.title("Configuration")
 
@@ -251,6 +246,7 @@ def main():
             st.toast("File loaded from scratch", icon="📄")
 
         # Merge physics reference
+        # columns to match the CLF prediction
         _phys_cols = ["phys_sequence", "phys_acquisition", "phys_fat_sat", "phys_contrast"]
         df_temp = df_temp.drop(columns=[c for c in _phys_cols if c in df_temp.columns])
         if uploaded_ref is not None:
@@ -394,7 +390,23 @@ def main():
             ))
             st.session_state.do_scroll_top = True
             st.rerun()
-
+    
+        # Handle scroll after rerun - using components.html instead of markdown
+        if st.session_state.get('do_scroll_top', False):
+            # Use components.html instead of st.markdown
+            components.html("""
+                <script>
+                // Try to find the anchor first
+                var anchor = window.parent.document.getElementById('form-top');
+                if (anchor) {
+                    anchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                } else {
+                    window.parent.scrollTo({ top: 0, behavior: 'smooth' });
+                }
+                </script>
+            """, height=0)
+            # Reset the flag
+            st.session_state.do_scroll_top = False
 
 if __name__ == "__main__":
     main()

@@ -39,7 +39,7 @@ Usage:
 import argparse
 import json
 import re
-import sys
+import sys, os
 from datetime import datetime
 from pathlib import Path
 
@@ -154,7 +154,6 @@ def run_totalseg(input_path: Path, output_dir: Path, fast: bool, device: str) ->
             "Install with: pip install TotalSegmentator"
         )
 
-    output_dir.mkdir(parents=True, exist_ok=True)
     try:
         totalsegmentator(
             input=str(input_path),
@@ -183,7 +182,7 @@ def extract_bone_labels(totalseg_dir: Path) -> dict[int, str]:
     a label map {class_id: name} for bone structures that are actually present
     (non-zero voxel count).
     """
-    combined = totalseg_dir / "segmentations.nii.gz"
+    combined = totalseg_dir / "segmentation.nii"
     if not combined.exists():
         print(f"    [WARN] {combined} not found")
         return {}
@@ -215,8 +214,8 @@ def process_scan(scan_dir: Path, out_scan_dir: Path, fast: bool, device: str) ->
         print(f"  [SKIP] {scan_dir.name}  (matches skip pattern)")
         return
 
-    totalseg_dir = out_scan_dir / "totalseg"
-    seg_combined = totalseg_dir / "segmentations.nii.gz"
+    totalseg_dir = out_scan_dir / "segmentation"
+    seg_combined = out_scan_dir / "segmentation.nii"
     label_json   = out_scan_dir / "bone_seg_labels.json"
 
     if label_json.exists():
@@ -232,9 +231,18 @@ def process_scan(scan_dir: Path, out_scan_dir: Path, fast: bool, device: str) ->
         success = run_totalseg(image_path, totalseg_dir, fast=fast, device=device)
         if not success:
             return
-        chmod_r(out_scan_dir)
+    chmod_r(out_scan_dir)
+    # check if totalseg_dir exists and empty
+    if totalseg_dir.exists() and len(os.listdir(totalseg_dir)) != 0:
+        try:
+            os.rmdir(totalseg_dir)
+        except OSError as e:
+            print("Error:", e)
+    else:
+        pass
 
-    label_map = extract_bone_labels(totalseg_dir)
+
+    label_map = extract_bone_labels(out_scan_dir)
     if not label_map:
         print(f"    [WARN] no bone structures found in TotalSegmentator output")
         return
