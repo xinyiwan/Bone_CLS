@@ -299,7 +299,7 @@ def classify_physics(row: pd.Series) -> dict:
     # b_value == 0 is the non-diffusion-weighted reference volume; not DWI.
     # ------------------------------------------------------------------
     b_val_float = _safe_float(b_value)
-    b_value_is_dwi = _is_present(b_value) and b_val_float is not None and b_val_float >= 0
+    b_value_is_dwi = _is_present(b_value) and b_val_float is not None and b_val_float > 0
 
     is_dwi = (
         b_value_is_dwi
