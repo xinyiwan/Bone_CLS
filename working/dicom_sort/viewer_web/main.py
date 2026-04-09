@@ -313,100 +313,119 @@ def main():
         st.success("All reviewed for this filter, or no cases found.")
         return
 
-    batch        = df_filtered.head(n_cols * n_rows)
-    user_actions = {}
+    batch = df_filtered.head(n_cols * n_rows)
+
+    # Pre-initialise session state for every pill group so on_change can clear siblings.
+    # Only set the key if it doesn't exist yet (preserves user edits across reruns).
+    for _, row in batch.iterrows():
+        orig_idx = row["index"]
+        initial  = get_default_label(
+            row.get("Predicción Clases W",  ""),
+            row.get("Predicción Clases FS", ""),
+            row.get("Predicción Clases C",  ""),
+        )
+        for gname, glabels in BUTTON_GROUPS:
+            key = f"p_{orig_idx}_{gname}"
+            if key not in st.session_state:
+                st.session_state[key] = initial if initial in glabels else None
+
+    def make_on_change(orig_idx, active_gname):
+        """Return a callback that clears every other group for this image."""
+        def _cb():
+            if st.session_state.get(f"p_{orig_idx}_{active_gname}") is not None:
+                for gname, _ in BUTTON_GROUPS:
+                    if gname != active_gname:
+                        st.session_state[f"p_{orig_idx}_{gname}"] = None
+        return _cb
 
     inject_pill_styles()
-    with st.form("batch_form"):
+    cols = st.columns(n_cols)
+    for i, (_, row) in enumerate(batch.iterrows()):
+        orig_idx = row["index"]
+        with cols[i % n_cols]:
+            paciente = str(row.get("Paciente", ""))
+            estudio  = str(row.get("Estudio",  ""))
+            serie    = str(row.get("Serie",    ""))
 
-        cols = st.columns(n_cols)
-        for i, (_, row) in enumerate(batch.iterrows()):
-            orig_idx = row["index"]
-            with cols[i % n_cols]:
-                paciente = str(row.get("Paciente", ""))
-                estudio  = str(row.get("Estudio",  ""))
-                serie    = str(row.get("Serie",    ""))
+            # here the order is only to adapt with current structure
+            st.caption(paciente)
 
-                # here the order is only to adapt with current structure
-                st.caption(paciente)
+            img_path = os.path.join(path_img_base, serie, estudio, paciente, "Img.png")
+            try:
+                img_pil    = Image.open(img_path).convert("L")
+                img_padded = pad_image(np.array(img_pil))
+                st.image(img_padded, use_container_width=True, clamp=True)
+            except Exception as e:
+                st.error(f"Image not found:\n{serie[:15]}…\n{e}")
 
-                img_path = os.path.join(path_img_base, serie, estudio, paciente, "Img.png")
-                try:
-                    img_pil    = Image.open(img_path).convert("L")
-                    img_padded = pad_image(np.array(img_pil))
-                    st.image(img_padded, use_container_width=True, clamp=True)
-                except Exception as e:
-                    st.error(f"Image not found:\n{serie[:15]}…\n{e}")
+            if has_phys:
+                st.markdown(phys_badge(row, val_w, val_fs, val_c), unsafe_allow_html=True)
 
-                if has_phys:
-                    st.markdown(phys_badge(row, val_w, val_fs, val_c), unsafe_allow_html=True)
+            for gname, glabels in BUTTON_GROUPS:
+                st.pills(gname, glabels,
+                         key=f"p_{orig_idx}_{gname}",
+                         label_visibility="collapsed",
+                         on_change=make_on_change(orig_idx, gname))
 
-                orig_w  = row.get("Predicción Clases W",  "")
-                orig_fs = row.get("Predicción Clases FS", "")
-                orig_c  = row.get("Predicción Clases C",  "")
-                initial = get_default_label(orig_w, orig_fs, orig_c)
+    if st.button("Save & Next", use_container_width=True):
+        for _, row in batch.iterrows():
+            idx = row["index"]
+            # Pick the one selected label across all groups
+            sel = next(
+                (st.session_state.get(f"p_{idx}_{gname}")
+                 for gname, _ in BUTTON_GROUPS
+                 if st.session_state.get(f"p_{idx}_{gname}") is not None),
+                None,
+            )
 
-                grp_sels = [
-                    st.pills(gname, glabels,
-                             default=initial if initial in glabels else None,
-                             key=f"p_{orig_idx}_{gname}",
-                             label_visibility="collapsed")
-                    for gname, glabels in BUTTON_GROUPS
-                ]
-                user_actions[orig_idx] = next(
-                    (v for v in grp_sels if v is not None), None
-                )
+            fila    = st.session_state.df_master.loc[idx]
+            orig_w  = fila.get("Predicción Clases W",  "")
+            orig_fs = fila.get("Predicción Clases FS", "")
+            orig_c  = fila.get("Predicción Clases C",  "")
 
-        if st.form_submit_button("Save & Next", use_container_width=True):
-            for idx, sel in user_actions.items():
-                fila    = st.session_state.df_master.loc[idx]
-                orig_w  = fila.get("Predicción Clases W",  "")
-                orig_fs = fila.get("Predicción Clases FS", "")
-                orig_c  = fila.get("Predicción Clases C",  "")
+            if not sel:
+                sel = get_default_label(orig_w, orig_fs, orig_c)
 
-                if not sel:
-                    sel = get_default_label(orig_w, orig_fs, orig_c)
+            w_f, fs_f, c_f = decode_selection(sel, orig_w, orig_fs, orig_c)
 
-                w_f, fs_f, c_f = decode_selection(sel, orig_w, orig_fs, orig_c)
+            st.session_state.df_master.at[idx, "viewed"]        = "X"
+            st.session_state.df_master.at[idx, "Clase W Final"]  = w_f
+            st.session_state.df_master.at[idx, "Clase FS Final"] = fs_f
+            st.session_state.df_master.at[idx, "Clase C Final"]  = c_f
 
-                st.session_state.df_master.at[idx, "viewed"]        = "X"
-                st.session_state.df_master.at[idx, "Clase W Final"]  = w_f
-                st.session_state.df_master.at[idx, "Clase FS Final"] = fs_f
-                st.session_state.df_master.at[idx, "Clase C Final"]  = c_f
+            # Clear pill state so the next batch initialises fresh
+            for gname, _ in BUTTON_GROUPS:
+                st.session_state.pop(f"p_{idx}_{gname}", None)
 
-            def _save_csv(path: str) -> None:
-                st.session_state.df_master.to_csv(path, index=False)
-                os.chmod(path, 0o777)
+        def _save_csv(path: str) -> None:
+            st.session_state.df_master.to_csv(path, index=False)
+            os.chmod(path, 0o777)
 
-            os.makedirs(path_results, exist_ok=True)
-            os.chmod(path_results, 0o777)
-            _save_csv(st.session_state.master_filepath)
+        os.makedirs(path_results, exist_ok=True)
+        os.chmod(path_results, 0o777)
+        _save_csv(st.session_state.master_filepath)
 
-            backup_dir = os.path.join(path_results, "Backups")
-            os.makedirs(backup_dir, exist_ok=True)
-            os.chmod(backup_dir, 0o777)
-            _save_csv(os.path.join(
-                backup_dir, f"Review_{val_w}_{datetime.now().strftime('%Y%m%d-%H%M')}.csv"
-            ))
-            st.session_state.do_scroll_top = True
-            st.rerun()
-    
-        # Handle scroll after rerun - using components.html instead of markdown
-        if st.session_state.get('do_scroll_top', False):
-            # Use components.html instead of st.markdown
-            components.html("""
-                <script>
-                // Try to find the anchor first
-                var anchor = window.parent.document.getElementById('form-top');
-                if (anchor) {
-                    anchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                } else {
-                    window.parent.scrollTo({ top: 0, behavior: 'smooth' });
-                }
-                </script>
-            """, height=0)
-            # Reset the flag
-            st.session_state.do_scroll_top = False
+        backup_dir = os.path.join(path_results, "Backups")
+        os.makedirs(backup_dir, exist_ok=True)
+        os.chmod(backup_dir, 0o777)
+        _save_csv(os.path.join(
+            backup_dir, f"Review_{val_w}_{datetime.now().strftime('%Y%m%d-%H%M')}.csv"
+        ))
+        st.session_state.do_scroll_top = True
+        st.rerun()
+
+    if st.session_state.get('do_scroll_top', False):
+        components.html("""
+            <script>
+            var anchor = window.parent.document.getElementById('form-top');
+            if (anchor) {
+                anchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            } else {
+                window.parent.scrollTo({ top: 0, behavior: 'smooth' });
+            }
+            </script>
+        """, height=0)
+        st.session_state.do_scroll_top = False
 
 if __name__ == "__main__":
     main()
