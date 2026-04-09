@@ -276,23 +276,35 @@ def main():
     df       = st.session_state.df_master
     has_phys = st.session_state.get("has_phys", False)
 
-    # ── Summary table ──────────────────────────────────────────────────────
-    with st.expander("Summary table", expanded=False):
-        grp      = ["Predicción Clases W", "Predicción Clases FS", "Predicción Clases C"]
-        grp      = [c for c in grp if c in df.columns]
-        resumen  = df.groupby(grp).size().reset_index(name="Total")
-        reviewed = df[df["viewed"] == "X"].groupby(grp).size().reset_index(name="Reviewed")
-        tabla    = pd.merge(resumen, reviewed, on=grp, how="left").fillna(0)
-        tabla["Reviewed"]  = tabla["Reviewed"].astype(int)
-        tabla["Remaining"] = tabla["Total"] - tabla["Reviewed"]
-        st.dataframe(tabla, use_container_width=True, hide_index=True)
-
     # ── Filters ────────────────────────────────────────────────────────────
     st.sidebar.divider()
     st.sidebar.subheader("Sequence filters")
 
     second_review = st.sidebar.checkbox("Second review", value=False,
                                         help="Show only images previously marked as To_review")
+
+    # ── Summary table ──────────────────────────────────────────────────────
+    with st.expander("Summary table", expanded=False):
+        if second_review:
+            to_review_mask = (
+                (df["Clase W Final"]  == "To_review") &
+                (df["Clase FS Final"] == "To_review") &
+                (df["Clase C Final"]  == "To_review") &
+                (df["viewed"]         == "X")
+            )
+            grp     = ["Predicción Clases W", "Predicción Clases FS", "Predicción Clases C"]
+            grp     = [c for c in grp if c in df.columns]
+            tabla   = df[to_review_mask].groupby(grp).size().reset_index(name="Remaining to re-label")
+            st.dataframe(tabla, use_container_width=True, hide_index=True)
+        else:
+            grp      = ["Predicción Clases W", "Predicción Clases FS", "Predicción Clases C"]
+            grp      = [c for c in grp if c in df.columns]
+            resumen  = df.groupby(grp).size().reset_index(name="Total")
+            reviewed = df[df["viewed"] == "X"].groupby(grp).size().reset_index(name="Reviewed")
+            tabla    = pd.merge(resumen, reviewed, on=grp, how="left").fillna(0)
+            tabla["Reviewed"]  = tabla["Reviewed"].astype(int)
+            tabla["Remaining"] = tabla["Total"] - tabla["Reviewed"]
+            st.dataframe(tabla, use_container_width=True, hide_index=True)
 
     if second_review:
         val_w, val_fs, val_c = "To_review", "To_review", "To_review"
