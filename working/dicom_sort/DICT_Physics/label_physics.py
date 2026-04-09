@@ -291,7 +291,7 @@ def classify_physics(row: pd.Series) -> dict:
     # Step 0: Localizer — checked first, before any physics rules
     # Uses the same keyword logic as label_csv.py.
     # ------------------------------------------------------------------
-    if re.search(r"CALI|LOC|LOCAL|SCOUT|SURVEY|CALIBRATION", series_desc.upper()):
+    if re.search(r"CALI|LOC|LOCAL|SCOUT|SURVEY|CALIBRATION|ASSET", series_desc.upper()):
         return _result("Localizer")
 
     # ------------------------------------------------------------------
