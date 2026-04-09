@@ -291,26 +291,41 @@ def main():
     st.sidebar.divider()
     st.sidebar.subheader("Sequence filters")
 
-    val_w = st.sidebar.selectbox("Modality (W)", ["T1W", "T2W", "T2*", "PD", "DW", "Other"])
-    mask  = df["Predicción Clases W"] == val_w
+    second_review = st.sidebar.checkbox("Second review", value=False,
+                                        help="Show only images previously marked as To_review")
 
-    if val_w in ("DW", "Other"):
-        val_fs, val_c = "-", "-"
+    if second_review:
+        val_w, val_fs, val_c = "To_review", "To_review", "To_review"
+        mask = (
+            (df["Clase W Final"]  == "To_review") &
+            (df["Clase FS Final"] == "To_review") &
+            (df["Clase C Final"]  == "To_review") &
+            (df["viewed"]         == "X")
+        )
     else:
-        val_fs = st.sidebar.selectbox("Fat sat (FS)", ["N", "Y"])
-        mask   = mask & (df["Predicción Clases FS"] == val_fs)
-        val_c  = st.sidebar.selectbox("Contrast (C)", ["N", "Y"]) if val_w == "T1W" else "-"
-        if val_c != "-":
-            mask = mask & (df["Predicción Clases C"] == val_c)
+        val_w = st.sidebar.selectbox("Modality (W)", ["T1W", "T2W", "T2*", "PD", "DW", "Other"])
+        mask  = df["Predicción Clases W"] == val_w
 
-    show_pending = st.sidebar.checkbox("Show only pending", value=True)
-    if show_pending:
-        mask = mask & (df["viewed"] != "X")
+        if val_w in ("DW", "Other"):
+            val_fs, val_c = "-", "-"
+        else:
+            val_fs = st.sidebar.selectbox("Fat sat (FS)", ["N", "Y"])
+            mask   = mask & (df["Predicción Clases FS"] == val_fs)
+            val_c  = st.sidebar.selectbox("Contrast (C)", ["N", "Y"]) if val_w == "T1W" else "-"
+            if val_c != "-":
+                mask = mask & (df["Predicción Clases C"] == val_c)
+
+        show_pending = st.sidebar.checkbox("Show only pending", value=True)
+        if show_pending:
+            mask = mask & (df["viewed"] != "X")
 
     df_filtered = df[mask].reset_index()
 
     # ── Main view ──────────────────────────────────────────────────────────
-    st.title(f"Review: {val_w}  |  FS: {val_fs}  |  CE: {val_c}")
+    if second_review:
+        st.title("Second Review: To_review cases")
+    else:
+        st.title(f"Review: {val_w}  |  FS: {val_fs}  |  CE: {val_c}")
     if has_phys:
         st.caption("Physics ref shown below each image  •  green = agrees  •  red = disagrees  •  grey = no data")
 
@@ -349,7 +364,10 @@ def main():
                 orig_w  = row.get("Predicción Clases W",  "")
                 orig_fs = row.get("Predicción Clases FS", "")
                 orig_c  = row.get("Predicción Clases C",  "")
-                initial = get_default_label(orig_w, orig_fs, orig_c)
+                if second_review:
+                    initial = "To_review"
+                else:
+                    initial = get_default_label(orig_w, orig_fs, orig_c)
 
                 grp_sels = [
                     st.pills(gname, glabels,
