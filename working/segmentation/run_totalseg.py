@@ -167,9 +167,12 @@ def run_totalseg(input_path: Path, output_dir: Path, fast: bool, device: str) ->
             verbose=False,
         )
         return True
-    except Exception as exc:
-        print(f"[Failed] {input_path}")
-        print(f"    [ERROR] TotalSegmentator failed: {exc}")
+    except KeyboardInterrupt:
+        raise
+    except BaseException:
+        import traceback
+        print(f"    [ERROR] TotalSegmentator failed on {input_path}")
+        traceback.print_exc()
         return False
 
 
