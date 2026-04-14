@@ -37,7 +37,13 @@ RUN pip install --no-cache-dir /app \
     && find /usr/local/lib/python3.11 -type f -name "*.pyo" -delete
 
 RUN pip install totalsegmentator
+# Uninstall current PyTorch
+RUN pip uninstall torch torchvision -y
 
+# Install CUDA 12.4 compatible version
+RUN pip install torch==2.4.0 torchvision==0.19.0 --index-url https://download.pytorch.org/whl/cu124
 # expose not needed if using -p
 # If using only expose and not -p then will not work
 # EXPOSE 80
+
+CMD ["python", "run_totalseg.py", "/data/", "--out_dir", "/output/"]

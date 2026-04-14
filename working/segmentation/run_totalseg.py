@@ -168,6 +168,7 @@ def run_totalseg(input_path: Path, output_dir: Path, fast: bool, device: str) ->
         )
         return True
     except Exception as exc:
+        print(f"[Failed] {input_path}")
         print(f"    [ERROR] TotalSegmentator failed: {exc}")
         return False
 
@@ -227,11 +228,11 @@ def process_scan(scan_dir: Path, out_scan_dir: Path, fast: bool, device: str) ->
     # TotalSegmentator writes to totalseg/ so any files it spills one level up
     # (e.g. DICOM→NIfTI conversion artifacts) still land inside out_scan_dir.
     out_scan_dir.mkdir(parents=True, exist_ok=True)
+    chmod_r(out_scan_dir)
     if not seg_combined.exists():
         success = run_totalseg(image_path, totalseg_dir, fast=fast, device=device)
         if not success:
             return
-    chmod_r(out_scan_dir)
     # check if totalseg_dir exists and empty
     if totalseg_dir.exists() and len(os.listdir(totalseg_dir)) != 0:
         try:
