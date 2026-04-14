@@ -1,7 +1,7 @@
 import pandas as pd
 
-reviewed = "/results/test/batch_1/Results/Review_Sequence_Classifier.csv" 
-physics = "/results/DCM_Physics/dicom_headers_labelled_Mar24.csv"
+reviewed = "/results/DCM_CLF/batch_1/Results/Review_Sequence_Classifier.csv" 
+physics = "/results/DCM_Physics/batch_1/dicom_headers_labelled_Mar24.csv"
 
 phy_data = pd.read_csv(physics)
 re_data = pd.read_csv(reviewed)
@@ -14,3 +14,4 @@ filtered = pd.merge(phy_data, re_data, on=["subject", "session", "scan"], how="l
 filtered = filtered[filtered["viewed"] == "X"]
 
 # Check unknow
+filtered.to_csv("/results/inspect.csv")
