@@ -21,14 +21,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
     && pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir "numpy<2.0.0" \
-    && pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu121 torch \
     && pip install --no-cache-dir fury \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
-RUN echo "force rebuild from here (2)"
-
-# Copy application and install
+# Copy application and install TotalSegmentator (lets it resolve its own deps)
 COPY . /app
 RUN pip install --no-cache-dir /app \
     && python /app/totalsegmentator/download_pretrained_weights.py \
@@ -37,11 +34,12 @@ RUN pip install --no-cache-dir /app \
     && find /usr/local/lib/python3.11 -type f -name "*.pyo" -delete
 
 RUN pip install totalsegmentator
-# Uninstall current PyTorch
-RUN pip uninstall torch torchvision -y
 
-# Install CUDA 12.4 compatible version
-RUN pip install torch==2.4.0 torchvision==0.19.0 --index-url https://download.pytorch.org/whl/cu124
+# Install PyTorch with GPU support ONCE, after all other deps are resolved.
+# Use cu121 if your host driver supports up to CUDA 12.1 (nvidia-smi shows "CUDA Version: 12.1")
+# Use cu124 if your host driver supports CUDA 12.4+ (driver >= 550.x)
+RUN pip install --no-cache-dir torch==2.4.0 torchvision==0.19.0 \
+        --index-url https://download.pytorch.org/whl/cu124
 # expose not needed if using -p
 # If using only expose and not -p then will not work
 # EXPOSE 80
