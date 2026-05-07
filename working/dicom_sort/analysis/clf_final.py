@@ -143,6 +143,11 @@ def main() -> None:
     args = parser.parse_args()
 
     df = pd.read_csv(args.csv, dtype=str).fillna("")
+    if "viewed" not in df.columns:
+        raise KeyError("Expected a 'viewed' column to filter reviewed rows.")
+    before = len(df)
+    df = df[df["viewed"].str.strip().str.upper() == "X"].reset_index(drop=True)
+    print(f"Reviewed rows kept: {len(df)} / {before}")
     transitions = build_transition_table(df)
 
     total = int(transitions["count"].sum())
