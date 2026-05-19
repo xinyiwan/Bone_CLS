@@ -145,7 +145,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
-
+**/Dockerfile
 *.csv
 *.png
 
