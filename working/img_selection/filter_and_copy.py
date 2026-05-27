@@ -29,14 +29,14 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-CSV_PATH = Path("/Users/xinyi/Documents/github/Bone_CLS/clf_perf/combined_reviewed.csv")
-SRC_ROOT = Path("/home/ext_xinwan/Bone_AI/tmp_data_nifti")
+CSV_PATH = Path("/working/output/CLF_performance/combined_reviewed.csv")
+SRC_ROOT = Path("/working/tmp_data_nifti")
 
 EXCLUDED_W = {"Other", "DW", "Localizer", "Zip/JPG"}
 
 SOURCE_TO_ADQ = {
     "Review_Sequence_Classifier.csv":   "ADQUISICIONES",
-    "Review_Sequence_Classifier_n.csv": "ADQUISICIONES_02_03_2026",
+    "Review_Sequence_Classifier_n.csv": "ADQUISICIONES-02-03-2026",
 }
 
 
