@@ -26,9 +26,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-EXPOSE 8517
+EXPOSE 8579
 
 
-HEALTHCHECK CMD curl --fail http://localhost:8517/_stcore/health || exit 1
+HEALTHCHECK CMD curl --fail http://localhost:8579/_stcore/health || exit 1
 
 # CMD ["streamlit", "run", "main.py", "--server.port=8517", "--server.address=0.0.0.0"]
