@@ -23,6 +23,7 @@ from pathlib import Path
 
 import numpy as np
 import nibabel as nib
+from nibabel.processing import resample_from_to
 
 from pairs import find_pairs
 
@@ -77,9 +78,14 @@ def main() -> None:
     idx = rng.permutation(len(pairs))[: args.n]
     for k in idx:
         subject, session, scan, image_path, seg_path = pairs[k]
-        img = nib.load(str(image_path)).get_fdata(dtype=np.float32)
-        seg = (np.asanyarray(nib.load(str(seg_path)).dataobj) > 0).astype(np.uint8)
-        if seg.shape != img.shape[:3] or seg.sum() == 0:
+        img_nii = nib.load(str(image_path))
+        img = img_nii.get_fdata(dtype=np.float32)
+        # Resample the mask into the image grid (same operation to_nnunet.py uses),
+        # so this overlay reflects the labels nnU-Net will actually train on.
+        seg_nii = resample_from_to(nib.load(str(seg_path)),
+                                   (img_nii.shape[:3], img_nii.affine), order=0)
+        seg = (np.asanyarray(seg_nii.dataobj) > 0).astype(np.uint8)
+        if seg.sum() == 0:
             continue
         com = np.argwhere(seg).mean(0).astype(int)          # lesion centre (i,j,k)
 
