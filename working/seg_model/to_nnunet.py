@@ -41,7 +41,7 @@ import shutil
 from pathlib import Path
 
 import numpy as np
-import SimpleITK as sitk
+import nibabel as nib
 
 from pairs import find_pairs, load_sequence_table, plane_from_name, resolve_sequence
 
@@ -51,41 +51,20 @@ def sanitize(s: str) -> str:
     return re.sub(r"[^A-Za-z0-9]+", "-", s).strip("-")
 
 
-def geometry_matches(a: sitk.Image, b: sitk.Image, tol: float = 1e-3) -> bool:
-    if a.GetSize() != b.GetSize():
-        return False
-    return (np.allclose(a.GetSpacing(), b.GetSpacing(), atol=tol)
-            and np.allclose(a.GetOrigin(), b.GetOrigin(), atol=tol)
-            and np.allclose(a.GetDirection(), b.GetDirection(), atol=tol))
+def load_binarised_label(seg_path: Path, image_path: Path) -> nib.Nifti1Image:
+    """Read a mask, binarise (>0 -> 1, uint8), put it on the image's grid.
 
-
-def load_binarised_label(seg_path: Path, ref_img: sitk.Image,
-                         resample_if_mismatch: bool) -> sitk.Image:
-    """Read a mask, binarise (>0 -> 1), and return it in ref_img's space.
-
-    The mask was corrected on the scan grid, so geometry should already match;
-    if it doesn't we either resample (nearest-neighbour) or raise.
+    The mask is corrected on the scan's own grid, so it has the same shape as
+    the image; writing it with the image's affine guarantees nnU-Net sees
+    identical geometry (no sub-voxel header drift). Raises if shapes differ.
     """
-    seg = sitk.ReadImage(str(seg_path))
-    seg = sitk.BinaryThreshold(seg, lowerThreshold=1, upperThreshold=2**31 - 1,
-                               insideValue=1, outsideValue=0)
-    seg = sitk.Cast(seg, sitk.sitkUInt8)
-
-    if geometry_matches(ref_img, seg):
-        # Force-copy geometry to kill sub-tolerance drift that nnU-Net rejects.
-        seg.CopyInformation(ref_img)
-        return seg
-
-    if not resample_if_mismatch:
-        raise ValueError(
-            f"geometry mismatch image vs mask for {seg_path.name} "
-            f"(img size {ref_img.GetSize()} vs seg {seg.GetSize()}); "
-            f"pass --resample-label-if-mismatch to nearest-neighbour resample")
-    rs = sitk.ResampleImageFilter()
-    rs.SetReferenceImage(ref_img)
-    rs.SetInterpolator(sitk.sitkNearestNeighbor)
-    rs.SetDefaultPixelValue(0)
-    return sitk.Cast(rs.Execute(seg), sitk.sitkUInt8)
+    img = nib.load(str(image_path))
+    seg_arr = np.asanyarray(nib.load(str(seg_path)).dataobj)
+    if seg_arr.shape != img.shape[:3]:
+        raise ValueError(f"shape mismatch: image {img.shape[:3]} vs "
+                         f"mask {seg_arr.shape} for {seg_path.name}")
+    binary = (seg_arr > 0).astype(np.uint8)
+    return nib.Nifti1Image(binary, img.affine)        # clean uint8 header from affine
 
 
 def subject_group_kfold(subjects, k: int, seed: int):
@@ -110,7 +89,6 @@ def main() -> None:
     ap.add_argument("--dataset-name", required=True)
     ap.add_argument("--folds", type=int, default=5)
     ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--resample-label-if-mismatch", action="store_true")
     ap.add_argument("--seq-table", type=Path, default=None,
                     help="clf_perf/combined_reviewed.csv (for true sequence type)")
     args = ap.parse_args()
@@ -145,15 +123,13 @@ def main() -> None:
             print(f"  [WARN] duplicate case id {case_id}; skipping {seg_path}")
             continue
 
-        ref = sitk.ReadImage(str(image_path))
         try:
-            label = load_binarised_label(seg_path, ref,
-                                         args.resample_label_if_mismatch)
+            label = load_binarised_label(seg_path, image_path)
         except ValueError as e:
             print(f"  [WARN] {e}")
             continue
 
-        n_fg = int(sitk.GetArrayFromImage(label).sum())
+        n_fg = int(np.asanyarray(label.dataobj).sum())
         if n_fg == 0:
             n_empty += 1
             print(f"  [WARN] empty mask after binarisation: {seg_path}; skipping")
@@ -161,7 +137,7 @@ def main() -> None:
 
         # copy image (preserves geometry exactly), write binarised label
         shutil.copyfile(image_path, images_dir / f"{case_id}_0000.nii.gz")
-        sitk.WriteImage(label, str(labels_dir / f"{case_id}.nii.gz"))
+        nib.save(label, str(labels_dir / f"{case_id}.nii.gz"))
 
         seq = resolve_sequence(scan, subject, seq_lookup)
         meta.append(dict(case=case_id, subject=subject, session=session,
