@@ -100,7 +100,7 @@ def resize_to_shape(vol: np.ndarray, target: Tuple[int, int, int],
 
 def inject_dot(vol: np.ndarray, rng: np.random.Generator,
                radius: int = 4, value: float = 1.0,
-               center_jitter: float = 0.15) -> np.ndarray:
+               center_jitter: float = 0.35) -> np.ndarray:
     """Burn a bright sphere near the centre of ``vol`` (in place on a copy).
 
     radius        : sphere radius in voxels.
