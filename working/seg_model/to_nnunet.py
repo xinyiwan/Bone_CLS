@@ -42,6 +42,7 @@ from pathlib import Path
 
 import numpy as np
 import nibabel as nib
+from nibabel.processing import resample_from_to
 
 from pairs import find_pairs, load_sequence_table, plane_from_name, resolve_sequence
 
@@ -52,19 +53,18 @@ def sanitize(s: str) -> str:
 
 
 def load_binarised_label(seg_path: Path, image_path: Path) -> nib.Nifti1Image:
-    """Read a mask, binarise (>0 -> 1, uint8), put it on the image's grid.
+    """Read a mask and return it binarised (>0 -> 1, uint8) ON THE IMAGE GRID.
 
-    The mask is corrected on the scan's own grid, so it has the same shape as
-    the image; writing it with the image's affine guarantees nnU-Net sees
-    identical geometry (no sub-voxel header drift). Raises if shapes differ.
+    The masks are NOT stored on the image voxel grid, so we resample the mask
+    into the image's space using both affines (nearest-neighbour, order=0) --
+    this is the spatially-correct alignment. If the grids already match, this is
+    a no-op. (Copying the image affine instead would silently misalign masks.)
     """
     img = nib.load(str(image_path))
-    seg_arr = np.asanyarray(nib.load(str(seg_path)).dataobj)
-    if seg_arr.shape != img.shape[:3]:
-        raise ValueError(f"shape mismatch: image {img.shape[:3]} vs "
-                         f"mask {seg_arr.shape} for {seg_path.name}")
-    binary = (seg_arr > 0).astype(np.uint8)
-    return nib.Nifti1Image(binary, img.affine)        # clean uint8 header from affine
+    seg = nib.load(str(seg_path))
+    seg_on_img = resample_from_to(seg, (img.shape[:3], img.affine), order=0)
+    binary = (np.asanyarray(seg_on_img.dataobj) > 0).astype(np.uint8)
+    return nib.Nifti1Image(binary, img.affine)
 
 
 def subject_group_kfold(subjects, k: int, seed: int):
