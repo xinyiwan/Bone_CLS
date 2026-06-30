@@ -69,6 +69,7 @@ def summarise(df: pd.DataFrame, by: str) -> pd.DataFrame:
         "dice_median": g["dice"].median(),
         "dice_std": g["dice"].std(),
         "overseg_ratio_mean": g["ratio"].mean(),
+        "overseg_ratio_median": g["ratio"].median(),   # robust to tiny-GT outliers
     }).sort_values("dice_mean")
     return out.round(3)
 
@@ -78,61 +79,68 @@ def slice_axis_of(img: nib.Nifti1Image) -> int:
     return int(np.argmax(img.header.get_zooms()[:3]))
 
 
+def _render_overlay(r, results_dir: Path, raw_dir: Path, out_path: Path) -> bool:
+    import matplotlib.pyplot as plt
+    from matplotlib.lines import Line2D
+
+    case, fold = r["case"], int(r["fold"])
+    img_p = raw_dir / "imagesTr" / f"{case}_0000.nii.gz"
+    gt_p = raw_dir / "labelsTr" / f"{case}.nii.gz"
+    pr_p = results_dir / f"fold_{fold}" / "validation" / f"{case}.nii.gz"
+    if not (img_p.exists() and gt_p.exists() and pr_p.exists()):
+        return False
+
+    img_nii = nib.load(str(img_p))
+    img = img_nii.get_fdata(dtype=np.float32)
+    gt = np.asanyarray(nib.load(str(gt_p)).dataobj) > 0
+    pr = np.asanyarray(nib.load(str(pr_p)).dataobj) > 0
+
+    ax = slice_axis_of(img_nii)
+    union = gt | pr
+    if union.sum() == 0:
+        return False
+    areas = union.sum(axis=tuple(a for a in range(3) if a != ax))
+    idx = int(np.argmax(areas))                        # slice with largest lesion area
+    im = np.take(img, idx, axis=ax).T
+    g = np.take(gt, idx, axis=ax).T
+    p = np.take(pr, idx, axis=ax).T
+
+    fig, axp = plt.subplots(figsize=(4.2, 4.2))
+    vmax = np.percentile(im, 99) or 1.0
+    axp.imshow(im, cmap="gray", vmin=0, vmax=vmax, origin="lower")
+    if g.any():
+        axp.contour(g, levels=[0.5], colors="lime", linewidths=1.2)
+    if p.any():
+        axp.contour(p, levels=[0.5], colors="red", linewidths=1.2)
+    axp.set_title(f"{case}\n{r['sequence']} | {r['plane']} | "
+                  f"Dice={r['dice']:.2f} | ratio={r['ratio']:.2f}", fontsize=8)
+    axp.axis("off")
+    axp.legend(handles=[Line2D([0], [0], color="lime", label="GT"),
+                        Line2D([0], [0], color="red", label="pred")],
+               loc="lower right", fontsize=7, framealpha=0.5)
+    fig.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=110)
+    plt.close(fig)
+    return True
+
+
 def make_overlays(df: pd.DataFrame, results_dir: Path, raw_dir: Path,
-                  out_dir: Path) -> None:
+                  dest: Path, group_by_sequence: bool = True,
+                  dice_prefix: bool = False) -> None:
     try:
         import matplotlib
         matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
     except Exception as e:                              # pragma: no cover
         print(f"(skipping overlays: {e})")
         return
-
+    n = 0
     for _, r in df.iterrows():
-        case, fold = r["case"], int(r["fold"])
-        img_p = raw_dir / "imagesTr" / f"{case}_0000.nii.gz"
-        gt_p = raw_dir / "labelsTr" / f"{case}.nii.gz"
-        pr_p = results_dir / f"fold_{fold}" / "validation" / f"{case}.nii.gz"
-        if not (img_p.exists() and gt_p.exists() and pr_p.exists()):
-            continue
-
-        img_nii = nib.load(str(img_p))
-        img = img_nii.get_fdata(dtype=np.float32)
-        gt = np.asanyarray(nib.load(str(gt_p)).dataobj) > 0
-        pr = np.asanyarray(nib.load(str(pr_p)).dataobj) > 0
-
-        ax = slice_axis_of(img_nii)
-        union = gt | pr
-        if union.sum() == 0:
-            continue
-        # slice (along acquisition axis) with the largest GT|pred area
-        areas = union.sum(axis=tuple(a for a in range(3) if a != ax))
-        idx = int(np.argmax(areas))
-        im = np.take(img, idx, axis=ax).T
-        g = np.take(gt, idx, axis=ax).T
-        p = np.take(pr, idx, axis=ax).T
-
-        fig, axp = plt.subplots(figsize=(4.2, 4.2))
-        vmax = np.percentile(im, 99) or 1.0
-        axp.imshow(im, cmap="gray", vmin=0, vmax=vmax, origin="lower")
-        if g.any():
-            axp.contour(g, levels=[0.5], colors="lime", linewidths=1.2)
-        if p.any():
-            axp.contour(p, levels=[0.5], colors="red", linewidths=1.2)
-        axp.set_title(f"{case}\n{r['sequence']} | {r['plane']} | "
-                      f"Dice={r['dice']:.2f} | ratio={r['ratio']:.2f}", fontsize=8)
-        axp.axis("off")
-        # legend proxies
-        from matplotlib.lines import Line2D
-        axp.legend(handles=[Line2D([0], [0], color="lime", label="GT"),
-                            Line2D([0], [0], color="red", label="pred")],
-                   loc="lower right", fontsize=7, framealpha=0.5)
-        fig.tight_layout()
-        seq_dir = out_dir / "overlays" / str(r["sequence"]).replace("/", "-")
-        seq_dir.mkdir(parents=True, exist_ok=True)
-        fig.savefig(seq_dir / f"{case}.png", dpi=110)
-        plt.close(fig)
-    print(f"overlays -> {out_dir / 'overlays'}  (green=GT, red=pred)")
+        name = (f"{r['dice']:.2f}_{r['case']}.png" if dice_prefix
+                else f"{r['case']}.png")
+        sub = dest / str(r["sequence"]).replace("/", "-") if group_by_sequence else dest
+        n += _render_overlay(r, results_dir, raw_dir, sub / name)
+    print(f"  {n} overlays -> {dest}  (green=GT, red=pred)")
 
 
 def main() -> None:
@@ -144,6 +152,8 @@ def main() -> None:
     ap.add_argument("--folds", type=int, nargs="+", default=[0, 1])
     ap.add_argument("--out-dir", type=Path, default=Path("eval_out"))
     ap.add_argument("--no-plots", action="store_true")
+    ap.add_argument("--worst-n", type=int, default=20,
+                    help="export the N lowest-Dice cases (csv + overlays)")
     args = ap.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -164,7 +174,21 @@ def main() -> None:
     by_plane.to_csv(args.out_dir / "dice_by_plane.csv")
     print("=== Dice by sequence ===");  print(by_seq, "\n")
     print("=== Dice by plane ===");     print(by_plane, "\n")
-    print("(overseg_ratio_mean > 1 => predictions larger than GT on average)\n")
+    print("(ratio > 1 => predictions larger than GT; median is outlier-robust)\n")
+
+    # sequence x plane mean Dice -- disentangle the sequence/plane confound
+    pivot = df.pivot_table(index="sequence", columns="plane", values="dice",
+                           aggfunc="mean").round(2)
+    pivot.to_csv(args.out_dir / "dice_sequence_x_plane.csv")
+    print("=== mean Dice: sequence x plane ===");  print(pivot, "\n")
+
+    # worst-N cases (lowest Dice) for the GT-quality audit
+    worst = df.sort_values("dice").head(args.worst_n)
+    worst_cols = ["case", "fold", "sequence", "plane", "dice", "ratio",
+                  "n_pred", "n_ref"]
+    worst[worst_cols].to_csv(args.out_dir / "worst_cases.csv", index=False)
+    print(f"=== worst {len(worst)} cases (lowest Dice) ===")
+    print(worst[worst_cols].to_string(index=False), "\n")
 
     if not args.no_plots:
         try:
@@ -188,7 +212,13 @@ def main() -> None:
             print(f"boxplots -> {plots}")
         except Exception as e:                          # pragma: no cover
             print(f"(skipping boxplots: {e})")
-        make_overlays(df, args.results_dir, args.raw_dir, args.out_dir)
+        print("rendering all overlays...")
+        make_overlays(df, args.results_dir, args.raw_dir,
+                      args.out_dir / "overlays", group_by_sequence=True)
+        print(f"rendering worst {args.worst_n} overlays...")
+        make_overlays(worst, args.results_dir, args.raw_dir,
+                      args.out_dir / "worst", group_by_sequence=False,
+                      dice_prefix=True)
 
 
 if __name__ == "__main__":
