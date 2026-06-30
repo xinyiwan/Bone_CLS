@@ -33,6 +33,7 @@ def main() -> None:
     ap.add_argument("root", type=Path)
     ap.add_argument("--out-dir", type=Path, default=Path("qc_out"))
     ap.add_argument("--n", type=int, default=20, help="cases to render overlays for")
+    ap.add_argument("--all", action="store_true", help="render overlays for ALL pairs")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -63,19 +64,20 @@ def main() -> None:
         print("   -> resample masks into image space instead of copying the affine.")
     print()
 
-    # --- 2. visual overlays for a sample ---
+    # --- 2. visual overlays (green segmentation contour) ---
     try:
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
-        from matplotlib.colors import ListedColormap
     except Exception as e:                   # pragma: no cover
         print(f"(skipping overlays: {e})")
         return
 
-    red = ListedColormap([(0, 0, 0, 0), (1, 0, 0, 0.45)])  # transparent / red
-    rng = np.random.default_rng(args.seed)
-    idx = rng.permutation(len(pairs))[: args.n]
+    if args.all:
+        idx = range(len(pairs))
+    else:
+        rng = np.random.default_rng(args.seed)
+        idx = rng.permutation(len(pairs))[: args.n]
     for k in idx:
         subject, session, scan, image_path, seg_path = pairs[k]
         img_nii = nib.load(str(image_path))
@@ -96,7 +98,9 @@ def main() -> None:
             sg_slice = np.take(seg, sl, axis=axis)
             vmax = np.percentile(im_slice, 99) or 1.0
             axes[ax_i].imshow(im_slice.T, cmap="gray", vmin=0, vmax=vmax, origin="lower")
-            axes[ax_i].imshow(sg_slice.T, cmap=red, origin="lower")
+            if sg_slice.any():
+                axes[ax_i].contour(sg_slice.T, levels=[0.5], colors="lime",
+                                   linewidths=1.0)
             axes[ax_i].set_title(f"axis {axis} @ {sl}")
             axes[ax_i].axis("off")
         fig.suptitle(f"{subject}/{scan}", fontsize=9)
@@ -104,7 +108,8 @@ def main() -> None:
         out = args.out_dir / f"{subject}_{scan}.png"
         fig.savefig(out, dpi=110)
         plt.close(fig)
-    print(f"overlays -> {args.out_dir}  (mask should sit on the lesion in all 3 panels)")
+    scope = "ALL" if args.all else f"{args.n} sampled"
+    print(f"overlays ({scope}, green contour) -> {args.out_dir}")
 
 
 if __name__ == "__main__":
