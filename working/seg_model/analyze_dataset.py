@@ -204,7 +204,7 @@ def main() -> None:
 
     rows = []
     n_segs = n_missing_img = 0
-    for subject, session, scan, image_path, seg_path in find_pairs(args.root):
+    for subject, session, scan, image_path, seg_path, seg_source in find_pairs(args.root):
         n_segs += 1
         if image_path is None:                          # mask exists but image excluded/missing
             n_missing_img += 1
@@ -216,6 +216,7 @@ def main() -> None:
             print(f"  [WARN] {seg_path}: {e}")
             continue
         info.update(subject=subject, session=session, scan=scan,
+                    seg_source=seg_source,
                     image_path=str(image_path), seg_path=str(seg_path))
         rows.append(info)
 

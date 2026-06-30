@@ -37,7 +37,7 @@ def main() -> None:
     args = ap.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
-    pairs = [(s, sub, sc, ip, sp) for s, sub, sc, ip, sp in find_pairs(args.root)
+    pairs = [(s, sub, sc, ip, sp) for s, sub, sc, ip, sp, _src in find_pairs(args.root)
              if ip is not None]
     print(f"{len(pairs)} (image, mask) pairs\n")
 

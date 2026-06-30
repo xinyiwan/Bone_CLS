@@ -52,6 +52,33 @@ def sanitize(s: str) -> str:
     return re.sub(r"[^A-Za-z0-9]+", "-", s).strip("-")
 
 
+def session_date(s: str) -> str:
+    """Extract the 8-digit YYYYMMDD date embedded in a session folder name."""
+    m = re.search(r"(\d{8})", s)
+    return m.group(1) if m else ""
+
+
+def load_exclusions(path: Path) -> set:
+    """Sessions to drop, from kira-0515-seg.csv (If_segmented == 'exclude').
+
+    Excludes at the SESSION level — set of (subject_code, 'YYYYMMDD') — because
+    some subjects have one 'done' and one 'exclude' session. The date comes from
+    'fechaHoraRealizacion'; if absent we fall back to (subject, '') = whole
+    subject. Rows with If_segmented blank/'done' are kept.
+    """
+    import csv
+    excl = set()
+    with open(path, newline="") as f:
+        for r in csv.DictReader(f):
+            if str(r.get("If_segmented", "")).strip().lower() != "exclude":
+                continue
+            subj = str(r.get("subject_code", "")).strip()
+            m = re.search(r"(\d{4})-(\d{2})-(\d{2})", str(r.get("fechaHoraRealizacion", "")))
+            date = "".join(m.groups()) if m else ""
+            excl.add((subj, date))
+    return excl
+
+
 def load_binarised_label(seg_path: Path, image_path: Path) -> nib.Nifti1Image:
     """Read a mask and return it binarised (>0 -> 1, uint8) ON THE IMAGE GRID.
 
@@ -91,12 +118,18 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--seq-table", type=Path, default=None,
                     help="clf_perf/combined_reviewed.csv (for true sequence type)")
+    ap.add_argument("--exclude-table", type=Path, default=None,
+                    help="CSV of subjects/scans to drop (e.g. lesion < 10mm)")
     args = ap.parse_args()
 
     seq_lookup = None
     if args.seq_table:
         seq_lookup = load_sequence_table(args.seq_table)
         print(f"loaded sequence table: {len(seq_lookup)} entries")
+
+    exclude = load_exclusions(args.exclude_table) if args.exclude_table else set()
+    if exclude:
+        print(f"loaded exclusions: {len(exclude)} subjects (e.g. lesion < 10mm)")
 
     ds_dir = args.out / f"Dataset{args.dataset_id:03d}_{args.dataset_name}"
     images_dir = ds_dir / "imagesTr"
@@ -106,10 +139,13 @@ def main() -> None:
 
     meta = []                       # per-case metadata rows
     seen = {}                       # case_id -> seg_path (collision guard)
-    n_seg = n_missing = n_empty = 0
+    n_seg = n_missing = n_empty = n_excluded = 0
 
-    for subject, session, scan, image_path, seg_path in find_pairs(args.root):
+    for subject, session, scan, image_path, seg_path, seg_source in find_pairs(args.root):
         n_seg += 1
+        if (subject, session_date(session)) in exclude or (subject, "") in exclude:
+            n_excluded += 1
+            continue
         if image_path is None:
             n_missing += 1
             print(f"  [WARN] no image for mask {seg_path}")
@@ -142,15 +178,17 @@ def main() -> None:
         seq = resolve_sequence(scan, subject, seq_lookup)
         meta.append(dict(case=case_id, subject=subject, session=session,
                          scan=scan, sequence=seq, plane=plane_from_name(scan),
-                         fg_voxels=n_fg))
+                         seg_source=seg_source, fg_voxels=n_fg))
         seen[case_id] = seg_path
 
     if not meta:
         raise SystemExit("no usable cases built — check paths / layout")
 
     n = len(meta)
-    print(f"\nfound {n_seg} masks; {n_missing} no image; {n_empty} empty; "
-          f"{n} cases written to {ds_dir}")
+    from collections import Counter
+    print(f"\nfound {n_seg} masks; {n_excluded} excluded; {n_missing} no image; "
+          f"{n_empty} empty; {n} cases written to {ds_dir}")
+    print("mask source:", dict(Counter(m["seg_source"] for m in meta)))
 
     # dataset.json (nnU-Net v2 schema)
     dataset_json = {
@@ -186,7 +224,6 @@ def main() -> None:
     (ds_dir / "splits_final.json").write_text(json.dumps(splits, indent=2))
 
     # sequence / plane distribution (sanity)
-    from collections import Counter
     print("\nsequence:", dict(Counter(m["sequence"] for m in meta)))
     print("plane:   ", dict(Counter(m["plane"] for m in meta)))
     print(f"\nNext:\n  nnUNetv2_plan_and_preprocess -d {args.dataset_id} "

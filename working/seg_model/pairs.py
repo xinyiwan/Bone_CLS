@@ -26,9 +26,20 @@ except Exception as e:                                  # pragma: no cover
 
 
 IMAGE_NAME = "images.nii.gz"
-# Manual masks: <session>/segmentation_history/segs/<scan>_seg.nii.gz
+# Mask sources, in order of preference:
+#   reviewed (radiologist):  <session>/review/<xxx>/segs/<scan>_seg.nii.gz
+#   history  (unreviewed) :  <session>/segmentation_history/segs/<scan>_seg.nii.gz
 SEG_SUBDIR = ("segmentation_history", "segs")
-SEG_SUFFIX = "_seg.nii.gz"
+REVIEW_DIR = "review"
+# Most masks are *_seg.nii.gz; a few reviewed ones are *_seg.nii. Prefer .nii.gz.
+SEG_SUFFIXES = ("_seg.nii.gz", "_seg.nii")
+
+
+def _strip_seg_suffix(name: str):
+    for suf in SEG_SUFFIXES:
+        if name.endswith(suf):
+            return name[: -len(suf)]
+    return None
 
 # Fallback sequence parsing from the scan-folder name (used only when no
 # ground-truth table is supplied). Order matters: fat-sat/contrast first.
@@ -92,24 +103,61 @@ def resolve_sequence(scan: str, subject: str,
     return sequence_from_name(scan)
 
 
-def find_pairs(root: Path):
-    """Yield (subject, session, scan, image_path_or_None, seg_path).
+def resolve_seg(session_dir: Path, scan: str):
+    """Best mask for a scan: radiologist-reviewed if present, else history.
 
-    Iterates masks in ``segmentation_history/segs/`` and traces each back to its
-    image. image_path is None if the mask's image was excluded/removed.
+    Tries both *_seg.nii.gz and *_seg.nii (prefer .gz). Returns (seg_path,
+    source) with source "reviewed" or "history", or (None, None) if neither.
     """
-    seg_dirname, segs_dirname = SEG_SUBDIR
-    for seg_path in sorted(root.rglob(f"*{SEG_SUFFIX}")):
-        if (seg_path.parent.name != segs_dirname
-                or seg_path.parent.parent.name != seg_dirname):
+    for suf in SEG_SUFFIXES:                              # reviewed wins over history
+        rev = sorted(session_dir.glob(f"{REVIEW_DIR}/*/segs/{scan}{suf}"))
+        if rev:
+            return rev[0], "reviewed"
+    for suf in SEG_SUFFIXES:
+        hist = session_dir.joinpath(*SEG_SUBDIR, f"{scan}{suf}")
+        if hist.exists():
+            return hist, "history"
+    return None, None
+
+
+def find_pairs(root: Path):
+    """Yield (subject, session, scan, image_path_or_None, seg_path, seg_source).
+
+    Discovery is segmentation-driven over BOTH mask sources (history and
+    review). For each (session, scan) seen in either source, the *reviewed* mask
+    wins when available, otherwise the history mask is used. image_path is None
+    if the mask's image was excluded/removed.
+    """
+    seen, cands = set(), []
+    for seg_path in root.rglob("*_seg.nii*"):            # *_seg.nii and *_seg.nii.gz
+        scan = _strip_seg_suffix(seg_path.name)
+        if scan is None:
             continue
-        scan = seg_path.name[: -len(SEG_SUFFIX)]
-        session_dir = seg_path.parent.parent.parent      # segs -> seg_history -> session
+        p = seg_path.parent
+        if p.name != "segs":
+            continue
+        if p.parent.name == SEG_SUBDIR[0]:               # segmentation_history/segs
+            session_dir = p.parent.parent
+        elif p.parent.parent.name == REVIEW_DIR:         # review/<xxx>/segs
+            session_dir = p.parent.parent.parent
+        else:
+            continue
+        key = (str(session_dir), scan)
+        if key in seen:
+            continue
+        seen.add(key)
+        cands.append((session_dir, scan))
+
+    for session_dir, scan in sorted(cands, key=lambda c: (str(c[0]), c[1])):
+        seg_path, source = resolve_seg(session_dir, scan)
+        if seg_path is None:
+            continue
         rel = session_dir.relative_to(root).parts
         subject = rel[0] if len(rel) >= 1 else session_dir.name
         session = rel[1] if len(rel) >= 2 else ""
         image_path = session_dir / scan / IMAGE_NAME
-        yield subject, session, scan, (image_path if image_path.exists() else None), seg_path
+        yield (subject, session, scan,
+               image_path if image_path.exists() else None, seg_path, source)
 
 
 def _composite_sequence(w: str, fs: str, c: str) -> str:
