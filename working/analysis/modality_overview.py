@@ -122,13 +122,20 @@ def value_counts_frame(s: pd.Series, name: str) -> pd.DataFrame:
 
 def bar_plot(freq: pd.DataFrame, label_col: str, title: str, out_path: Path) -> None:
     freq = freq.sort_values("count", ascending=True)
-    fig, ax = plt.subplots(figsize=(8, max(3, 0.4 * len(freq) + 1)))
+    has_subjects = "subjects" in freq.columns
+    fig, ax = plt.subplots(figsize=(9, max(3, 0.45 * len(freq) + 1)))
     ax.barh(freq[label_col].astype(str), freq["count"], color="#4C72B0")
-    for y, (cnt, pct) in enumerate(zip(freq["count"], freq["percent"])):
-        ax.text(cnt, y, f" {cnt:,} ({pct:.1f}%)", va="center", fontsize=8)
-    ax.set_xlabel("count")
+    for y, row in enumerate(freq.itertuples(index=False)):
+        cnt = getattr(row, "count")
+        pct = getattr(row, "percent")
+        if has_subjects:
+            label = f" {cnt:,} series · {getattr(row, 'subjects'):,} subjects ({pct:.1f}%)"
+        else:
+            label = f" {cnt:,} ({pct:.1f}%)"
+        ax.text(cnt, y, label, va="center", fontsize=8)
+    ax.set_xlabel("number of series")
     ax.set_title(title)
-    ax.margins(x=0.15)
+    ax.margins(x=0.25)
     plt.tight_layout()
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
@@ -155,23 +162,30 @@ def main() -> None:
 
     df = combine(args.csv_a, args.csv_b)
 
-    # --- Combined modality distribution (normalised + raw) ---
-    mod_norm = build_modality(df, normalise=True)
-    mod_raw  = build_modality(df, normalise=False)
+    # Modality labels (equivalent modalities folded together — see module
+    # docstring: Y-STIR -> Y, and contrast collapsed to N for non-T1W).
+    df["modality"]     = build_modality(df, normalise=True)
+    df["modality_raw"] = build_modality(df, normalise=False)
 
-    freq_norm = value_counts_frame(mod_norm, "modality")
-    freq_raw  = value_counts_frame(mod_raw,  "modality")
+    # --- Combined modality distribution, series + subject counts ---
+    freq_norm = value_counts_frame(df["modality"], "modality")
+    # Distinct subjects (Paciente) having at least one series of each modality.
+    subj_per_mod = df.groupby("modality")["Paciente"].nunique()
+    freq_norm["subjects"] = freq_norm["modality"].map(subj_per_mod).astype(int)
+
+    freq_raw = value_counts_frame(df["modality_raw"], "modality")
 
     freq_norm.to_csv(args.out_dir / "modality_distribution.csv", index=False)
     freq_raw.to_csv(args.out_dir / "modality_distribution_raw.csv", index=False)
 
-    print(f"Modality distribution (normalised) — {len(df):,} series, "
+    print(f"Modality distribution — {len(df):,} series across "
+          f"{df['Paciente'].nunique():,} subjects, "
           f"{len(freq_norm)} distinct modalities:")
     print(freq_norm.to_string(index=False))
     print()
 
     bar_plot(freq_norm, "modality",
-             "Ground-truth imaging modalities (normalised)",
+             "Ground-truth imaging modalities",
              args.out_dir / "modality_distribution.png")
 
     # --- Marginal distributions of each dimension ---
