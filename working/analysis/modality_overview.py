@@ -188,6 +188,25 @@ def main() -> None:
              "Ground-truth imaging modalities",
              args.out_dir / "modality_distribution.png")
 
+    # --- Filtered view: drop non-target weightings ---
+    W_DROP = {"Other", "DW", "Localizer", "Zip/JPG"}
+    keep = ~_norm(df["Clase W Final"]).isin(W_DROP)
+    df_f = df.loc[keep]
+
+    freq_f = value_counts_frame(df_f["modality"], "modality")
+    subj_f = df_f.groupby("modality")["Paciente"].nunique()
+    freq_f["subjects"] = freq_f["modality"].map(subj_f).astype(int)
+    freq_f.to_csv(args.out_dir / "modality_distribution_filtered.csv", index=False)
+
+    print(f"Modality distribution (excluding {sorted(W_DROP)}) — "
+          f"{len(df_f):,} series across {df_f['Paciente'].nunique():,} subjects:")
+    print(freq_f.to_string(index=False))
+    print()
+
+    bar_plot(freq_f, "modality",
+             "Ground-truth imaging modalities (T1W / T2W / T2* / PD)",
+             args.out_dir / "modality_distribution_filtered.png")
+
     # --- Marginal distributions of each dimension ---
     w_freq  = value_counts_frame(_norm(df["Clase W Final"]), "weighting")
     fs_freq = value_counts_frame(_norm(df["Clase FS Final"]).replace({"Y-STIR": "Y"}),
