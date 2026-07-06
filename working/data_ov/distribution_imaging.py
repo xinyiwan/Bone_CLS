@@ -21,10 +21,9 @@ import pandas as pd
 
 from labels import UNCERTAIN_LABEL, to_label
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_CSV = REPO_ROOT / "kira-0515-seg.csv"
-DEFAULT_DATA_ROOT = Path("/home/ext_xinwan/Bone_AI/tmp_sorted_data")
-OUT_DIR = Path(__file__).resolve().parent
+DEFAULT_CSV =  Path("/output/kira-0515-seg.csv")
+DEFAULT_DATA_ROOT = Path("/data")
+OUT_DIR = Path("/output/clinical_info")
 IMAGE_NAME = "images.nii.gz"
 COLUMN = "palabra_manual"
 
@@ -35,7 +34,7 @@ def subjects_with_images(data_root: Path) -> set:
     for img in data_root.rglob(IMAGE_NAME):
         rel = img.relative_to(data_root).parts
         if rel:
-            subjects.add(rel[0])
+            subjects.add(rel[1])
     return subjects
 
 

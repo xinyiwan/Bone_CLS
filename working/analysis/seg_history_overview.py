@@ -29,8 +29,8 @@ from collections import defaultdict
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_CSV = REPO_ROOT / "kira-0515-seg.csv"
-DEFAULT_DATA_ROOT = Path("/home/ext_xinwan/Bone_AI/tmp_sorted_data")
+DEFAULT_CSV = Path("/output/kira-0515-seg.csv")
+DEFAULT_DATA_ROOT = Path("/data")
 
 # Reuse the segmentation-driven discovery so CSV and disk stay consistent.
 sys.path.insert(0, str(REPO_ROOT / "working" / "seg_model"))

@@ -1,0 +1,50 @@
+
+# Add labels to the extracted header csv
+docker run --rm -it --cpus=30 \
+  --name nnUNetv2 \
+  --gpus device=6 \
+  -v /home/ext_xinwan/Bone_AI/Bone_CLS/working/:/working \
+  -v /home/ext_xinwan/Bone_AI/tmp_sorted_data:/data \
+  -v /home/ext_xinwan/Bone_AI/output/:/output \
+  --entrypoint bash \
+  nnunetv2:xw \
+
+docker run --rm -it --cpus=30 \
+  -v /home/ext_xinwan/Bone_AI/Bone_CLS/working/:/working \
+  -v /home/ext_xinwan/Bone_AI/tmp_sorted_data:/data \
+  -v /home/ext_xinwan/Bone_AI/output/:/output \
+  --entrypoint bash \
+  testp11:latest
+
+
+python seg_model/to_nnunet.py  /data/ --out $nnUNet_raw --dataset-id 1 --dataset-name BoneTumour --seq-table /output/CLF_performance/combined_reviewed.csv 
+
+
+nnUNetv2_plan_and_preprocess -d 1 --verify_dataset_integrity
+
+cp $nnUNet_raw/Dataset001_BoneTumour/splits_final.json \
+   $nnUNet_preprocessed/Dataset001_BoneTumour/splits_final.json
+
+# Verify installation
+gcc --version
+g++ --version
+
+docker run -d \
+  --name nnUNetv2_training \
+  --cpus=30 \
+  --gpus device=6 \
+  -v /home/ext_xinwan/Bone_AI/Bone_CLS/working/:/working \
+  -v /home/ext_xinwan/Bone_AI/tmp_sorted_data:/data \
+  -v /home/ext_xinwan/Bone_AI/output/:/output \
+  nnunetv2:xw \
+  bash -c "apt update; apt install -y build-essential; for f in 1; do nnUNetv2_train 1 3d_fullres \$f; done"
+
+docker run -d \
+  --name nnUNetv2_v2 \
+  --cpus=30 \
+  --gpus device=5 \
+  -v /home/ext_xinwan/Bone_AI/Bone_CLS/working/:/working \
+  -v /home/ext_xinwan/Bone_AI/tmp_sorted_data:/data \
+  -v /home/ext_xinwan/Bone_AI/output/:/output \
+  nnunetv2:xw \
+  bash -c "apt update; apt install -y build-essential; for f in 1 2 3 4; do nnUNetv2_train 2 3d_fullres \$f; done"
