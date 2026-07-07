@@ -22,6 +22,8 @@ Outputs:
 """
 
 import argparse
+import fnmatch
+import os
 import re
 from pathlib import Path
 
@@ -30,16 +32,23 @@ import pandas as pd
 DEFAULT_CSV = Path("/output/kira-0515-seg.csv")
 DEFAULT_NIFTI_ROOT = Path("/data")
 DEFAULT_ID_COL = "subject_code"
-DEFAULT_IMAGE_GLOB = "images.nii"
+DEFAULT_IMAGE_GLOB = "images.nii.gz"
 
 PID_RE = re.compile(r"(BONE_AI_\d+)")
 
 
 def downloaded_subjects(nifti_root: Path, image_glob: str) -> set:
-    """Set of BONE_AI_* ids that have at least one image file under nifti_root."""
+    """Set of BONE_AI_* ids that have at least one image file under nifti_root.
+
+    Uses os.walk with followlinks=True: the nifti tree lives on a network mount
+    where directories are symlinks, and pathlib.rglob does NOT descend into
+    symlinked directories (so it silently finds nothing).
+    """
     subjects = set()
-    for img in nifti_root.rglob(image_glob):
-        m = PID_RE.search(str(img))
+    for dirpath, _dirnames, filenames in os.walk(nifti_root, followlinks=True):
+        if not fnmatch.filter(filenames, image_glob):
+            continue
+        m = PID_RE.search(dirpath)
         if m:
             subjects.add(m.group(1))
     return subjects
