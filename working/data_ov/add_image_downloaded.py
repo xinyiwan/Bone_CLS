@@ -42,7 +42,9 @@ def main():
         raise SystemExit(f"'subject_code' column not in {args.csv.name}")
 
     img_subjects = subjects_with_images(args.data_root)
-    subj = df["subject_code"].astype(str).str.strip()
+    # fillna("") first: read_csv may use the pandas 'str' dtype, where NaN stays
+    # a float and astype(str) would NOT turn it into "nan".
+    subj = df["subject_code"].fillna("").astype(str).str.strip()
     has_code = subj.ne("") & subj.ne("nan")
     has_image = subj.isin(img_subjects)
 
