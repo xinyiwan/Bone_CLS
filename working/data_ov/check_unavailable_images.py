@@ -7,10 +7,10 @@ Folder layout of the nifti root (four download batches, each with subjects)::
         BONE_AI_XX/
           <session>/
             <scan>/
-              images.nii.gz
+              images.nii
 
 A patient counts as *downloaded* if at least one image file (default
-``images.nii.gz``) exists anywhere under a ``BONE_AI_<n>`` folder. The subject id
+``images.nii``) exists anywhere under a ``BONE_AI_<n>`` folder. The subject id
 is read straight from the path with a ``BONE_AI_\\d+`` regex, so the exact nesting
 depth / batch-folder names don't matter.
 
@@ -30,7 +30,7 @@ import pandas as pd
 DEFAULT_CSV = Path("/output/kira-0515-seg.csv")
 DEFAULT_NIFTI_ROOT = Path("/data")
 DEFAULT_ID_COL = "subject_code"
-DEFAULT_IMAGE_GLOB = "images.nii.gz"
+DEFAULT_IMAGE_GLOB = "images.nii"
 
 PID_RE = re.compile(r"(BONE_AI_\d+)")
 
