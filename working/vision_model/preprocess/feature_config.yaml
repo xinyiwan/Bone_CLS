@@ -1,0 +1,31 @@
+# Feature -> modality -> plane(s) -> margin mapping.
+#
+# Edit this table as you add features; the pipeline is not hardcoded to any of
+# it. `crop_margin_mm` is converted to pixels per-axis using voxel spacing
+# (preferred for anisotropic MRI); use `crop_margin_px` instead for a fixed
+# pixel margin. `top_k` selects that many slices per plane by tumour area.
+#
+# modality values must match your on-disk file stems, i.e. the {modality} in
+# --img-pattern / --seg-pattern (defaults: {modality}.nii.gz, {modality}_seg.nii.gz).
+
+features:
+  - name: shape
+    crop_margin_mm: 10
+    top_k: 1
+    requirements:
+      - modality: T1
+        planes: [axial, coronal]
+
+  - name: enhancement
+    crop_margin_mm: 8
+    top_k: 1
+    requirements:
+      - modality: T1C          # T1 fat-sat post-contrast
+        planes: [axial]
+
+  - name: fluid_fluid_level
+    crop_margin_mm: 8
+    top_k: 3                    # small stack, this feature benefits from context
+    requirements:
+      - modality: T2FS
+        planes: [axial]
