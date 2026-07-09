@@ -14,8 +14,8 @@ Pre-processing:
     0. Both input CSVs have 'Paciente' and 'Serie' swapped in their headers.
        This script swaps them back so 'Paciente' = subject ID (e.g.
        BONE_AI_706) and 'Serie' = series name (e.g. 6_SAGT2FATLCA).
-    1. The two CSVs overlap. They are concatenated, de-duplicated on the
-       'Nombre DICOM' path and sorted by 'Paciente'.
+    1. The input CSVs (two or more) may overlap. They are concatenated,
+       de-duplicated on the 'Nombre DICOM' path and sorted by 'Paciente'.
     2. Rows with W truth in {Other, Localizer, Zip/JPG} are dropped — that
        'Other' bucket lumps heterogeneous sequences (e.g. perfusion that may
        actually be T1) and biases scoring. 'Y-STIR' in FS truth is folded
@@ -56,6 +56,7 @@ Usage:
     python clf_performance_analysis.py \
         /Users/xinyi/Documents/github/Bone_CLS/Review_Sequence_Classifier.csv \
         /Users/xinyi/Documents/github/Bone_CLS/Review_Sequence_Classifier_n.csv \
+        [more_review_csvs ...] \
         --out-dir /Users/xinyi/Documents/github/Bone_CLS/working/analysis/clf_perf
 """
 
@@ -122,13 +123,14 @@ def load_and_fix(path: Path) -> pd.DataFrame:
     return df
 
 
-def combine(csv_a: Path, csv_b: Path) -> pd.DataFrame:
-    a = load_and_fix(csv_a)
-    b = load_and_fix(csv_b)
-    print(f"Loaded {csv_a.name}: {len(a):,} rows")
-    print(f"Loaded {csv_b.name}: {len(b):,} rows")
+def combine(csv_paths: list[Path]) -> pd.DataFrame:
+    frames = []
+    for path in csv_paths:
+        df = load_and_fix(path)
+        print(f"Loaded {path.name}: {len(df):,} rows")
+        frames.append(df)
 
-    combined = pd.concat([a, b], ignore_index=True)
+    combined = pd.concat(frames, ignore_index=True)
     before = len(combined)
     combined = combined.drop_duplicates(subset=["Nombre DICOM"], keep="first")
     after = len(combined)
@@ -606,10 +608,9 @@ def _summary_row(res: dict) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("csv_a", type=Path,
-                        help="First review CSV (Paciente/Serie are swapped in header)")
-    parser.add_argument("csv_b", type=Path,
-                        help="Second review CSV (Paciente/Serie are swapped in header)")
+    parser.add_argument("csvs", type=Path, nargs="+",
+                        help="Two or more review CSVs (Paciente/Serie are "
+                             "swapped in header); concatenated and de-duplicated")
     parser.add_argument("--out-dir", type=Path,
                         default=Path(__file__).resolve().parent / "clf_perf",
                         help="Where to write plots and CSVs (default: ./clf_perf)")
@@ -619,7 +620,7 @@ def main() -> None:
     sns.set_theme(style="white")
 
     # Step 0 + 1: load, fix, combine, dedupe, sort
-    df = combine(args.csv_a, args.csv_b)
+    df = combine(args.csvs)
     df.to_csv(args.out_dir / "combined_reviewed.csv", index=False)
 
     # Step 1 continued: drop non-target W truth buckets
