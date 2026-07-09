@@ -8,9 +8,11 @@ A row is selected when its 'Clase W Final' is NOT in the EXCLUDED set:
 
 Source layout:
     <src-root>/<ADQUISICIONES batch>/<Paciente>/<Estudio>/<Serie>/*
-Each row's batch directory is looked up from its '__source' CSV name via the
-batch map (see SOURCE_TO_ADQ for the defaults; add more batches on the command
-line with --batch "<csv name>=<batch dir>", repeatable).
+Each row's '__source' is a path like '/data/batch_1/xxxxx.csv'. We take the
+'batch_x' component (its parent directory) — NOT the CSV filename, which can
+collide across batches — and look up the source directory via the batch map
+(see SOURCE_TO_ADQ for the defaults; add/override batches on the command line
+with --batch "<batch token>=<batch dir>", repeatable).
 
 Destination layout merges every source batch at the subject level:
     <dst>/<Paciente>/<Estudio>/<Serie>/*
@@ -24,8 +26,8 @@ Usage:
 
     # add more batches (3rd, 4th, ...) without editing the script
     python filter_and_copy.py \
-        --batch "Review_Sequence_Classifier_3.csv=ADQUISICIONES-BATCH3" \
-        --batch "Review_Sequence_Classifier_4.csv=ADQUISICIONES-BATCH4"
+        --batch "batch_3=ADQUISICIONES-BATCH3" \
+        --batch "batch_4=ADQUISICIONES-BATCH4"
 """
 
 from __future__ import annotations
@@ -43,12 +45,12 @@ DST_ROOT = Path("/dst/tmp_sorted_data")
 
 EXCLUDED_W = {"Other", "DW", "Localizer", "Zip/JPG"}
 
-# Maps each review CSV's '__source' name to its batch directory under SRC_ROOT.
-# Extend at runtime with --batch "<csv name>=<batch dir>" (repeatable) instead
-# of editing this dict.
+# Maps each batch token (the 'batch_x' component of a row's '__source' path)
+# to its batch directory under SRC_ROOT. Extend at runtime with
+# --batch "<batch token>=<batch dir>" (repeatable) instead of editing this dict.
 SOURCE_TO_ADQ = {
-    "Review_Sequence_Classifier.csv":   "ADQUISICIONES",
-    "Review_Sequence_Classifier_n.csv": "ADQUISICIONES-02-03-2026",
+    "batch_1": "ADQUISICIONES",
+    "batch_2": "ADQUISICIONES-02-03-2026",
 }
 
 
@@ -59,10 +61,29 @@ def select_rows(csv_path: Path) -> list[dict]:
     return rows, kept
 
 
+def extract_batch(source: str) -> str | None:
+    """
+    Pull the batch token from a '__source' path such as '/data/batch_1/xxx.csv'.
+    Prefers a path component beginning with 'batch'; falls back to the CSV's
+    immediate parent directory name. Returns None when no batch can be found.
+    """
+    source = (source or "").strip()
+    if not source:
+        return None
+    parts = Path(source).parts
+    for part in parts:
+        if part.lower().startswith("batch"):
+            return part
+    # Fallback: the directory the CSV sits in (parent of the filename).
+    parent = Path(source).parent.name
+    return parent or None
+
+
 def resolve_series_dir(row: dict, batch_map: dict[str, str],
                        src_root: Path) -> Path | None:
-    """Return the source Serie directory for a row, or None if __source is unknown."""
-    adq = batch_map.get((row.get("__source") or "").strip())
+    """Return the source Serie directory for a row, or None if the batch is unknown."""
+    batch = extract_batch(row.get("__source") or "")
+    adq = batch_map.get(batch) if batch is not None else None
     if adq is None:
         return None
     return src_root / adq / row["Paciente"] / row["Estudio"] / row["Serie"]
@@ -118,9 +139,10 @@ def main() -> int:
                    help=f"Root holding the batch directories (default: {SRC_ROOT}).")
     p.add_argument("--csv", type=Path, default=CSV_PATH,
                    help=f"Path to combined_reviewed.csv (default: {CSV_PATH}).")
-    p.add_argument("--batch", action="append", default=[], metavar="CSV=DIR",
-                   help="Add/override a batch mapping '<__source csv name>=<batch dir>'. "
-                        "Repeatable — use once per extra batch (3rd, 4th, ...).")
+    p.add_argument("--batch", action="append", default=[], metavar="TOKEN=DIR",
+                   help="Add/override a batch mapping '<batch token>=<batch dir>' "
+                        "(e.g. 'batch_3=ADQUISICIONES-BATCH3'). Repeatable — use "
+                        "once per extra batch (3rd, 4th, ...).")
     p.add_argument("--dry-run", action="store_true",
                    help="Print what would be copied without touching the filesystem.")
     args = p.parse_args()
@@ -133,13 +155,13 @@ def main() -> int:
     batch_map = dict(SOURCE_TO_ADQ)
     for spec in args.batch:
         if "=" not in spec:
-            print(f"ERROR: --batch must be 'CSV=DIR', got {spec!r}", file=sys.stderr)
+            print(f"ERROR: --batch must be 'TOKEN=DIR', got {spec!r}", file=sys.stderr)
             return 1
-        csv_name, batch_dir = (part.strip() for part in spec.split("=", 1))
-        batch_map[csv_name] = batch_dir
+        token, batch_dir = (part.strip() for part in spec.split("=", 1))
+        batch_map[token] = batch_dir
     print(f"Batches ({len(batch_map)}):")
-    for csv_name, batch_dir in batch_map.items():
-        print(f"  {csv_name}  ->  {batch_dir}")
+    for token, batch_dir in batch_map.items():
+        print(f"  {token}  ->  {batch_dir}")
 
     all_rows, kept = select_rows(args.csv)
     excluded_counts = Counter(
@@ -171,7 +193,7 @@ def main() -> int:
 
     print(f"\nUnique series dirs : {len(series_dirs):,}")
     if bad_source:
-        print(f"  (skipped {bad_source} rows with unknown __source)")
+        print(f"  (skipped {bad_source} rows with unknown/unmapped batch)")
 
     if args.dry_run:
         print("\n--dry-run: no files will be written.")
