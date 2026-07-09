@@ -5,11 +5,11 @@ Each step (load / normalize / slice / crop / resize / overlay / save) lives in
 its own module and is independently testable; this file only orchestrates.
 
 Which files a (modality, plane) requirement maps to is delegated to a RESOLVER
-callable so the same glue serves both drivers:
-    run.py                -> make_pattern_resolver  ({modality}.nii.gz layout)
-    extract_from_dataset  -> a plane-aware resolver over pairs.find_pairs
-A resolver takes (case_id, modality, plane) and returns (vol_path, seg_path) or
-None when that combination isn't available for the case.
+callable (run.py builds one from pairs.find_pairs + the classified-sequence
+table). A resolver takes (case_id, modality, plane) and returns (vol_path,
+seg_path), or None when that combination isn't available for the case. Keeping
+resolution behind this seam is what makes the slice/crop/normalize steps unit-
+testable without any real data.
 
 Output layout:
     {out_root}/{case_id}/{feature}/{modality}_{plane}_{slice}.png
@@ -49,29 +49,12 @@ class PipelineOptions:
     mask_dilate_px: int = 0          # only for 'masked': keep a rim of tissue
     foreground_only: bool = True
     overlay: bool = False
-    img_pattern: str = "{modality}.nii.gz"
-    seg_pattern: str = "{modality}_seg.nii.gz"
 
 
 def _safe_name(s: str) -> str:
     """Filesystem-safe token for filenames (sequence labels are already clean,
     but a case_id may contain '/')."""
     return str(s).replace("/", "__").replace(" ", "_")
-
-
-def make_pattern_resolver(data_root: Path, opt: PipelineOptions) -> Resolver:
-    """Resolver for the simple {modality}.nii.gz / {modality}_seg.nii.gz layout.
-    Plane is ignored -- one volume per modality, resliced into any plane."""
-
-    def resolve(case_id: str, modality: str, _plane: str):
-        img = data_root / case_id / opt.img_pattern.format(modality=modality)
-        seg = data_root / case_id / opt.seg_pattern.format(modality=modality)
-        if not img.exists() and str(img).endswith(".nii.gz"):  # tolerate .nii
-            alt = Path(str(img)[:-3])
-            img = alt if alt.exists() else img
-        return (img, seg) if img.exists() and seg.exists() else None
-
-    return resolve
 
 
 def process_feature(
