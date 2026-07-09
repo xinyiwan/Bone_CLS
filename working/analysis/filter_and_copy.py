@@ -37,9 +37,9 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-CSV_PATH = Path("/working/output/CLF_performance/combined_reviewed.csv")
-SRC_ROOT = Path("/working/tmp_data_nifti")
-DST_ROOT = Path("/working/tmp_sorted_data")
+CSV_PATH = Path("/output/CLF_performance/batches_1_to_4/combined_reviewed.csv")
+SRC_ROOT = Path("/src/tmp_data_nifti")
+DST_ROOT = Path("/dst/tmp_sorted_data")
 
 EXCLUDED_W = {"Other", "DW", "Localizer", "Zip/JPG"}
 
