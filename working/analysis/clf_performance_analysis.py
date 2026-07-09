@@ -119,7 +119,7 @@ def load_and_fix(path: Path) -> pd.DataFrame:
     if not {"Paciente", "Serie"}.issubset(df.columns):
         raise ValueError(f"{path}: expected columns 'Paciente' and 'Serie'")
     df = df.rename(columns={"Paciente": "Serie", "Serie": "Paciente"})
-    df["__source"] = path.name
+    df["__source"] = path
     return df
 
 
