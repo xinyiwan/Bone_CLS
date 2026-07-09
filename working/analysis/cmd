@@ -29,13 +29,25 @@ docker run --rm -it\
 # combine and move filtered data into sorted data 
 docker run --rm -it\
   -v /home/ext_xinwan/Bone_AI/Bone_CLS/working/analysis:/working \
+  -v /mnt/rimp/PROJECTS/BONE-AI/:/src \
+  -v /mnt/tmp_storage/Bone_AI/:/dst \
   -v /home/ext_xinwan/Bone_AI/output/:/output\
-  -v /home/ext_xinwan/Bone_AI/output/DCM_CLF/:/data\
   -w /working \
   --entrypoint python3 \
   testp11:latest \
-  modality_overview.py /data/batch_1/Results/Review_Sequence_Classifier.csv \
-    /data/batch_2/Results/Review_Sequence_Classifier_n.csv \
-    /data/batch_3/Results/Review_Sequence_Classifier_filtered.csv \
-    /data/batch_4/Results/Review_Sequence_Classifier_filtered.csv \
-    --out-dir /output/CLF_performance/modality_overview_1_to_4
+  filter_and_copy.py \
+   --batch "batch_1=ADQUISICIONES" \
+   --batch "batch_2=ADQUISICIONES_02_03_2026" \
+   --batch "batch_3=2026-04-24" \
+   --batch "batch_4=2026-05-13" --dry-run 
+
+# check segmentation overview
+docker run --rm -it\
+  -v /home/ext_xinwan/Bone_AI/Bone_CLS/:/working \
+  -v /mnt/rimp/PROJECTS/BONE-AI/:/src \
+  -v /mnt/tmp_storage/Bone_AI/tmp_sorted_data:/data \
+  -v /home/ext_xinwan/Bone_AI/output/:/output\
+  -w /working \
+  --entrypoint python3 \
+  testp11:latest \
+  analysis/seg_history_overview.py

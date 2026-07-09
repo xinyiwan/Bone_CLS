@@ -39,18 +39,20 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-CSV_PATH = Path("/output/CLF_performance/batches_1_to_4/combined_reviewed.csv")
-SRC_ROOT = Path("/src/tmp_data_nifti")
+CSV_PATH = Path("/output/CLF_performance/batches_1_4/combined_reviewed.csv")
+SRC_ROOT = Path("/src/nifti")
 DST_ROOT = Path("/dst/tmp_sorted_data")
 
-EXCLUDED_W = {"Other", "DW", "Localizer", "Zip/JPG"}
+EXCLUDED_W = {"Other", "DW", "Localizer", "Zip/JPG", "PD"}
 
 # Maps each batch token (the 'batch_x' component of a row's '__source' path)
 # to its batch directory under SRC_ROOT. Extend at runtime with
 # --batch "<batch token>=<batch dir>" (repeatable) instead of editing this dict.
 SOURCE_TO_ADQ = {
     "batch_1": "ADQUISICIONES",
-    "batch_2": "ADQUISICIONES-02-03-2026",
+    "batch_2": "ADQUISICIONES_02_03_2026",
+    # "batch_3": "2026-04-24",
+    # "batch_4": "2026-05-13",
 }
 
 
