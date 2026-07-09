@@ -42,6 +42,52 @@ python run.py --data-root /data --out-root ./out \
 Missing modalities/masks and per-feature errors are logged and skipped; the
 batch continues.
 
+## Running on the REAL BONE data layout (recommended)
+
+`run.py` assumes a flat `{modality}.nii.gz` layout. For the actual segmentation
+project tree — `<subject>/<session>/<scan>/images.nii.gz` with masks under
+`segmentation_history/segs/` or `review/*/segs/` — use **`extract_from_dataset.py`**,
+which reuses `seg_model/pairs.py:find_pairs` (segmentation-driven discovery,
+reviewed mask preferred over history) and joins your **classified-sequence
+table** on `(subject, session, scan)` for the sequence label. The acquisition
+plane is read from each scan's affine; a `(sequence, plane)` requirement is
+matched to a scan **acquired in that plane** and sliced along its native axis —
+we never reslice a thick axial stack into a fake coronal.
+
+The unit of work is the **subject** by default (`case_id` == subject); pass
+`--unit study` to group by `(subject, session)` instead so a feature's
+`axial + coronal` are guaranteed to come from the same study.
+
+```bash
+# 1. Discover what's available and how well the config is covered (no extraction):
+#    NOTE: this project's table names the subject column 'case' -> --seq-subject-col case
+python extract_from_dataset.py --data-root /data --out-root ./out \
+    --sequence-table sequences.csv --config feature_config_dataset.yaml --index-only \
+    --seq-subject-col case --seq-session-col session \
+    --seq-scan-col scan --seq-label-col sequence
+
+# -> writes out/dataset_index.csv (provenance) and prints available
+#    (sequence, plane) combos + per-feature coverage. Use the exact label
+#    strings it prints in feature_config_dataset.yaml (or via sequence_aliases).
+
+# 2. Extract:
+python extract_from_dataset.py --data-root /data --out-root ./out \
+    --sequence-table sequences.csv --config feature_config_dataset.yaml \
+    --seq-subject-col case --overlay --reviewed-only
+```
+
+Notes:
+- `--seq-*-col` flags map to your table's actual column names (defaults:
+  `subject`, `session`, `scan`, `sequence`). Your table uses `case` for the
+  subject, so pass `--seq-subject-col case`.
+- `--unit subject` (default) vs `--unit study` picks the grouping granularity.
+- `sequence_aliases:` in the YAML lets the feature config use short names
+  (`T1C`) that map to your classifier's labels (`T1W_nFS_CE`).
+- `--reviewed-only` restricts to radiologist-reviewed masks; otherwise reviewed
+  is preferred and history used as fallback.
+- Provenance (which scan/source each crop came from) is in `dataset_index.csv`,
+  keyed by the same image paths that appear in `metadata.csv`.
+
 ## Pipeline steps (each is a standalone, testable function)
 
 | Step        | Module         | Key function |

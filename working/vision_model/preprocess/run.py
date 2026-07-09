@@ -26,7 +26,7 @@ from typing import List
 
 from config import load_feature_config
 from outputs import MetadataWriter
-from pipeline import PipelineOptions, process_subject
+from pipeline import PipelineOptions, make_pattern_resolver, process_case
 
 
 def discover_subjects(data_root: Path) -> List[str]:
@@ -85,11 +85,12 @@ def main() -> None:
         seg_pattern=args.seg_pattern,
     )
 
+    resolve = make_pattern_resolver(args.data_root, opt)
     meta_path = args.metadata or (args.out_root / "metadata.csv")
     with MetadataWriter(meta_path) as writer:
         for i, subject in enumerate(subjects, 1):
             log.info("[%d/%d] %s", i, len(subjects), subject)
-            process_subject(subject, specs, args.data_root, args.out_root, opt, writer)
+            process_case(subject, specs, args.out_root, opt, resolve, writer)
 
     log.info("done -> %s", meta_path)
 

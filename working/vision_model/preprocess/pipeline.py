@@ -1,12 +1,19 @@
 """
-Glue: turn one subject + one FeatureSpec into PNG crops + a metadata row.
+Glue: turn one case + one FeatureSpec into PNG crops + a metadata row.
 
 Each step (load / normalize / slice / crop / resize / overlay / save) lives in
 its own module and is independently testable; this file only orchestrates.
 
+Which files a (modality, plane) requirement maps to is delegated to a RESOLVER
+callable so the same glue serves both drivers:
+    run.py                -> make_pattern_resolver  ({modality}.nii.gz layout)
+    extract_from_dataset  -> a plane-aware resolver over pairs.find_pairs
+A resolver takes (case_id, modality, plane) and returns (vol_path, seg_path) or
+None when that combination isn't available for the case.
+
 Output layout:
-    {out_root}/{subject}/{feature}/{modality}_{plane}_{slice}.png
-    {out_root}/{subject}/{feature}/{modality}_{plane}_{slice}_overlay.png   (if enabled)
+    {out_root}/{case_id}/{feature}/{modality}_{plane}_{slice}.png
+    {out_root}/{case_id}/{feature}/{modality}_{plane}_{slice}_overlay.png   (if enabled)
 """
 
 from __future__ import annotations
@@ -14,7 +21,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -28,6 +35,9 @@ from slicing import PLANE_AXES, extract_slice, find_top_k_area_slices, inplane_s
 from volume_io import load_volume_and_mask
 
 log = logging.getLogger("preprocess")
+
+# (case_id, modality, plane) -> (volume_path, seg_path) or None if unavailable.
+Resolver = Callable[[str, str, str], Optional[Tuple[Path, Path]]]
 
 
 @dataclass
@@ -43,30 +53,40 @@ class PipelineOptions:
     seg_pattern: str = "{modality}_seg.nii.gz"
 
 
-class MissingInput(FileNotFoundError):
-    """A required modality volume or mask is absent for a subject."""
+def _safe_name(s: str) -> str:
+    """Filesystem-safe token for filenames (sequence labels are already clean,
+    but a case_id may contain '/')."""
+    return str(s).replace("/", "__").replace(" ", "_")
 
 
-def _resolve_paths(data_root: Path, subject: str, modality: str, opt: PipelineOptions):
-    img = data_root / subject / opt.img_pattern.format(modality=modality)
-    seg = data_root / subject / opt.seg_pattern.format(modality=modality)
-    # tolerate .nii vs .nii.gz
-    if not img.exists() and str(img).endswith(".nii.gz"):
-        alt = Path(str(img)[:-3])
-        img = alt if alt.exists() else img
-    return img, seg
+def make_pattern_resolver(data_root: Path, opt: PipelineOptions) -> Resolver:
+    """Resolver for the simple {modality}.nii.gz / {modality}_seg.nii.gz layout.
+    Plane is ignored -- one volume per modality, resliced into any plane."""
+
+    def resolve(case_id: str, modality: str, _plane: str):
+        img = data_root / case_id / opt.img_pattern.format(modality=modality)
+        seg = data_root / case_id / opt.seg_pattern.format(modality=modality)
+        if not img.exists() and str(img).endswith(".nii.gz"):  # tolerate .nii
+            alt = Path(str(img)[:-3])
+            img = alt if alt.exists() else img
+        return (img, seg) if img.exists() and seg.exists() else None
+
+    return resolve
 
 
 def process_feature(
-    subject: str,
+    case_id: str,
     spec: FeatureSpec,
-    data_root: Path,
     out_root: Path,
     opt: PipelineOptions,
+    resolve: Resolver,
+    vol_cache: Optional[Dict[str, tuple]] = None,
 ) -> Optional[Dict[str, object]]:
     """Process every requirement/plane/slice for one feature. Returns a metadata
-    row dict, or None if nothing usable was produced. Raises MissingInput if a
-    required modality/mask file is absent (batch driver logs & skips)."""
+    row dict, or None if nothing usable was produced. Missing (modality, plane)
+    combinations are logged and skipped, not fatal."""
+    if vol_cache is None:
+        vol_cache = {}
     modalities: List[str] = []
     planes: List[str] = []
     slices: List[int] = []
@@ -74,24 +94,31 @@ def process_feature(
     bboxes: List[str] = []
     margins: List[str] = []
 
-    feat_dir = out_root / subject / spec.name
+    feat_dir = out_root / _safe_name(case_id) / spec.name
 
     for req in spec.requirements:
-        vol_path, seg_path = _resolve_paths(data_root, subject, req.modality, opt)
-        if not vol_path.exists() or not seg_path.exists():
-            raise MissingInput(f"{subject}: missing {req.modality} vol/seg ({vol_path.name}, {seg_path.name})")
-
-        vol, mask, spacing, _affine = load_volume_and_mask(vol_path, seg_path)
-        vol_norm = normalize_intensity(vol, method=opt.norm_method, foreground_only=opt.foreground_only)
-
         for plane in req.planes:
             if plane not in PLANE_AXES:
-                log.warning("%s/%s: unknown plane %r, skipping", subject, spec.name, plane)
+                log.warning("%s/%s: unknown plane %r, skipping", case_id, spec.name, plane)
                 continue
+
+            hit = resolve(case_id, req.modality, plane)
+            if hit is None:
+                log.warning("%s/%s: no %s scan in %s plane, skipping", case_id, spec.name, req.modality, plane)
+                continue
+            vol_path, seg_path = hit
+
+            # Reslicing the same file for several planes / features -> load once.
+            key = str(vol_path)
+            if key not in vol_cache:
+                vol, mask, spacing, _affine = load_volume_and_mask(vol_path, seg_path)
+                vol_norm = normalize_intensity(vol, method=opt.norm_method, foreground_only=opt.foreground_only)
+                vol_cache[key] = (vol_norm, mask, spacing)
+            vol_norm, mask, spacing = vol_cache[key]
 
             top = find_top_k_area_slices(mask, plane, spec.top_k)
             if not top:
-                log.warning("%s/%s: empty mask in %s plane for %s", subject, spec.name, plane, req.modality)
+                log.warning("%s/%s: empty mask in %s plane for %s", case_id, spec.name, plane, req.modality)
                 continue
 
             row_sp, col_sp = inplane_spacing(spacing, plane)
@@ -142,7 +169,7 @@ def process_feature(
         return None
 
     return {
-        "case_id": subject,
+        "case_id": case_id,
         "feature_name": spec.name,
         "modality": join_field(sorted(set(modalities))),
         "plane": join_field(planes),
@@ -153,23 +180,24 @@ def process_feature(
     }
 
 
-def process_subject(
-    subject: str,
+def process_case(
+    case_id: str,
     specs: List[FeatureSpec],
-    data_root: Path,
     out_root: Path,
     opt: PipelineOptions,
+    resolve: Resolver,
     meta_writer,
 ) -> None:
-    """Run all features for one subject. Errors in one feature are logged and
-    skipped so the batch never dies on a single bad subject/feature."""
+    """Run all features for one case. Errors in one feature are logged and
+    skipped so the batch never dies on a single bad case/feature. The volume
+    cache is shared across features so a scan needed by several features (or in
+    several planes) is loaded/normalized only once."""
+    vol_cache: Dict[str, tuple] = {}
     for spec in specs:
         try:
-            row = process_feature(subject, spec, data_root, out_root, opt)
+            row = process_feature(case_id, spec, out_root, opt, resolve, vol_cache)
             if row is not None:
                 meta_writer.write_row(row)
-                log.info("%s / %s: %d image(s)", subject, spec.name, row["image_paths"].count(";") + 1)
-        except MissingInput as e:
-            log.warning("SKIP %s", e)
+                log.info("%s / %s: %d image(s)", case_id, spec.name, row["image_paths"].count(";") + 1)
         except Exception as e:  # noqa: BLE001 -- isolate one bad feature
-            log.exception("ERROR %s / %s: %s", subject, spec.name, e)
+            log.exception("ERROR %s / %s: %s", case_id, spec.name, e)

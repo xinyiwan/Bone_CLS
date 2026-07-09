@@ -99,3 +99,18 @@ def _load_csv(path: Path) -> List[FeatureSpec]:
             if row.get("crop_mode"):
                 spec.crop_mode = row["crop_mode"].strip()
     return list(by_name.values())
+
+
+def load_sequence_aliases(path: str | Path) -> dict:
+    """Optional {config_modality -> classified_label} map, read from a top-level
+    `sequence_aliases:` block in a YAML config. Lets the feature config use short
+    names (T1C) that map onto your classifier's labels (T1W_nFS_CE). Returns {}
+    for CSV configs or when the block is absent."""
+    path = Path(path)
+    if path.suffix.lower() not in {".yaml", ".yml"}:
+        return {}
+    import yaml
+
+    with open(path) as fh:
+        raw = yaml.safe_load(fh) or {}
+    return dict(raw.get("sequence_aliases", {}))
