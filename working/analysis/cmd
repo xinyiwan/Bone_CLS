@@ -1,0 +1,13 @@
+# combine all CLF csv results for filtering
+docker run --rm -it\
+  -v /home/ext_xinwan/Bone_AI/Bone_CLS/working/analysis:/working \
+  -v /home/ext_xinwan/Bone_AI/output/:/output\
+  -v /home/ext_xinwan/Bone_AI/output/DCM_CLF/:/data\
+  -w /working \
+  --entrypoint python3 \
+  testp11:latest \
+  clf_performance_analysis.py /data/batch_1/Results/Review_Sequence_Classifier.csv \
+    /data/batch_2/Results/Review_Sequence_Classifier_n.csv \
+    /data/batch_3/Results/Review_Sequence_Classifier_filtered.csv \
+    /data/batch_4/Results/Review_Sequence_Classifier_filtered.csv \
+    --out-dir /output/CLF_performance/four_batches

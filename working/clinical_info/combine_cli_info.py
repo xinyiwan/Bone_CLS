@@ -16,10 +16,15 @@ from __future__ import annotations
 import pandas as pd
 
 llm_cli_csv = "/home/ext_xinwan/Bone_AI/BTRecordsLLM/output/clinical_variables/kira-0515-llm-cli.csv"
-dcm_batch_1_csv = "/home/ext_xinwan/Bone_AI/output/DCM_Physics/batch_1/dicom_headers_labelled_Mar24.csv"
-dcm_batch_2_csv = "/home/ext_xinwan/Bone_AI/output/DCM_Physics/batch_2/batch_2_headers_labelled.csv"
+# dcm_batch_1_csv = "/home/ext_xinwan/Bone_AI/output/DCM_Physics/batch_1/dicom_headers_labelled_Mar24.csv"
+# dcm_batch_2_csv = "/home/ext_xinwan/Bone_AI/output/DCM_Physics/batch_2/batch_2_headers_labelled.csv"
 
-output_csv = "/home/ext_xinwan/Bone_AI/output/clinical_info/combined_clinical_info.csv"
+dcm_batch_1_csv = "/home/ext_xinwan/Bone_AI/output/DCM_Physics/all_batches/batch_1_labelled.csv"
+dcm_batch_2_csv = "/home/ext_xinwan/Bone_AI/output/DCM_Physics/all_batches/batch_2_labelled.csv"
+dcm_batch_3_csv = "/home/ext_xinwan/Bone_AI/output/DCM_Physics/all_batches/batch_3_labelled.csv"
+dcm_batch_4_csv = "/home/ext_xinwan/Bone_AI/output/DCM_Physics/all_batches/batch_4_labelled.csv"
+
+output_csv = "/home/ext_xinwan/Bone_AI/output/clinical_info/combined_clinical_info_batches1_to_4.csv"
 
 DCM_KEEP_COLS = ["subject", "birthdate", "age", "gender"]
 LLM_KEEP_COLS = [
@@ -43,7 +48,7 @@ def load_dcm_demographics(csv_path):
 def combine():
     # type: () -> pd.DataFrame
     dcm = pd.concat(
-        [load_dcm_demographics(dcm_batch_1_csv), load_dcm_demographics(dcm_batch_2_csv)],
+        [load_dcm_demographics(dcm_batch_1_csv), load_dcm_demographics(dcm_batch_2_csv), load_dcm_demographics(dcm_batch_3_csv), load_dcm_demographics(dcm_batch_4_csv)],
         ignore_index=True,
     )
     dcm = dcm.drop_duplicates(subset="subject", keep="first")
