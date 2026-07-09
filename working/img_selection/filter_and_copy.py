@@ -6,18 +6,26 @@ destination root.
 A row is selected when its 'Clase W Final' is NOT in the EXCLUDED set:
     {"Other", "DW", "Localizer", "Zip/JPG"}
 
-Source layout (hard-coded):
-    /home/ext_xinwan/Bone_AI/tmp_data_nifti/
-        ADQUISICIONES/<Paciente>/<Estudio>/<Serie>/*       (Review_Sequence_Classifier.csv)
-        ADQUISICIONES_02_03_2026/<Paciente>/<Estudio>/<Serie>/*  (Review_Sequence_Classifier_n.csv)
+Source layout:
+    <src-root>/<ADQUISICIONES batch>/<Paciente>/<Estudio>/<Serie>/*
+Each row's batch directory is looked up from its '__source' CSV name via the
+batch map (see SOURCE_TO_ADQ for the defaults; add more batches on the command
+line with --batch "<csv name>=<batch dir>", repeatable).
 
-Destination layout merges both source batches at the subject level:
+Destination layout merges every source batch at the subject level:
     <dst>/<Paciente>/<Estudio>/<Serie>/*
-(The two ADQUISICIONES batches share 3 Pacientes but no (Paciente, Estudio,
-Serie) tuples — so the merge is collision-free.)
+Existing files at the destination are never overwritten — a series that is
+already (partly) present is topped up with only its missing files, so re-runs
+and merges across batches are safe.
 
 Usage:
-    python filter_and_copy.py --dst /path/to/output [--dry-run]
+    # default two batches, into the seg_model mount root
+    python filter_and_copy.py [--dry-run]
+
+    # add more batches (3rd, 4th, ...) without editing the script
+    python filter_and_copy.py \
+        --batch "Review_Sequence_Classifier_3.csv=ADQUISICIONES-BATCH3" \
+        --batch "Review_Sequence_Classifier_4.csv=ADQUISICIONES-BATCH4"
 """
 
 from __future__ import annotations
@@ -31,9 +39,13 @@ from pathlib import Path
 
 CSV_PATH = Path("/working/output/CLF_performance/combined_reviewed.csv")
 SRC_ROOT = Path("/working/tmp_data_nifti")
+DST_ROOT = Path("/working/tmp_sorted_data")
 
 EXCLUDED_W = {"Other", "DW", "Localizer", "Zip/JPG"}
 
+# Maps each review CSV's '__source' name to its batch directory under SRC_ROOT.
+# Extend at runtime with --batch "<csv name>=<batch dir>" (repeatable) instead
+# of editing this dict.
 SOURCE_TO_ADQ = {
     "Review_Sequence_Classifier.csv":   "ADQUISICIONES",
     "Review_Sequence_Classifier_n.csv": "ADQUISICIONES-02-03-2026",
@@ -47,42 +59,46 @@ def select_rows(csv_path: Path) -> list[dict]:
     return rows, kept
 
 
-def resolve_series_dir(row: dict) -> Path | None:
+def resolve_series_dir(row: dict, batch_map: dict[str, str],
+                       src_root: Path) -> Path | None:
     """Return the source Serie directory for a row, or None if __source is unknown."""
-    adq = SOURCE_TO_ADQ.get((row.get("__source") or "").strip())
+    adq = batch_map.get((row.get("__source") or "").strip())
     if adq is None:
         return None
-    return SRC_ROOT / adq / row["Paciente"] / row["Estudio"] / row["Serie"]
+    return src_root / adq / row["Paciente"] / row["Estudio"] / row["Serie"]
 
 
 def dest_series_dir(row: dict, dst_root: Path) -> Path:
     return dst_root / row["Paciente"] / row["Estudio"] / row["Serie"]
 
 
-def copy_series(src: Path, dst: Path, dry_run: bool) -> tuple[int, int]:
+def copy_series(src: Path, dst: Path, dry_run: bool) -> tuple[int, int, int]:
     """
     Copy every file under src into dst (recursive), preserving directory layout.
-    Returns (files_copied, bytes_copied). Skips files that already exist with
-    matching size.
+    Returns (files_copied, bytes_copied, files_skipped). Never overwrites: any
+    file that already exists at the destination is left untouched and counted
+    as skipped.
     """
     if not src.exists():
-        return (0, 0)
+        return (0, 0, 0)
 
     files_copied = 0
     bytes_copied = 0
+    files_skipped = 0
     for item in src.rglob("*"):
         if not item.is_file():
             continue
         rel = item.relative_to(src)
         target = dst / rel
-        if target.exists() and target.stat().st_size == item.stat().st_size:
+        if target.exists():
+            files_skipped += 1
             continue
         if not dry_run:
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(item, target)
         files_copied += 1
         bytes_copied += item.stat().st_size
-    return (files_copied, bytes_copied)
+    return (files_copied, bytes_copied, files_skipped)
 
 
 def fmt_bytes(n: int) -> str:
@@ -95,10 +111,16 @@ def fmt_bytes(n: int) -> str:
 
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    p.add_argument("--dst", type=Path, required=True,
-                   help="Destination root directory (will be created if missing).")
+    p.add_argument("--dst", type=Path, default=DST_ROOT,
+                   help=f"Destination root directory, created if missing "
+                        f"(default: {DST_ROOT}).")
+    p.add_argument("--src-root", type=Path, default=SRC_ROOT,
+                   help=f"Root holding the batch directories (default: {SRC_ROOT}).")
     p.add_argument("--csv", type=Path, default=CSV_PATH,
                    help=f"Path to combined_reviewed.csv (default: {CSV_PATH}).")
+    p.add_argument("--batch", action="append", default=[], metavar="CSV=DIR",
+                   help="Add/override a batch mapping '<__source csv name>=<batch dir>'. "
+                        "Repeatable — use once per extra batch (3rd, 4th, ...).")
     p.add_argument("--dry-run", action="store_true",
                    help="Print what would be copied without touching the filesystem.")
     args = p.parse_args()
@@ -106,6 +128,18 @@ def main() -> int:
     if not args.csv.exists():
         print(f"ERROR: CSV not found at {args.csv}", file=sys.stderr)
         return 1
+
+    # Build the effective batch map: defaults + any --batch overrides.
+    batch_map = dict(SOURCE_TO_ADQ)
+    for spec in args.batch:
+        if "=" not in spec:
+            print(f"ERROR: --batch must be 'CSV=DIR', got {spec!r}", file=sys.stderr)
+            return 1
+        csv_name, batch_dir = (part.strip() for part in spec.split("=", 1))
+        batch_map[csv_name] = batch_dir
+    print(f"Batches ({len(batch_map)}):")
+    for csv_name, batch_dir in batch_map.items():
+        print(f"  {csv_name}  ->  {batch_dir}")
 
     all_rows, kept = select_rows(args.csv)
     excluded_counts = Counter(
@@ -128,7 +162,7 @@ def main() -> int:
     series_dirs: dict[Path, Path] = {}
     bad_source = 0
     for r in kept:
-        src = resolve_series_dir(r)
+        src = resolve_series_dir(r, batch_map, args.src_root)
         if src is None:
             bad_source += 1
             continue
@@ -145,18 +179,22 @@ def main() -> int:
     missing = 0
     total_files = 0
     total_bytes = 0
+    total_skipped = 0
     for src, dst in series_dirs.items():
         if not src.exists():
             missing += 1
             continue
-        n_files, n_bytes = copy_series(src, dst, args.dry_run)
+        n_files, n_bytes, n_skipped = copy_series(src, dst, args.dry_run)
         total_files += n_files
         total_bytes += n_bytes
+        total_skipped += n_skipped
 
-    print(f"\nCopied series dirs : {len(series_dirs) - missing:,}")
+    print(f"\nDestination root   : {args.dst}")
+    print(f"Copied series dirs : {len(series_dirs) - missing:,}")
     print(f"Missing on disk    : {missing:,}")
     print(f"Files {'would be ' if args.dry_run else ''}copied : {total_files:,}")
     print(f"Bytes {'would be ' if args.dry_run else ''}copied : {fmt_bytes(total_bytes)}")
+    print(f"Files skipped (already present, not overwritten): {total_skipped:,}")
 
     return 0
 
