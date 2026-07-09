@@ -20,10 +20,10 @@ Normalisation (so equivalent modalities collapse together):
           'N'. This makes  T2W-Y--  identical to  T2W-Y-N , as requested.
 
 Pre-processing mirrors clf_performance_analysis.py:
-    * Both input CSVs have 'Paciente' and 'Serie' swapped in their headers;
+    * The input CSVs have 'Paciente' and 'Serie' swapped in their headers;
       we swap them back.
-    * The two CSVs overlap; they are concatenated and de-duplicated on the
-      'Nombre DICOM' path.
+    * The CSVs (two or more) may overlap; they are concatenated and
+      de-duplicated on the 'Nombre DICOM' path.
 No truth buckets are dropped here — this is a full overview of everything.
 
 Outputs (into --out-dir):
@@ -38,6 +38,7 @@ Usage:
     python modality_overview.py \
         /Users/xinyi/Documents/github/Bone_CLS/Review_Sequence_Classifier.csv \
         /Users/xinyi/Documents/github/Bone_CLS/Review_Sequence_Classifier_n.csv \
+        [more_review_csvs ...] \
         --out-dir /Users/xinyi/Documents/github/Bone_CLS/working/analysis/modality_overview
 """
 
@@ -65,13 +66,14 @@ def load_and_fix(path: Path) -> pd.DataFrame:
     return df
 
 
-def combine(csv_a: Path, csv_b: Path) -> pd.DataFrame:
-    a = load_and_fix(csv_a)
-    b = load_and_fix(csv_b)
-    print(f"Loaded {csv_a.name}: {len(a):,} rows")
-    print(f"Loaded {csv_b.name}: {len(b):,} rows")
+def combine(csv_paths: list[Path]) -> pd.DataFrame:
+    frames = []
+    for path in csv_paths:
+        df = load_and_fix(path)
+        print(f"Loaded {path.name}: {len(df):,} rows")
+        frames.append(df)
 
-    combined = pd.concat([a, b], ignore_index=True)
+    combined = pd.concat(frames, ignore_index=True)
     before = len(combined)
     combined = combined.drop_duplicates(subset=["Nombre DICOM"], keep="first")
     after = len(combined)
@@ -148,10 +150,9 @@ def bar_plot(freq: pd.DataFrame, label_col: str, title: str, out_path: Path) -> 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("csv_a", type=Path,
-                        help="First review CSV (Paciente/Serie swapped in header)")
-    parser.add_argument("csv_b", type=Path,
-                        help="Second review CSV (Paciente/Serie swapped in header)")
+    parser.add_argument("csvs", type=Path, nargs="+",
+                        help="Two or more review CSVs (Paciente/Serie swapped "
+                             "in header); concatenated and de-duplicated")
     parser.add_argument("--out-dir", type=Path,
                         default=Path(__file__).resolve().parent / "modality_overview",
                         help="Where to write CSVs and charts (default: ./modality_overview)")
@@ -160,7 +161,7 @@ def main() -> None:
     args.out_dir.mkdir(parents=True, exist_ok=True)
     sns.set_theme(style="white")
 
-    df = combine(args.csv_a, args.csv_b)
+    df = combine(args.csvs)
 
     # Modality labels (equivalent modalities folded together — see module
     # docstring: Y-STIR -> Y, and contrast collapsed to N for non-T1W).
