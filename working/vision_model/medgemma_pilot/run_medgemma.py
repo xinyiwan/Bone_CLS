@@ -10,8 +10,21 @@ the trustworthy first pass. (A true multi-image variant would go in run_single /
 build_prompt -- see the MULTI-IMAGE flag below -- but sanity-check it on a few
 known-easy cases before believing it.)
 
+Two backends (same code path otherwise):
+  - hf     : load the weights in-process (needs torch/transformers).
+  - openai : call a locally-served OpenAI-compatible endpoint (a `vllm serve`
+             container -- see Dockerfile). The client then needs only openai +
+             pandas + pillow + pyyaml, no torch.
+
 Modes:
+    # in-process:
     python run_medgemma.py --mode infer --metadata meta.csv --config feature_prompts.yaml --out results.csv
+
+    # against a local vllm server (docker run ... vllm serve):
+    python run_medgemma.py --mode infer --backend openai \
+        --base-url http://localhost:8000/v1 --model-id google/medgemma-1.5-4b-it \
+        --metadata meta.csv --config feature_prompts.yaml --out results.csv
+
     python run_medgemma.py --mode eval  --results results.csv --config feature_prompts.yaml
 
 LICENSE: MedGemma is governed by the Health AI Developer Foundations (HAI-DEF)
@@ -24,12 +37,13 @@ Deps: torch, transformers, pandas, pillow, pyyaml.
 from __future__ import annotations
 
 import argparse
+import base64
 import csv
 import logging
 from collections import Counter
 from io import BytesIO
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 import pandas as pd
 import yaml
@@ -226,6 +240,53 @@ def run_single(model, processor, image: Image.Image, prompt: str, max_new_tokens
     return processor.decode(out[0][input_len:], skip_special_tokens=True).strip()
 
 
+def run_single_openai(client, model_id: str, image: Image.Image, prompt: str, max_new_tokens: int) -> str:
+    """One image + one prompt against an OpenAI-compatible server (e.g. a local
+    `vllm serve`). The image is sent as a base64 JPEG data URL.
+
+    VERIFY: multi-modal chat via vllm needs a vllm version with Gemma-3/MedGemma
+    vision support, and the server may need `--limit-mm-per-prompt image=1`.
+    We send text + one image_url; confirm the served model's chat template
+    accepts this content format.
+    """
+    buf = BytesIO()
+    image.save(buf, format="JPEG", quality=95)
+    b64 = base64.b64encode(buf.getvalue()).decode()
+    resp = client.chat.completions.create(
+        model=model_id,
+        messages=[{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+            ],
+        }],
+        max_tokens=max_new_tokens,
+        temperature=0.0,  # greedy, deterministic short-label task
+    )
+    return (resp.choices[0].message.content or "").strip()
+
+
+# A backend is just a callable: (image, prompt) -> raw text.
+Generate = Callable[[Image.Image, str], str]
+
+
+def make_hf_generate(model_id: str, max_new_tokens: int) -> Generate:
+    """In-process HuggingFace backend (loads weights locally; needs torch)."""
+    model, processor = load_model(model_id)
+    return lambda image, prompt: run_single(model, processor, image, prompt, max_new_tokens)
+
+
+def make_openai_generate(base_url: str, api_key: str, model_id: str, max_new_tokens: int) -> Generate:
+    """Client backend for a locally-served OpenAI-compatible endpoint (vllm).
+    No torch/transformers needed on this side."""
+    from openai import OpenAI
+
+    client = OpenAI(base_url=base_url, api_key=api_key or "EMPTY")
+    log.info("using OpenAI-compatible backend at %s (model=%s)", base_url, model_id)
+    return lambda image, prompt: run_single_openai(client, model_id, image, prompt, max_new_tokens)
+
+
 # ---------------------------------------------------------------------------
 # Parsing + aggregation
 # ---------------------------------------------------------------------------
@@ -318,8 +379,7 @@ def infer(
     metadata_csv: Path,
     config_path: Path,
     out_path: Path,
-    model_id: str,
-    max_new_tokens: int,
+    generate: Generate,
     use_contour: bool = False,
     clinical_csv: Optional[Path] = None,
     clinical_key_col: str = "subject",
@@ -334,8 +394,6 @@ def infer(
     clinical = build_clinical_lookup(clinical_csv, clinical_key_col, location_cols) if clinical_csv else {}
     if clinical_csv:
         log.info("loaded anatomical location for %d subject(s)", len(clinical))
-
-    model, processor = load_model(model_id)
 
     new_file = not out_path.exists()
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -382,7 +440,7 @@ def infer(
                     fcfg, mods[i], plane_i,
                     location=location, other_planes=other_planes, has_contour=has_contour,
                 )
-                raw = run_single(model, processor, image, prompt, max_new_tokens)
+                raw = generate(image, prompt)
                 raws.append(raw)
                 labels.append(parse_answer(raw, fcfg["label_options"]))
 
@@ -454,6 +512,11 @@ def main() -> None:
     ap.add_argument("--model-id", default="google/medgemma-1.5-4b-it",
                     help="default 4B (multi-slice); pass google/medgemma-27b-it for comparison (see load_model note)")
     ap.add_argument("--max-new-tokens", type=int, default=20)
+    # backend: in-process HF weights, or a locally-served OpenAI-compatible endpoint (vllm)
+    ap.add_argument("--backend", choices=["hf", "openai"], default="hf",
+                    help="hf = load weights in-process (needs torch); openai = call a local vllm server")
+    ap.add_argument("--base-url", default="http://localhost:8000/v1", help="OpenAI-compatible server URL (openai backend)")
+    ap.add_argument("--api-key", default="EMPTY", help="API key for the server (vllm ignores it; any non-empty string)")
     # context enrichment
     ap.add_argument("--use-contour", action="store_true",
                     help="feed the radiologist red-contour '_overlay' image and tell the model about it")
@@ -469,7 +532,11 @@ def main() -> None:
     if args.mode == "infer":
         if not args.metadata:
             raise SystemExit("--metadata is required for --mode infer")
-        infer(args.metadata, args.config, args.out or args.results, args.model_id, args.max_new_tokens,
+        if args.backend == "openai":
+            generate = make_openai_generate(args.base_url, args.api_key, args.model_id, args.max_new_tokens)
+        else:
+            generate = make_hf_generate(args.model_id, args.max_new_tokens)
+        infer(args.metadata, args.config, args.out or args.results, generate,
               use_contour=args.use_contour, clinical_csv=args.clinical_csv,
               clinical_key_col=args.clinical_key_col, location_cols=args.location_cols)
     else:

@@ -1,0 +1,7 @@
+# Client + eval deps (used with --backend openai against a local vllm server).
+# The serving image also installs vllm + huggingface_hub separately (see Dockerfile).
+# For the in-process --backend hf path instead, add: torch transformers
+pandas
+pillow
+pyyaml
+openai

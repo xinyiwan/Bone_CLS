@@ -7,10 +7,30 @@ tumour MRI crops. **No few-shot, no logprobs** — a correct end-to-end run firs
 run the model once per image and **majority-vote** the per-image labels. This
 avoids MedGemma's unvalidated multi-image path (see the note atop `run_medgemma.py`).
 
-## Install (no root)
+## Two ways to run
+
+**A. Local vLLM server (recommended, matches your Docker workflow).** The model
+runs in a container behind an OpenAI-compatible API; the script is a thin client
+(no torch needed on the client).
+
+```bash
+# build + serve MedGemma (needs NVIDIA driver + nvidia-container-toolkit on host)
+docker build -t medgemma-serve --build-arg HF_TOKEN=hf_xxx .
+docker run --gpus all -p 8000:8000 medgemma-serve      # serves on :8000
+
+# client (only needs: openai pandas pillow pyyaml)
+pip install --user -r requirements.txt
+python run_medgemma.py --mode infer --backend openai \
+    --base-url http://localhost:8000/v1 --model-id google/medgemma-1.5-4b-it \
+    --metadata meta.csv --config feature_prompts.yaml --out results.csv
+```
+
+**B. In-process (no server).** Loads the weights directly; needs torch.
 
 ```bash
 pip install --user torch transformers pandas pillow pyyaml
+python run_medgemma.py --mode infer --backend hf \
+    --metadata meta.csv --config feature_prompts.yaml --out results.csv
 ```
 
 ## Input
