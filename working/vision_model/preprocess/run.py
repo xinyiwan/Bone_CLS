@@ -169,6 +169,25 @@ def write_index_csv(rows: List[Record], path: Path) -> None:
     log.info("wrote provenance index -> %s", path)
 
 
+def merge_clinical(meta_path: Path, clinical_csv: Path, key_col: str, cols: List[str]) -> None:
+    """Post-step: left-join per-subject clinical fields into metadata.csv so the
+    downstream prompt builder has anatomical location etc. without a second file.
+    Joins on subject = case_id before any '/' (so it works for --unit study too)."""
+    meta = pd.read_csv(meta_path, dtype=str).fillna("")
+    clin = pd.read_csv(clinical_csv, dtype=str).fillna("")
+    if key_col not in clin.columns:
+        raise SystemExit(f"{clinical_csv}: no key column {key_col!r} (have {list(clin.columns)})")
+    keep = [c for c in cols if c in clin.columns]
+    missing = [c for c in cols if c not in clin.columns]
+    if missing:
+        log.warning("clinical CSV missing requested columns %s (have %s)", missing, list(clin.columns))
+    meta["_subject"] = meta["case_id"].str.split("/").str[0]
+    clin = clin.drop_duplicates(subset=key_col)[[key_col] + keep]
+    out = meta.merge(clin, left_on="_subject", right_on=key_col, how="left").drop(columns=["_subject", key_col])
+    out.to_csv(meta_path, index=False)
+    log.info("merged clinical columns %s into %s", keep, meta_path)
+
+
 def print_availability(rows: List[Record]) -> None:
     combos = Counter((r["sequence"], r["plane"]) for r in rows)
     print("\nAvailable (sequence, plane) across all cases:")
@@ -211,6 +230,12 @@ def main() -> None:
     ap.add_argument("--reviewed-only", action="store_true", help="use only radiologist-reviewed masks")
     ap.add_argument("--index-only", action="store_true", help="report availability/coverage; don't extract")
     ap.add_argument("--metadata", type=Path, help="metadata CSV (default out-root/metadata.csv)")
+    # optional clinical-info merge (adds anatomical location etc. to metadata.csv)
+    ap.add_argument("--clinical-csv", type=Path, help="per-subject clinical CSV (e.g. combine_cli_info.py output)")
+    ap.add_argument("--clinical-key-col", default="subject", help="subject-id column in the clinical CSV")
+    ap.add_argument("--clinical-cols", nargs="*",
+                    default=["skeletal_location", "location_within_bone", "age", "gender"],
+                    help="clinical columns to add to metadata.csv")
     # pipeline options
     ap.add_argument("--out-size", type=int, default=128)
     ap.add_argument("--norm", choices=["minmax", "zscore"], default="minmax")
@@ -267,6 +292,9 @@ def main() -> None:
         for i, case in enumerate(cases, 1):
             log.info("[%d/%d] %s", i, len(cases), case)
             process_case(case, specs, args.out_root, opt, resolve, writer)
+
+    if args.clinical_csv:
+        merge_clinical(meta_path, args.clinical_csv, args.clinical_key_col, args.clinical_cols)
 
     log.info("done -> %s", meta_path)
 

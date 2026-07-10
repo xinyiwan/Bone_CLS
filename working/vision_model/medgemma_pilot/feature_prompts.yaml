@@ -1,0 +1,49 @@
+# Zero-shot feature config for MedGemma.
+#
+# build_prompt() assembles a prompt in a fixed STRUCTURE:
+#   [general context]  (built in code from modality/plane/location/contour/other views)
+#   + description       (this file: what the feature IS)
+#   + label_definitions (this file, optional: what each label means)
+#   + task              (this file: what to decide)
+#   + answer format     (built in code from label_options)
+#
+# So all feature-specific WORDING lives here; the code only handles structure.
+# Nothing about the vocabulary is hardcoded in the script.
+#
+# Per feature:
+#   label_options:      the fixed vocabulary; parsing matches ONLY these (case-insensitive)
+#   description:        one-sentence definition of the feature (goes into the prompt verbatim)
+#   label_definitions:  optional {label: meaning} to disambiguate the vocabulary
+#   task:               the instruction telling the model what to decide
+
+features:
+  shape:
+    label_options: [oval, lobulated, irregular]
+    description: "This feature is the overall contour/margin shape of the lesion."
+    label_definitions:
+      oval: "a smooth, round or elliptical margin"
+      lobulated: "an undulating, multi-lobed margin"
+      irregular: "an ill-defined, jagged or spiculated margin"
+    task: "Decide which single descriptor best matches the lesion's margin."
+
+  enhancement:
+    label_options: [homogeneous, heterogeneous, none]
+    description: "This feature is the pattern of contrast enhancement within the lesion on post-contrast imaging."
+    label_definitions:
+      homogeneous: "uniform enhancement throughout the lesion"
+      heterogeneous: "patchy, mixed or non-uniform enhancement"
+      none: "no appreciable enhancement"
+    task: "Decide which single pattern best describes the enhancement."
+
+  fluid_fluid_level:
+    label_options: [present, absent]
+    description: >
+      A fluid-fluid level is a horizontal interface between two fluids of
+      different signal intensity settling within the lesion (classically seen in
+      aneurysmal bone cysts).
+    task: "State whether a fluid-fluid level is present or absent."
+
+  soft_tissue_invasion:
+    label_options: [present, absent]
+    description: "Soft-tissue invasion is extension of the tumour beyond the bone cortex into the adjacent soft tissues."
+    task: "State whether soft-tissue invasion is present or absent."

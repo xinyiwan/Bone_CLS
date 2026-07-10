@@ -154,7 +154,9 @@ def process_feature(
     return {
         "case_id": case_id,
         "feature_name": spec.name,
-        "modality": join_field(sorted(set(modalities))),
+        # modality is parallel to image_paths/plane (one entry per image), so
+        # downstream (e.g. per-image prompting) can zip them; may repeat.
+        "modality": join_field(modalities),
         "plane": join_field(planes),
         "slice_indices": join_field(slices),
         "image_paths": join_field(image_paths),
