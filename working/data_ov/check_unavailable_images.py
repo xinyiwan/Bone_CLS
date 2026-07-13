@@ -71,17 +71,31 @@ def downloaded_subjects(nifti_root: Path, image_glob: str) -> set:
 def merge_corrected_accession(df: pd.DataFrame, accession_csv: Path) -> int:
     """Add ACCESSION_OUT_COL to df from accession_csv, joined on ACCESSION_KEYS.
 
-    The corrected file is read with the accession column forced to a nullable
-    integer dtype: the ids are 16 digits, above float64's exact-integer limit
-    (2**53), so a plain read would silently round the last digit(s) — the very
-    corruption we are fixing. Returns the number of rows that got a value.
+    The accession column is read (and kept) as raw TEXT, never as a number: the
+    ids are 16 digits, above float64's exact-integer limit (2**53), so letting
+    pandas parse them numerically rounds the last digit(s) to 0 -- the very
+    corruption we are fixing, and it happens even via the nullable-Int64 path on
+    some pandas versions. Reading as string copies the exact characters from the
+    source CSV. Returns the number of rows that got a value.
     """
-    src = pd.read_csv(accession_csv, dtype={ACCESSION_COL: "Int64"})
+    src = pd.read_csv(accession_csv, dtype={ACCESSION_COL: "string"})
     missing = [c for c in ACCESSION_KEYS + [ACCESSION_COL] if c not in src.columns]
     if missing:
         raise SystemExit(
             f"{accession_csv.name} is missing column(s): {', '.join(missing)}"
         )
+
+    acc = src[ACCESSION_COL].str.strip()
+    # If the source itself was already saved through Excel/float, the digits are
+    # gone before we ever see them -- flag it rather than emit rounded ids.
+    corrupted = acc.dropna().str.contains(r"[eE.]", regex=True)
+    if corrupted.any():
+        raise SystemExit(
+            f"accession_number in {accession_csv.name} looks pre-rounded "
+            f"(e.g. {acc.dropna()[corrupted].iloc[0]!r}); need a source with the "
+            "full integer digits as text."
+        )
+    src = src.assign(**{ACCESSION_COL: acc})
 
     lookup = src[ACCESSION_KEYS + [ACCESSION_COL]].drop_duplicates(ACCESSION_KEYS)
     lookup = lookup.rename(columns={ACCESSION_COL: ACCESSION_OUT_COL})
