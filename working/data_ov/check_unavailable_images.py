@@ -14,9 +14,16 @@ A patient counts as *downloaded* if at least one image file (default
 is read straight from the path with a ``BONE_AI_\\d+`` regex, so the exact nesting
 depth / batch-folder names don't matter.
 
+The main CSV's ``accession_number`` column is corrupted (Excel rounded the
+16-digit ids into scientific notation, e.g. ``9.04E+15``). When a corrected
+source CSV is available (``--accession-csv``), its accession numbers are joined
+back in on ``info_key`` + ``sip`` and written to a new ``accession_number_corrected``
+column, leaving the original column untouched.
+
 Outputs:
   - ``<csv stem>-downloaded.csv`` : the original CSV plus a ``downloaded`` column
-    ("Yes"/"No"; empty when the row has no patient id).
+    ("Yes"/"No"; empty when the row has no patient id), and an
+    ``accession_number_corrected`` column when a corrected source CSV is given.
   - ``unavailable_subjects.csv``  : the unique patient ids present in the CSV but
     with NO images downloaded (the "unavailable" set).
 """
@@ -33,6 +40,13 @@ DEFAULT_CSV = Path("/output/kira-0515-seg.csv")
 DEFAULT_NIFTI_ROOT = Path("/data")
 DEFAULT_ID_COL = "subject_code"
 DEFAULT_IMAGE_GLOB = "images.nii.gz"
+
+# Source CSV that still holds the untruncated accession numbers, and the
+# columns used to line its rows up with the main CSV.
+DEFAULT_ACCESSION_CSV = None
+ACCESSION_COL = "accession_number"
+ACCESSION_KEYS = ["info_key", "sip"]
+ACCESSION_OUT_COL = "accession_number_corrected"
 
 PID_RE = re.compile(r"(BONE_AI_\d+)")
 
@@ -54,6 +68,28 @@ def downloaded_subjects(nifti_root: Path, image_glob: str) -> set:
     return subjects
 
 
+def merge_corrected_accession(df: pd.DataFrame, accession_csv: Path) -> int:
+    """Add ACCESSION_OUT_COL to df from accession_csv, joined on ACCESSION_KEYS.
+
+    The corrected file is read with the accession column forced to a nullable
+    integer dtype: the ids are 16 digits, above float64's exact-integer limit
+    (2**53), so a plain read would silently round the last digit(s) — the very
+    corruption we are fixing. Returns the number of rows that got a value.
+    """
+    src = pd.read_csv(accession_csv, dtype={ACCESSION_COL: "Int64"})
+    missing = [c for c in ACCESSION_KEYS + [ACCESSION_COL] if c not in src.columns]
+    if missing:
+        raise SystemExit(
+            f"{accession_csv.name} is missing column(s): {', '.join(missing)}"
+        )
+
+    lookup = src[ACCESSION_KEYS + [ACCESSION_COL]].drop_duplicates(ACCESSION_KEYS)
+    lookup = lookup.rename(columns={ACCESSION_COL: ACCESSION_OUT_COL})
+    merged = df.merge(lookup, on=ACCESSION_KEYS, how="left")
+    df[ACCESSION_OUT_COL] = merged[ACCESSION_OUT_COL].values
+    return int(df[ACCESSION_OUT_COL].notna().sum())
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("csv", nargs="?", type=Path, default=DEFAULT_CSV,
@@ -64,6 +100,10 @@ def main():
                     help=f"patient-id column in the CSV (default: {DEFAULT_ID_COL})")
     ap.add_argument("--image-glob", default=DEFAULT_IMAGE_GLOB,
                     help=f"image filename to look for (default: {DEFAULT_IMAGE_GLOB})")
+    ap.add_argument("--accession-csv", type=Path, default=DEFAULT_ACCESSION_CSV,
+                    help="CSV with untruncated accession numbers; joined on "
+                         f"{'+'.join(ACCESSION_KEYS)} into '{ACCESSION_OUT_COL}' "
+                         "(default: none / skip)")
     ap.add_argument("-o", "--out", type=Path, default=None,
                     help="output CSV (default: <csv stem>-downloaded.csv)")
     args = ap.parse_args()
@@ -79,6 +119,17 @@ def main():
     df = pd.read_csv(args.csv)
     if args.id_col not in df.columns:
         raise SystemExit(f"'{args.id_col}' column not in {args.csv.name}")
+
+    n_corrected = None
+    if args.accession_csv is not None:
+        if not args.accession_csv.exists():
+            raise SystemExit(f"accession CSV not found: {args.accession_csv}")
+        missing_keys = [c for c in ACCESSION_KEYS if c not in df.columns]
+        if missing_keys:
+            raise SystemExit(
+                f"join key(s) {', '.join(missing_keys)} not in {args.csv.name}"
+            )
+        n_corrected = merge_corrected_accession(df, args.accession_csv)
 
     have = downloaded_subjects(args.nifti_root, args.image_glob)
     # fillna("") first: read_csv may use the pandas 'str' dtype, where NaN stays
@@ -106,6 +157,9 @@ def main():
     print(f"Rows -> downloaded=Yes: {int((df['downloaded'] == 'Yes').sum())} | "
           f"No: {int((df['downloaded'] == 'No').sum())} | "
           f"blank (no id): {int((~has_id).sum())}")
+    if n_corrected is not None:
+        print(f"Corrected accession numbers ('{ACCESSION_OUT_COL}')       : "
+              f"{n_corrected} / {len(df)} rows matched in {args.accession_csv.name}")
     print(f"\nSaved -> {out}")
     print(f"Saved -> {unavail_out}")
 
