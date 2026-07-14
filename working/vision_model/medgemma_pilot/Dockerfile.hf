@@ -1,0 +1,81 @@
+# MedGemma 1.5 -- in-process HuggingFace backend (no vLLM, no server).
+#
+# Why not vLLM: MedGemma 1.5's config was saved by transformers 4.57.1 (new
+# Gemma-3 schema). vLLM 0.8.5 can't parse it, and every vLLM new enough to
+# parse it ships only cu128+ wheels that won't run on this host's NVIDIA driver
+# 550 (CUDA 12.4) without a from-source cu124 build. For a zero-shot eval
+# (one image per call) vLLM's batching buys nothing, so we run the model
+# card's officially supported path -- AutoModelForImageTextToText -- directly,
+# which run_medgemma.py already implements as `--backend hf` (the default).
+#
+#   Build:  docker build -f Dockerfile.hf -t medgemma-hf --build-arg HF_TOKEN=hf_xxx .
+#   Run (mount your data + output dir):
+#     docker run --rm -it --gpus 6 -v /path/to/data:/data medgemma-hf \
+#       python run_medgemma.py --mode infer --backend hf \
+#         --model-id /models/medgemma-1.5-4b-it \
+#         --metadata /data/meta.csv --config feature_prompts.yaml \
+#         --out /data/results.csv
+
+FROM python:3.11-slim
+
+# --- corporate proxy ---
+ENV http_proxy="http://proxy.san.gva.es:8080"
+ENV https_proxy="http://proxy.san.gva.es:8080"
+ENV ftp_proxy="http://proxy.san.gva.es:8080"
+ENV no_proxy="127.0.0.1,localhost"
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Etc/UTC
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
+ENV PYTHONUNBUFFERED=1
+ENV PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc g++ git curl wget vim libnuma1 libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --upgrade pip setuptools wheel
+
+# torch pinned to the LAST cu124 build (2.6.0+cu124), which matches driver
+# 550.144.03. Do NOT bump to torch 2.7+ -- those drop cu124 and target
+# CUDA 12.6/12.8, which need driver >=560 and will fail on this machine.
+RUN pip install --no-cache-dir \
+    torch==2.6.0+cu124 torchvision==0.21.0+cu124 \
+    --extra-index-url https://download.pytorch.org/whl/cu124
+
+# transformers 4.57.1 matches the version MedGemma 1.5 was saved with, so the
+# Gemma-3 config (layer_types / rope_type) and tokenizer parse natively -- no
+# config patching needed. accelerate powers device_map="auto"
+# (run_medgemma.py:192). sentencepiece/protobuf for the Gemma tokenizer.
+RUN pip install --no-cache-dir \
+    transformers==4.57.1 \
+    "accelerate>=1.0" \
+    sentencepiece==0.2.0 \
+    protobuf==5.28.3 \
+    "huggingface_hub>=0.26.2"
+
+# Client/eval deps (pandas, pillow, pyyaml; openai unused by --backend hf).
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+ENV CUDA_VISIBLE_DEVICES=0
+ENV PYTHONPATH="/app:${PYTHONPATH}"
+
+# MedGemma is GATED under the HAI-DEF license. The token must have accepted
+# access at https://huggingface.co/google/medgemma-1.5-4b-it
+# Pass at build time; DO NOT commit a real token:
+#   docker build -f Dockerfile.hf --build-arg HF_TOKEN=hf_xxx ...
+# (Alternative: skip this bake and mount your HF cache at runtime instead.)
+ARG HF_TOKEN
+ENV MODEL_DIR=/models/medgemma-1.5-4b-it
+RUN hf download google/medgemma-1.5-4b-it --token "$HF_TOKEN" --local-dir "$MODEL_DIR"
+
+RUN apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Batch job, not a server -- no port. Pass the run_medgemma.py command at
+# `docker run` (see header), or drop into a shell to work interactively.
+CMD ["/bin/bash"]
