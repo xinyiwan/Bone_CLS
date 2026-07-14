@@ -43,7 +43,7 @@ DEFAULT_IMAGE_GLOB = "images.nii.gz"
 
 # Source CSV that still holds the untruncated accession numbers, and the
 # columns used to line its rows up with the main CSV.
-DEFAULT_ACCESSION_CSV = None
+DEFAULT_ACCESSION_CSV = Path("/output/kira_Selection_30-03.csv")
 ACCESSION_COL = "accession_number"
 ACCESSION_KEYS = ["info_key", "sip"]
 ACCESSION_OUT_COL = "accession_number_corrected"

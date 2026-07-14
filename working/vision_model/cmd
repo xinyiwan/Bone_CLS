@@ -1,0 +1,46 @@
+# Check PyTorch
+python -c "import torch; print(f'Torch: {torch.__version__}')"
+
+# Check CUDA version PyTorch was compiled with
+python -c "import torch; print(f'CUDA: {torch.version.cuda}')"
+
+# Check torchaudio
+python -c "import torchaudio; print(f'Torchaudio: {torchaudio.__version__}')"
+
+# Check all versions together
+pip list | grep -E "torch|vllm|transformers"
+
+
+# check preprocessing on one subject for vision model
+docker run --rm -it\
+  -v /home/ext_xinwan/Bone_AI/Bone_CLS/:/working \
+  -v /mnt/tmp_storage/Bone_AI/tmp_sorted_data:/data \
+  -v /home/ext_xinwan/Bone_AI/output/vision_model/preprocess:/output\
+  -v /home/ext_xinwan/Bone_AI/output/nnUNet_raw/Dataset002_BoneTumourV2/case_metadata.csv:/sequences.csv\
+  -v /home/ext_xinwan/Bone_AI/Bone_CLS/working/vision_model/preprocess/feature_config.yaml:/feature_config.yaml\
+  -w /working \
+  --entrypoint python3 \
+  testp11:latest \
+  /working/working/vision_model/preprocess/run.py --data-root /data \
+  --out-root /output --sequence-table /sequences.csv \
+  --config /feature_config.yaml --subjects BONE_AI_127 
+  
+ --index-only
+
+
+# run pilot vlm
+docker run --rm -it --gpus 6 -p 9586:9586 medgemma-vllm
+vllm serve google/medgemma-1.5-4b-it --host 0.0.0.0 --port 9586 
+
+docker run --rm -it \
+  --gpus 6 -p 9586:9586 \
+  -v /home/ext_xinwan/Bone_AI/Bone_CLS/:/working \
+  -v /mnt/tmp_storage/Bone_AI/tmp_sorted_data:/data \
+  -v /home/ext_xinwan/Bone_AI/output/:/output\
+  -v /home/ext_xinwan/Bone_AI/output/nnUNet_raw/Dataset002_BoneTumourV2/case_metadata.csv:/sequences.csv\
+  -w /working \
+  --entrypoint python3 \
+  testp11:vlm \
+  /working/working/vision_model/medgemma_pilot/run_medgemma.py --mode infer \
+  --metadata /output/clinical_info/combined_clinical_info_batches1_to_4.csv \
+  --config /working/working/vision_model/medgemma_pilot/feature_prompts.yaml --out results_sanity.csv

@@ -15,6 +15,7 @@ sequence_aliases:
   T1:   T1W_nFS_nCE      # plain T1
   T1C:  T1W_nFS_CE       # T1 post-contrast (not fat-sat)
   T1FSC: T1W_FS_CE       # T1 fat-sat post-contrast
+  T2:   T2W_nFS_nCE      # plain T2
   T2FS: T2W_FS           # T2 fat-sat
 
 features:
@@ -26,14 +27,18 @@ features:
       # NOTE: axial and coronal come from two DIFFERENT acquired scans of the
       # same study -- the resolver picks each by its native acquisition plane.
       - modality: T1
-        planes: [axial, coronal]
+        planes: [axial, coronal, sagittal]
+      - modality: T1C
+        planes: [axial, coronal, sagittal]
+      - modality: T2FS
+        planes: [axial, coronal, sagittal]
 
   - name: enhancement
     crop_margin_mm: 8
     top_k: 1
     crop_mode: bbox            # enhancement is read relative to nearby tissue
     requirements:
-      - modality: T1FSC
+      - modality: T1FSC # also provide a reference img
         planes: [axial]
 
   - name: fluid_fluid_level
@@ -42,4 +47,12 @@ features:
     crop_mode: bbox
     requirements:
       - modality: T2FS
-        planes: [axial]
+        planes: [axial, sagittal]
+  
+  - name: soft_tissue_invasion
+    crop_margin_mm: 15
+    top_k: 1
+    crop_mode: bbox
+    requirements:
+      - modality: T2FS
+        planes: [axial, coronal, sagittal]
