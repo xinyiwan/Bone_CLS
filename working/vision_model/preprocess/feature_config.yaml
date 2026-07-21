@@ -18,8 +18,12 @@ sequence_aliases:
   T2:   T2W_nFS_nCE      # plain T2
   T2FS: T2W_FS           # T2 fat-sat
 
+# `assessment_key` maps a feature to its key under the assessment JSON's
+# "imaging_features" block (ground-truth source), when the names differ.
+# Omit it when the feature name already matches the JSON key.
 features:
   - name: shape
+    assessment_key: tumor_shape
     crop_margin_mm: 10
     top_k: 1
     crop_mode: bbox            # keep surrounding tissue for shape/margins
@@ -34,6 +38,7 @@ features:
         planes: [axial, coronal, sagittal]
 
   - name: enhancement
+    assessment_key: mri_contrast_enhancement
     crop_margin_mm: 8
     top_k: 1
     crop_mode: bbox            # enhancement is read relative to nearby tissue
@@ -42,14 +47,16 @@ features:
         planes: [axial]
 
   - name: fluid_fluid_level
+    assessment_key: fluid_without_fluid_fluid_level
     crop_margin_mm: 8
     top_k: 3
     crop_mode: bbox
     requirements:
       - modality: T2FS
         planes: [axial, sagittal]
-  
+
   - name: soft_tissue_invasion
+    assessment_key: soft_tissue_invasion
     crop_margin_mm: 15
     top_k: 1
     crop_mode: bbox

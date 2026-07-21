@@ -64,12 +64,16 @@ def process_feature(
     opt: PipelineOptions,
     resolve: Resolver,
     vol_cache: Optional[Dict[str, tuple]] = None,
+    ground_truth: str = "unknown",
 ) -> Optional[List[Dict[str, object]]]:
     """Process every requirement/plane/slice for one feature. Returns a list of
     metadata row dicts, one per (plane, slice) pair. Each row is independent:
     different planes/orientations are NOT grouped together. Returns None (or empty
     list) if nothing usable was produced. Missing (modality, plane) combinations
-    are logged and skipped, not fatal."""
+    are logged and skipped, not fatal.
+
+    `ground_truth` is stamped onto every row for this feature (it's a per-subject,
+    per-feature label, independent of plane/slice); "unknown" if unavailable."""
     if vol_cache is None:
         vol_cache = {}
     rows: List[Dict[str, object]] = []
@@ -148,6 +152,7 @@ def process_feature(
                     "image_path": str(png),
                     "crop_bbox": f"[{ebox[0]},{ebox[1]},{ebox[2]},{ebox[3]}]",
                     "margin_used": f"{margin_desc}|{mode}",
+                    "ground_truth_label": ground_truth,
                 })
 
     return rows if rows else None
@@ -160,18 +165,24 @@ def process_case(
     opt: PipelineOptions,
     resolve: Resolver,
     meta_writer,
+    gt_for: Optional[Callable[[str, FeatureSpec], str]] = None,
 ) -> None:
     """Run all features for one case. Errors in one feature are logged and
     skipped so the batch never dies on a single bad case/feature. The volume
     cache is shared across features so a scan needed by several features (or in
-    several planes) is loaded/normalized only once."""
+    several planes) is loaded/normalized only once.
+
+    `gt_for(case_id, spec) -> label` supplies the ground-truth label per feature
+    (from the assessment JSON); when None, every row is labelled "unknown"."""
     vol_cache: Dict[str, tuple] = {}
     for spec in specs:
         try:
-            rows = process_feature(case_id, spec, out_root, opt, resolve, vol_cache)
+            ground_truth = gt_for(case_id, spec) if gt_for else "unknown"
+            rows = process_feature(case_id, spec, out_root, opt, resolve, vol_cache,
+                                   ground_truth=ground_truth)
             if rows:
                 for row in rows:
                     meta_writer.write_row(row)
-                log.info("%s / %s: %d image(s)", case_id, spec.name, len(rows))
+                log.info("%s / %s: %d image(s) [gt=%s]", case_id, spec.name, len(rows), ground_truth)
         except Exception as e:  # noqa: BLE001 -- isolate one bad feature
             log.exception("ERROR %s / %s: %s", case_id, spec.name, e)

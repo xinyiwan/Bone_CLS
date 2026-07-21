@@ -42,6 +42,10 @@ class FeatureSpec:
     # None -> fall back to the pipeline/CLI default. Set per-feature since e.g.
     # 'enhancement' wants context but 'fluid_fluid_level' may not.
     crop_mode: Optional[str] = None
+    # Key of this feature under the assessment JSON's "imaging_features" block
+    # (ground-truth source), when it differs from `name`. e.g. shape ->
+    # tumor_shape. None -> use `name` as the key.
+    assessment_key: Optional[str] = None
 
 
 def load_feature_config(path: str | Path) -> List[FeatureSpec]:
@@ -73,6 +77,7 @@ def _load_yaml(path: Path) -> List[FeatureSpec]:
                 margin_px=feat.get("crop_margin_px"),
                 top_k=int(feat.get("top_k", 1)),
                 crop_mode=feat.get("crop_mode"),
+                assessment_key=feat.get("assessment_key"),
             )
         )
     return specs
@@ -98,6 +103,8 @@ def _load_csv(path: Path) -> List[FeatureSpec]:
                 spec.top_k = int(row["top_k"])
             if row.get("crop_mode"):
                 spec.crop_mode = row["crop_mode"].strip()
+            if row.get("assessment_key"):
+                spec.assessment_key = row["assessment_key"].strip()
     return list(by_name.values())
 
 

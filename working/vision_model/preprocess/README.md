@@ -51,11 +51,12 @@ python run.py --data-root /data --out-root ./out \
 python qc_contact_sheet.py ./out/metadata.csv --n 12 --out contact_sheet.png
 ```
 
-## Step 3 — full batch
+## Step 3 — full batch (with ground-truth labels)
 
 ```bash
 python run.py --data-root /data --out-root ./out \
-    --sequence-table sequences.csv --config feature_config.yaml --seq-subject-col case
+    --sequence-table sequences.csv --config feature_config.yaml --seq-subject-col case \
+    --labels-dir ../label/label_out/jsons
 ```
 
 Per-case / per-feature errors and missing `(sequence, plane)` combinations are
@@ -70,9 +71,33 @@ out/dataset_index.csv     # provenance: which scan/source each crop came from
 ```
 
 **Metadata columns:**
-`case_id, feature_name, modality, plane, slice_index, image_path, crop_bbox, margin_used`
+`case_id, feature_name, modality, plane, slice_index, image_path, crop_bbox, margin_used, ground_truth_label`
 
 Each row is a single image. This **flattened structure** keeps orientations (axial/coronal/sagittal) separate for cleaner downstream processing — the VLM sees one image at a time, and you can inspect per-image results before aggregating.
+
+## Ground-truth labels (`--labels-dir`)
+
+Ground truth lives in per-subject **assessment JSONs** — the ones
+`label/json_extract.py` selects and copies to `<out-dir>/jsons/<subject>.json`.
+Point `run.py` at that folder with `--labels-dir`, and each row's
+`ground_truth_label` is filled from the subject's assessment:
+
+```
+<subject>.json  ->  imaging_features[<assessment_key>]  ->  ground_truth_label
+```
+
+- The **feature → assessment key** mapping is `assessment_key:` in the feature
+  config (e.g. `shape` → `tumor_shape`). Omit it when the names already match.
+- A **missing** file, features block, or key → `ground_truth_label = "unknown"`
+  (not every subject is labelled yet). Downstream eval skips `unknown` rows.
+- **List** values (e.g. `tumor_matrix_mri: ["Cartilaginous"]`) are `;`-joined.
+- Values are copied **verbatim** (e.g. `Round/Oval`, `Absence / unknown`); if you
+  need them normalized to your prompt `label_options` for scoring, do that on the
+  eval side.
+
+Omit `--labels-dir` entirely and every row is labelled `unknown` (still a valid
+column, just unscored). Change the top-level key with `--imaging-features-key`
+if your JSON nests features under a different name.
 
 ## Key options
 
@@ -87,6 +112,9 @@ Each row is a single image. This **flattened structure** keeps orientations (axi
   masked mode. Also settable per-feature in the config (`crop_mode:`).
 - `--reviewed-only` restricts to radiologist-reviewed masks; otherwise reviewed
   is preferred and history is the fallback.
+- `--labels-dir DIR` fills `ground_truth_label` from assessment JSONs at
+  `DIR/<subject>.json` (the `label/json_extract.py` output). Missing → `unknown`.
+  `--imaging-features-key` (default `imaging_features`) sets the JSON block read.
 - `--norm minmax|zscore`, `--pad-mode clip|pad`, `--no-foreground-norm`,
   `--out-size` (default 128).
 

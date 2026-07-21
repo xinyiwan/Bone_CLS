@@ -188,6 +188,47 @@ def merge_clinical(meta_path: Path, clinical_csv: Path, key_col: str, cols: List
     log.info("merged clinical columns %s into %s", keep, meta_path)
 
 
+def make_gt_lookup(labels_dir: Path, features_key: str = "imaging_features"):
+    """Build a (case_id, FeatureSpec) -> ground-truth-label lookup.
+
+    Reads per-subject assessment JSONs at ``<labels_dir>/<subject>.json`` (the
+    output of label/json_extract.py) and pulls the label for a feature from the
+    ``features_key`` block, using ``spec.assessment_key`` (falling back to
+    ``spec.name``) as the key -- e.g. feature ``shape`` -> ``tumor_shape``.
+    Returns "unknown" when the file, the features block, or the key is
+    missing/empty. List values (e.g. tumor_matrix_mri) are ';'-joined.
+    """
+    import json
+
+    cache: Dict[str, dict] = {}
+
+    def features_for(subject: str) -> dict:
+        if subject not in cache:
+            path = labels_dir / f"{subject}.json"
+            feats: dict = {}
+            if path.exists():
+                try:
+                    with open(path, encoding="utf-8") as fh:
+                        feats = json.load(fh).get(features_key, {}) or {}
+                except Exception as e:  # noqa: BLE001
+                    log.warning("could not read assessment %s: %s", path, e)
+            else:
+                log.debug("no assessment JSON for subject %s at %s", subject, path)
+            cache[subject] = feats
+        return cache[subject]
+
+    def gt_for(case_id: str, spec) -> str:
+        feats = features_for(case_id.split("/")[0])  # subject = case_id before any '/'
+        val = feats.get(spec.assessment_key or spec.name)
+        if val is None or val == "" or val == []:
+            return "unknown"
+        if isinstance(val, list):
+            return ";".join(str(v) for v in val)
+        return str(val)
+
+    return gt_for
+
+
 def print_availability(rows: List[Record]) -> None:
     combos = Counter((r["sequence"], r["plane"]) for r in rows)
     print("\nAvailable (sequence, plane) across all cases:")
@@ -230,6 +271,12 @@ def main() -> None:
     ap.add_argument("--reviewed-only", action="store_true", help="use only radiologist-reviewed masks")
     ap.add_argument("--index-only", action="store_true", help="report availability/coverage; don't extract")
     ap.add_argument("--metadata", type=Path, help="metadata CSV (default out-root/metadata.csv)")
+    # ground-truth labels from assessment JSONs (label/json_extract.py output)
+    ap.add_argument("--labels-dir", type=Path,
+                    help="folder of per-subject assessment JSONs (<subject>.json) for ground-truth "
+                         "labels; missing labels -> 'unknown'. Feature->key mapping via assessment_key in the config.")
+    ap.add_argument("--imaging-features-key", default="imaging_features",
+                    help="top-level key in each assessment JSON holding the feature dict")
     # optional clinical-info merge (adds anatomical location etc. to metadata.csv)
     ap.add_argument("--clinical-csv", type=Path, help="per-subject clinical CSV (e.g. combine_cli_info.py output)")
     ap.add_argument("--clinical-key-col", default="subject", help="subject-id column in the clinical CSV")
@@ -285,13 +332,16 @@ def main() -> None:
         overlay=args.overlay,
     )
     resolve = make_dataset_resolver(index, aliases)
+    gt_for = make_gt_lookup(args.labels_dir, args.imaging_features_key) if args.labels_dir else None
+    if args.labels_dir:
+        log.info("ground-truth labels from %s (missing -> 'unknown')", args.labels_dir)
 
     meta_path = args.metadata or (args.out_root / "metadata.csv")
     with MetadataWriter(meta_path) as writer:
         cases = sorted(index)
         for i, case in enumerate(cases, 1):
             log.info("[%d/%d] %s", i, len(cases), case)
-            process_case(case, specs, args.out_root, opt, resolve, writer)
+            process_case(case, specs, args.out_root, opt, resolve, writer, gt_for=gt_for)
 
     if args.clinical_csv:
         merge_clinical(meta_path, args.clinical_csv, args.clinical_key_col, args.clinical_cols)

@@ -5,7 +5,9 @@ PNGs are 128x128 8-bit -- for a VLM, not for quantitative reanalysis.
 
 Metadata schema (flattened: one row per image/plane, no mixing of orientations):
     case_id, feature_name, modality, plane, slice_index, image_path,
-    crop_bbox, margin_used
+    crop_bbox, margin_used, ground_truth_label
+`ground_truth_label` is pulled from the subject's assessment JSON when available
+(via --labels-dir); "unknown" when there's no label for that (subject, feature).
 """
 
 from __future__ import annotations
@@ -28,6 +30,7 @@ METADATA_FIELDS = [
     "image_path",
     "crop_bbox",
     "margin_used",
+    "ground_truth_label",
 ]
 
 

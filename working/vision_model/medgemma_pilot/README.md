@@ -39,6 +39,11 @@ docker run --rm -it --gpus 6 medgemma-hf
 One row = one image (flattened: no mixing of orientations). The pipeline
 automatically reads this and processes each image independently.
 
+`ground_truth_label` is filled by the preprocess step from each subject's
+assessment JSON (`run.py --labels-dir ...`). Subjects without a label get
+`unknown` — those rows are still inferred, but **skipped when scoring**
+(`eval` and the `correct` column treat `unknown` like a blank).
+
 **Feature config** (`feature_prompts.yaml`):
 Feature vocab + prompt wording — not hardcoded. `build_prompt` is a
 **structural assembler** that supplies the general imaging/clinical context and

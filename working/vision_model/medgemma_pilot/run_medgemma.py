@@ -314,6 +314,12 @@ def parse_answer(raw: str, options: List[str]) -> str:
     return "PARSE_FAILED"
 
 
+def has_gt(gt: str) -> bool:
+    """A ground-truth label worth scoring: not blank and not the "unknown" marker
+    the preprocess step writes for subjects without an assessment label."""
+    return str(gt).strip().lower() not in {"", "unknown"}
+
+
 def aggregate(labels: List[str]) -> str:
     """Majority vote over per-image labels, ignoring PARSE_FAILED. Deterministic
     tie-break: earliest-occurring among the tied labels. All-failed -> PARSE_FAILED."""
@@ -428,7 +434,7 @@ def infer(
             label = parse_answer(raw, fcfg["label_options"])
 
             gt = row.get("ground_truth_label", "")
-            correct = (label.lower() == gt.strip().lower()) if gt and label != "PARSE_FAILED" else ""
+            correct = (label.lower() == gt.strip().lower()) if has_gt(gt) and label != "PARSE_FAILED" else ""
 
             writer.writerow({
                 "case_id": case_id,
@@ -463,11 +469,11 @@ def aggregate_results(inference_csv: Path, out_path: Path) -> None:
         labels = group["parsed_label"].tolist()
         final = aggregate(labels)
         gt = group["ground_truth_label"].iloc[0]  # assume all images for a (case, feature) have the same gt
-        correct = (final.lower() == gt.strip().lower()) if gt and final != "PARSE_FAILED" else ""
+        correct = (final.lower() == gt.strip().lower()) if has_gt(gt) and final != "PARSE_FAILED" else ""
 
         # Per-image labels and raw outputs, one per image in the group.
         per_img = ";".join(group["parsed_label"].tolist())
-        num_correct = sum(1 for l in labels if l.lower() == gt.strip().lower()) if gt and gt != "PARSE_FAILED" else 0
+        num_correct = sum(1 for l in labels if l.lower() == gt.strip().lower()) if has_gt(gt) else 0
         raws = " ||| ".join(group["raw_output"].tolist())
 
         aggregated.append({
@@ -492,9 +498,9 @@ def aggregate_results(inference_csv: Path, out_path: Path) -> None:
 # ---------------------------------------------------------------------------
 def evaluate(results_csv: Path, config_path: Optional[Path]) -> None:
     df = pd.read_csv(results_csv, dtype=str).fillna("")
-    scored = df[df["ground_truth_label"] != ""].copy()
+    scored = df[df["ground_truth_label"].map(has_gt)].copy()
     if scored.empty:
-        print("No rows with ground_truth_label -- nothing to score.")
+        print("No rows with a known ground_truth_label -- nothing to score.")
         return
     scored["is_correct"] = scored["correct"].astype(str).str.lower().isin({"true", "1"})
     scored["nimg"] = pd.to_numeric(scored["num_images_used"], errors="coerce").fillna(0).astype(int)
