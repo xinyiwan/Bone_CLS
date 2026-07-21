@@ -147,7 +147,7 @@ env.bak/
 venv.bak/
 *.csv
 *.png
-
+.claude/
 # Spyder project settings
 .spyderproject
 .spyproject

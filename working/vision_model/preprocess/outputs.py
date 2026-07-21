@@ -3,10 +3,9 @@ PNG writing (8-bit) and the running metadata CSV.
 
 PNGs are 128x128 8-bit -- for a VLM, not for quantitative reanalysis.
 
-Metadata schema (one row per subject+feature; multi-image features join their
-per-image fields with ';', matching the inference-side schema):
-    case_id, feature_name, modality, plane, slice_indices,
-    image_paths, crop_bbox, margin_used
+Metadata schema (flattened: one row per image/plane, no mixing of orientations):
+    case_id, feature_name, modality, plane, slice_index, image_path,
+    crop_bbox, margin_used
 """
 
 from __future__ import annotations
@@ -25,8 +24,8 @@ METADATA_FIELDS = [
     "feature_name",
     "modality",
     "plane",
-    "slice_indices",
-    "image_paths",
+    "slice_index",
+    "image_path",
     "crop_bbox",
     "margin_used",
 ]
