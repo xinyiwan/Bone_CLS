@@ -1,0 +1,12 @@
+docker run --rm -it --cpus=30 \
+  -v /home/ext_xinwan/OHIF-BT-Viewer/tools/nii2dicom:/working \
+  -v /mnt/tmp_storage/Bone_AI/tmp_sorted_data/:/data \
+  -v /mnt/tmp_storage/Bone_AI/sorted_dcm/:/dicom_out \
+  --entrypoint bash \
+  testp11:latest
+
+pip install highdicom
+
+python scan_shapes.py --input /data/
+
+python convert.py --input /data --output /dicom_out \
