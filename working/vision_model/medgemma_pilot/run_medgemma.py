@@ -1,31 +1,33 @@
 """
 Zero-shot bone-tumour feature classification with MedGemma 1.5 (pilot).
 
-ONE IMAGE PER INFERENCE. A feature may list 1-4 images; we run the model once
-PER IMAGE and aggregate the per-image labels by majority vote into the final
-per-(case, feature) label. This deliberately avoids MedGemma's multi-image path:
-per Google's model card, MedGemma's multimodal eval is primarily single-image;
-multi-image comprehension is NOT formally evaluated. Single-image + aggregate is
-the trustworthy first pass. (A true multi-image variant would go in run_single /
-build_prompt -- see the MULTI-IMAGE flag below -- but sanity-check it on a few
-known-easy cases before believing it.)
+ONE IMAGE PER INFERENCE. The preprocessing pipeline outputs one row per
+image/plane (no mixing of orientations). We run the model once per image and
+output per-image results to inference_results.csv. Then aggregate across images
+for the same (case, feature) by majority vote -> results_sanity.csv.
+
+This deliberately avoids MedGemma's multi-image path: per Google's model card,
+MedGemma's multimodal eval is primarily single-image; multi-image comprehension
+is NOT formally evaluated. Single-image + aggregate is the trustworthy first
+pass. (A true multi-image variant would go in run_single / build_prompt -- see
+the MULTI-IMAGE flag -- but sanity-check on known-easy cases first.)
 
 Two backends (same code path otherwise):
   - hf     : load the weights in-process (needs torch/transformers).
-  - openai : call a locally-served OpenAI-compatible endpoint (a `vllm serve`
-             container -- see Dockerfile). The client then needs only openai +
-             pandas + pillow + pyyaml, no torch.
+  - openai : call a locally-served OpenAI-compatible endpoint (vllm serve).
+             Client needs only openai + pandas + pillow + pyyaml, no torch.
 
-Modes:
-    # in-process:
-    python run_medgemma.py --mode infer --metadata meta.csv --config feature_prompts.yaml --out results.csv
+Workflow:
+    # 1. Infer per-image (one row per image/plane):
+    python run_medgemma.py --mode infer --metadata meta.csv \
+        --config feature_prompts.yaml --out inference_results.csv
 
-    # against a local vllm server (docker run ... vllm serve):
-    python run_medgemma.py --mode infer --backend openai \
-        --base-url http://localhost:8000/v1 --model-id google/medgemma-1.5-4b-it \
-        --metadata meta.csv --config feature_prompts.yaml --out results.csv
+    # 2. Aggregate to per-feature majority-vote:
+    python run_medgemma.py --mode aggregate --inference-results inference_results.csv \
+        --out results_sanity.csv
 
-    python run_medgemma.py --mode eval  --results results.csv --config feature_prompts.yaml
+    # 3. Eval aggregated results:
+    python run_medgemma.py --mode eval --results results_sanity.csv --config feature_prompts.yaml
 
 LICENSE: MedGemma is governed by the Health AI Developer Foundations (HAI-DEF)
 terms of use -- you are responsible for compliance. This script only loads the
@@ -51,10 +53,15 @@ from PIL import Image
 
 log = logging.getLogger("medgemma")
 
+INFERENCE_FIELDS = [
+    "case_id", "feature_name", "plane", "modality", "image_path",
+    "raw_output", "parsed_label", "ground_truth_label", "correct",
+]
+
 RESULT_FIELDS = [
     "case_id", "feature_name", "num_images_used",
-    "per_image_labels", "raw_output",
-    "parsed_label", "ground_truth_label", "correct",
+    "per_image_labels", "num_images_correct",
+    "raw_output", "parsed_label", "ground_truth_label", "correct",
 ]
 
 # ---------------------------------------------------------------------------
@@ -385,11 +392,16 @@ def infer(
     clinical_key_col: str = "subject",
     location_cols: Optional[List[str]] = None,
 ) -> None:
+    """Infer per-image labels from flattened metadata (one row per image/plane).
+
+    Outputs inference_results.csv with one row per image processed. A separate
+    aggregate_results() call produces results_sanity.csv with majority-voted
+    labels per (case_id, feature).
+    """
     location_cols = location_cols or ["skeletal_location", "location_within_bone"]
     features = load_feature_config(config_path)
     df = pd.read_csv(metadata_csv, dtype=str).fillna("")
-    done = _done_keys(out_path)
-    log.info("%d row(s) in metadata; %d already done -> skipping those", len(df), len(done))
+    log.info("%d row(s) in metadata (one per image/plane)", len(df))
 
     clinical = build_clinical_lookup(clinical_csv, clinical_key_col, location_cols) if clinical_csv else {}
     if clinical_csv:
@@ -398,73 +410,98 @@ def infer(
     new_file = not out_path.exists()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "a", newline="") as fh:
-        writer = csv.DictWriter(fh, fieldnames=RESULT_FIELDS)
+        writer = csv.DictWriter(fh, fieldnames=INFERENCE_FIELDS)
         if new_file:
             writer.writeheader()
             fh.flush()
 
-        for _, row in df.iterrows():
-            case_id, feature = row["case_id"], row["feature_name"]
-            if (case_id, feature) in done:
-                continue
+        for idx, row in df.iterrows():
+            case_id = row["case_id"]
+            feature = row["feature_name"]
             if feature not in features:
                 log.warning("no config for feature %r (case %s) -- skipping", feature, case_id)
                 continue
             fcfg = features[feature]
 
-            paths = _split(row["image_paths"])
-            planes = _aligned(_split(row.get("plane", "")), len(paths))
-            mods = _aligned(_split(row.get("modality", "")), len(paths))
-            location = case_location(row, clinical, location_cols)
-            distinct_planes = [p for p in dict.fromkeys(planes) if p]  # order-preserving unique
+            img_path = Path(row["image_path"])
+            plane = row.get("plane", "")
+            modality = row.get("modality", "")
 
-            raws, labels = [], []
-            for i, p in enumerate(paths):
-                img_path = Path(p)
-                has_contour = False
-                if use_contour:  # feed the radiologist-contour overlay instead of the plain crop
-                    ov = _overlay_variant(img_path)
-                    if ov is not None:
-                        img_path, has_contour = ov, True
-                    else:
-                        log.warning("no _overlay for %s -- using plain crop (no contour)", p)
-                try:
-                    image = to_jpeg_rgb(img_path)
-                except Exception as e:  # noqa: BLE001 -- missing/unreadable image
-                    log.warning("skip image %s (%s / %s): %s", img_path, case_id, feature, e)
-                    continue
+            has_contour = False
+            if use_contour:
+                ov = _overlay_variant(img_path)
+                if ov is not None:
+                    img_path, has_contour = ov, True
 
-                plane_i = planes[i]
-                other_planes = [pl for pl in distinct_planes if pl != plane_i]
-                prompt = build_prompt(
-                    fcfg, mods[i], plane_i,
-                    location=location, other_planes=other_planes, has_contour=has_contour,
-                )
-                raw = generate(image, prompt)
-                raws.append(raw)
-                labels.append(parse_answer(raw, fcfg["label_options"]))
-
-            if not raws:  # nothing usable for this row
-                log.warning("no usable images for %s / %s -- skipping row", case_id, feature)
+            try:
+                image = to_jpeg_rgb(img_path)
+            except Exception as e:  # noqa: BLE001
+                log.warning("skip image %s (%s / %s): %s", img_path, case_id, feature, e)
                 continue
 
-            final = aggregate(labels)
+            location = case_location(row, clinical, location_cols)
+            prompt = build_prompt(fcfg, modality, plane, location=location, has_contour=has_contour)
+            raw = generate(image, prompt)
+            label = parse_answer(raw, fcfg["label_options"])
+
             gt = row.get("ground_truth_label", "")
-            correct = (final.lower() == gt.strip().lower()) if gt and final != "PARSE_FAILED" else ""
+            correct = (label.lower() == gt.strip().lower()) if gt and label != "PARSE_FAILED" else ""
+
             writer.writerow({
                 "case_id": case_id,
                 "feature_name": feature,
-                "num_images_used": len(raws),
-                "per_image_labels": ";".join(labels),
-                "raw_output": " ||| ".join(raws),
-                "parsed_label": final,
+                "plane": plane,
+                "modality": modality,
+                "image_path": row["image_path"],
+                "raw_output": raw,
+                "parsed_label": label,
                 "ground_truth_label": gt,
                 "correct": correct,
             })
             fh.flush()
-            log.info("%s / %s -> %s (gt=%s, n=%d)", case_id, feature, final, gt or "?", len(raws))
+            log.info("%s / %s [%s] -> %s (gt=%s)", case_id, feature, plane or "?", label, gt or "?")
 
     log.info("done -> %s", out_path)
+
+
+# ---------------------------------------------------------------------------
+# Aggregation (per-image results -> per-feature majority-vote results)
+# ---------------------------------------------------------------------------
+def aggregate_results(inference_csv: Path, out_path: Path) -> None:
+    """Read inference_results.csv (one row per image) and write results_sanity.csv
+    with majority-voted labels per (case_id, feature) across all images/planes."""
+    df = pd.read_csv(inference_csv, dtype=str).fillna("")
+    if df.empty:
+        log.warning("inference results CSV is empty")
+        return
+
+    aggregated = []
+    for (case_id, feature), group in df.groupby(["case_id", "feature_name"]):
+        labels = group["parsed_label"].tolist()
+        final = aggregate(labels)
+        gt = group["ground_truth_label"].iloc[0]  # assume all images for a (case, feature) have the same gt
+        correct = (final.lower() == gt.strip().lower()) if gt and final != "PARSE_FAILED" else ""
+
+        # Per-image labels and raw outputs, one per image in the group.
+        per_img = ";".join(group["parsed_label"].tolist())
+        num_correct = sum(1 for l in labels if l.lower() == gt.strip().lower()) if gt and gt != "PARSE_FAILED" else 0
+        raws = " ||| ".join(group["raw_output"].tolist())
+
+        aggregated.append({
+            "case_id": case_id,
+            "feature_name": feature,
+            "num_images_used": len(group),
+            "per_image_labels": per_img,
+            "num_images_correct": num_correct,
+            "raw_output": raws,
+            "parsed_label": final,
+            "ground_truth_label": gt,
+            "correct": correct,
+        })
+
+    df_agg = pd.DataFrame(aggregated)
+    df_agg.to_csv(out_path, index=False)
+    log.info("aggregated %d (case, feature) pairs -> %s", len(aggregated), out_path)
 
 
 # ---------------------------------------------------------------------------
@@ -504,13 +541,15 @@ def evaluate(results_csv: Path, config_path: Optional[Path]) -> None:
 # ---------------------------------------------------------------------------
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--mode", choices=["infer", "eval"], required=True)
+    ap.add_argument("--mode", choices=["infer", "aggregate", "eval"], required=True)
     ap.add_argument("--metadata", type=Path, help="input metadata CSV (infer)")
-    ap.add_argument("--results", type=Path, default=Path("results.csv"), help="results CSV (out for infer, in for eval)")
+    ap.add_argument("--inference-results", type=Path, help="per-image results CSV (aggregate)")
+    ap.add_argument("--results", type=Path, default=Path("results_sanity.csv"),
+                    help="results CSV (in for eval, out for aggregate)")
     ap.add_argument("--config", type=Path, default=Path("feature_prompts.yaml"))
-    ap.add_argument("--out", type=Path, help="results CSV path for infer (default: --results)")
+    ap.add_argument("--out", type=Path, help="output CSV path (infer/aggregate; default: inference_results.csv / results_sanity.csv)")
     ap.add_argument("--model-id", default="google/medgemma-1.5-4b-it",
-                    help="default 4B (multi-slice); pass google/medgemma-27b-it for comparison (see load_model note)")
+                    help="default 4B (multi-slice); pass google/medgemma-27b-it for comparison")
     ap.add_argument("--max-new-tokens", type=int, default=20)
     # backend: in-process HF weights, or a locally-served OpenAI-compatible endpoint (vllm)
     ap.add_argument("--backend", choices=["hf", "openai"], default="hf",
@@ -536,9 +575,13 @@ def main() -> None:
             generate = make_openai_generate(args.base_url, args.api_key, args.model_id, args.max_new_tokens)
         else:
             generate = make_hf_generate(args.model_id, args.max_new_tokens)
-        infer(args.metadata, args.config, args.out or args.results, generate,
+        infer(args.metadata, args.config, args.out or Path("inference_results.csv"), generate,
               use_contour=args.use_contour, clinical_csv=args.clinical_csv,
               clinical_key_col=args.clinical_key_col, location_cols=args.location_cols)
+    elif args.mode == "aggregate":
+        if not args.inference_results:
+            raise SystemExit("--inference-results is required for --mode aggregate")
+        aggregate_results(args.inference_results, args.out or args.results)
     else:
         evaluate(args.results, args.config)
 

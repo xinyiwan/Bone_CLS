@@ -65,9 +65,14 @@ Outputs:
 ```
 out/{case_id}/{feature}/{modality}_{plane}_{slice}.png
 out/{case_id}/{feature}/{modality}_{plane}_{slice}_overlay.png   # if --overlay
-out/metadata.csv          # one row per (case, feature); multi-image joined with ';'
+out/metadata.csv          # one row per image/plane (flattened: no mixing of orientations)
 out/dataset_index.csv     # provenance: which scan/source each crop came from
 ```
+
+**Metadata columns:**
+`case_id, feature_name, modality, plane, slice_index, image_path, crop_bbox, margin_used`
+
+Each row is a single image. This **flattened structure** keeps orientations (axial/coronal/sagittal) separate for cleaner downstream processing — the VLM sees one image at a time, and you can inspect per-image results before aggregating.
 
 ## Key options
 

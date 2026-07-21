@@ -64,18 +64,15 @@ def process_feature(
     opt: PipelineOptions,
     resolve: Resolver,
     vol_cache: Optional[Dict[str, tuple]] = None,
-) -> Optional[Dict[str, object]]:
-    """Process every requirement/plane/slice for one feature. Returns a metadata
-    row dict, or None if nothing usable was produced. Missing (modality, plane)
-    combinations are logged and skipped, not fatal."""
+) -> Optional[List[Dict[str, object]]]:
+    """Process every requirement/plane/slice for one feature. Returns a list of
+    metadata row dicts, one per (plane, slice) pair. Each row is independent:
+    different planes/orientations are NOT grouped together. Returns None (or empty
+    list) if nothing usable was produced. Missing (modality, plane) combinations
+    are logged and skipped, not fatal."""
     if vol_cache is None:
         vol_cache = {}
-    modalities: List[str] = []
-    planes: List[str] = []
-    slices: List[int] = []
-    image_paths: List[str] = []
-    bboxes: List[str] = []
-    margins: List[str] = []
+    rows: List[Dict[str, object]] = []
 
     feat_dir = out_root / _safe_name(case_id) / spec.name
 
@@ -141,28 +138,19 @@ def process_feature(
                     save_rgb_png(draw_contour_overlay(out_img, out_mask),
                                  feat_dir / f"{req.modality}_{plane}_{idx}_overlay.png")
 
-                modalities.append(req.modality)
-                planes.append(plane)
-                slices.append(idx)
-                image_paths.append(str(png))
-                bboxes.append(f"[{ebox[0]},{ebox[1]},{ebox[2]},{ebox[3]}]")
-                margins.append(f"{margin_desc}|{mode}")
+                # One row per image (plane/slice).
+                rows.append({
+                    "case_id": case_id,
+                    "feature_name": spec.name,
+                    "modality": req.modality,
+                    "plane": plane,
+                    "slice_index": idx,
+                    "image_path": str(png),
+                    "crop_bbox": f"[{ebox[0]},{ebox[1]},{ebox[2]},{ebox[3]}]",
+                    "margin_used": f"{margin_desc}|{mode}",
+                })
 
-    if not image_paths:
-        return None
-
-    return {
-        "case_id": case_id,
-        "feature_name": spec.name,
-        # modality is parallel to image_paths/plane (one entry per image), so
-        # downstream (e.g. per-image prompting) can zip them; may repeat.
-        "modality": join_field(modalities),
-        "plane": join_field(planes),
-        "slice_indices": join_field(slices),
-        "image_paths": join_field(image_paths),
-        "crop_bbox": join_field(bboxes),
-        "margin_used": join_field(margins),
-    }
+    return rows if rows else None
 
 
 def process_case(
@@ -180,9 +168,10 @@ def process_case(
     vol_cache: Dict[str, tuple] = {}
     for spec in specs:
         try:
-            row = process_feature(case_id, spec, out_root, opt, resolve, vol_cache)
-            if row is not None:
-                meta_writer.write_row(row)
-                log.info("%s / %s: %d image(s)", case_id, spec.name, row["image_paths"].count(";") + 1)
+            rows = process_feature(case_id, spec, out_root, opt, resolve, vol_cache)
+            if rows:
+                for row in rows:
+                    meta_writer.write_row(row)
+                log.info("%s / %s: %d image(s)", case_id, spec.name, len(rows))
         except Exception as e:  # noqa: BLE001 -- isolate one bad feature
             log.exception("ERROR %s / %s: %s", case_id, spec.name, e)
