@@ -103,6 +103,40 @@ def resolve_sequence(scan: str, subject: str,
     return sequence_from_name(scan)
 
 
+def load_plane_table(path: Path) -> dict:
+    """Build {(subject, scan): plane} from an analyze_dataset.py per_scan.csv.
+
+    Uses the 'plane' column, which analyze_dataset.py derives from the affine
+    via plane_from_affine -- far more reliable than filename pattern matching
+    (scan names don't reliably encode SAG/COR/AX).
+    """
+    df = pd.read_csv(path, low_memory=False)
+    need = ["subject", "scan", "plane"]
+    missing = [c for c in need if c not in df.columns]
+    if missing:
+        raise SystemExit(f"{path} missing columns {missing} (have: {list(df.columns)})")
+    lookup = {}
+    for _, r in df.iterrows():
+        key = (str(r["subject"]).strip(), str(r["scan"]).strip())
+        lookup[key] = str(r["plane"]).strip()
+    return lookup
+
+
+def resolve_plane(scan: str, subject: str, plane_lookup: Optional[dict],
+                  affine: Optional[np.ndarray] = None, zooms=None) -> str:
+    """Plane label: per_scan.csv table first (affine-derived, reliable), else
+    computed directly from the image affine, else filename pattern (last resort)."""
+    if plane_lookup is not None:
+        hit = plane_lookup.get((subject, scan))
+        if hit and hit != "unknown":
+            return hit
+    if affine is not None and zooms is not None:
+        plane = plane_from_affine(affine, zooms)
+        if plane != "unknown":
+            return plane
+    return plane_from_name(scan)
+
+
 def resolve_seg(session_dir: Path, scan: str):
     """Best mask for a scan: radiologist-reviewed if present, else history.
 

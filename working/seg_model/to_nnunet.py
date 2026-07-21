@@ -44,7 +44,8 @@ import numpy as np
 import nibabel as nib
 from nibabel.processing import resample_from_to
 
-from pairs import find_pairs, load_sequence_table, plane_from_name, resolve_sequence
+from pairs import (find_pairs, load_plane_table, load_sequence_table,
+                   resolve_plane, resolve_sequence)
 
 
 def sanitize(s: str) -> str:
@@ -118,6 +119,8 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--seq-table", type=Path, default=None,
                     help="clf_perf/combined_reviewed.csv (for true sequence type)")
+    ap.add_argument("--plane-table", type=Path, default=None,
+                    help="analyze_dataset.py per_scan.csv (for affine-derived plane)")
     ap.add_argument("--exclude-table", type=Path, default=None,
                     help="CSV of subjects/scans to drop (e.g. lesion < 10mm)")
     args = ap.parse_args()
