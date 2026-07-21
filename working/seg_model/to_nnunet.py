@@ -21,9 +21,11 @@ Output (nnU-Net v2 raw layout):
 Usage:
     python to_nnunet.py <root> --out $nnUNet_raw --dataset-id 501 \
         --dataset-name BoneTumour
-    # with reviewed sequence types (clf_perf/combined_reviewed.csv):
+    # with reviewed sequence types (clf_perf/combined_reviewed.csv) and
+    # affine-derived plane labels (analyze_dataset.py's per_scan.csv):
     python to_nnunet.py <root> --out $nnUNet_raw --dataset-id 501 \
-        --dataset-name BoneTumour --seq-table clf_perf/combined_reviewed.csv
+        --dataset-name BoneTumour --seq-table clf_perf/combined_reviewed.csv \
+        --plane-table analysis_out/per_scan.csv
 
 Then:
     nnUNetv2_plan_and_preprocess -d 501 --verify_dataset_integrity
@@ -130,6 +132,11 @@ def main() -> None:
         seq_lookup = load_sequence_table(args.seq_table)
         print(f"loaded sequence table: {len(seq_lookup)} entries")
 
+    plane_lookup = None
+    if args.plane_table:
+        plane_lookup = load_plane_table(args.plane_table)
+        print(f"loaded plane table: {len(plane_lookup)} entries")
+
     exclude = load_exclusions(args.exclude_table) if args.exclude_table else set()
     if exclude:
         print(f"loaded exclusions: {len(exclude)} subjects (e.g. lesion < 10mm)")
@@ -179,8 +186,11 @@ def main() -> None:
         nib.save(label, str(labels_dir / f"{case_id}.nii.gz"))
 
         seq = resolve_sequence(scan, subject, seq_lookup)
+        img_hdr = nib.load(str(image_path))
+        plane = resolve_plane(scan, subject, plane_lookup,
+                              img_hdr.affine, img_hdr.header.get_zooms()[:3])
         meta.append(dict(case=case_id, subject=subject, session=session,
-                         scan=scan, sequence=seq, plane=plane_from_name(scan),
+                         scan=scan, sequence=seq, plane=plane,
                          seg_source=seg_source, fg_voxels=n_fg))
         seen[case_id] = seg_path
 
