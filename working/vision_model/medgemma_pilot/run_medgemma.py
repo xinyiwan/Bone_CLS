@@ -32,6 +32,9 @@ Workflow:
     python run_medgemma.py --mode infer --backend openai \
         --base-url http://localhost:9586/v1 --metadata meta.csv --out inference_results.csv
 
+    # Quick ad-hoc test: one prompt + one or more images, no CSV/YAML needed:
+    python run_medgemma.py --mode quick --image scan1.jpg --prompt "Describe this image."
+
 LICENSE: MedGemma is governed by the Health AI Developer Foundations (HAI-DEF)
 terms of use -- you are responsible for compliance. This script only loads the
 public HF weights.
@@ -45,6 +48,7 @@ import argparse
 import base64
 import csv
 import logging
+import time
 from collections import Counter
 from io import BytesIO
 from pathlib import Path
@@ -526,11 +530,44 @@ def evaluate(results_csv: Path, config_path: Optional[Path]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Quick ad-hoc test  (no CSV / YAML needed -- just a prompt + image(s))
+# ---------------------------------------------------------------------------
+def run_quick(
+    generate: Generate,
+    image_paths: List[Path],
+    prompt: str,
+    repeat: int = 1,
+) -> None:
+    """Run a single free-form prompt against one or more images, one image per
+    call (same "one image per inference" contract as the rest of the script).
+    Prints the raw model output and wall-clock time for each call -- handy for
+    a quick runtime/sanity check without needing metadata.csv or the feature
+    YAML config.
+
+    `repeat` re-runs the SAME image+prompt N times, useful for timing (e.g.
+    measuring steady-state latency after the first, slower, "warm-up" call).
+    """
+    for img_path in image_paths:
+        try:
+            image = to_jpeg_rgb(img_path)
+        except Exception as e:  # noqa: BLE001 -- missing/unreadable image
+            print(f"[{img_path}] could not load image: {e}")
+            continue
+
+        for i in range(repeat):
+            t0 = time.perf_counter()
+            raw = generate(image, prompt)
+            dt = time.perf_counter() - t0
+            tag = f"{img_path.name}" + (f" (run {i + 1}/{repeat})" if repeat > 1 else "")
+            print(f"[{tag}] {dt:.2f}s -> {raw}")
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--mode", choices=["infer", "aggregate", "eval"], required=True)
+    ap.add_argument("--mode", choices=["infer", "aggregate", "eval", "quick"], required=True)
     ap.add_argument("--metadata", type=Path, help="metadata CSV (infer mode)")
     ap.add_argument("--inference-results", type=Path, help="per-image results CSV (aggregate mode)")
     ap.add_argument("--results", type=Path, default=Path("results_sanity.csv"),
@@ -553,6 +590,12 @@ def main() -> None:
                     help="feed the radiologist red-contour '_overlay' image and tell the model about it")
     ap.add_argument("--location-cols", nargs="*", default=["skeletal_location", "location_within_bone"],
                     help="metadata columns joined into the lesion-location phrase (added by preprocess --clinical-csv)")
+    # quick mode
+    ap.add_argument("--image", type=Path, nargs="+",
+                    help="one or more image paths (quick mode); each is sent in its own call")
+    ap.add_argument("--prompt", type=str, help="free-form text prompt (quick mode)")
+    ap.add_argument("--repeat", type=int, default=1,
+                    help="repeat the same image+prompt N times (quick mode; useful for timing runs)")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -570,6 +613,14 @@ def main() -> None:
         if not args.inference_results:
             raise SystemExit("--inference-results is required for --mode aggregate")
         aggregate_results(args.inference_results, args.out or args.results)
+    elif args.mode == "quick":
+        if not args.image or not args.prompt:
+            raise SystemExit("--image and --prompt are required for --mode quick")
+        if args.backend == "openai":
+            generate = make_openai_generate(args.base_url, args.api_key, args.model_id, args.max_new_tokens)
+        else:
+            generate = make_hf_generate(args.model_id, args.max_new_tokens)
+        run_quick(generate, args.image, args.prompt, repeat=args.repeat)
     else:
         evaluate(args.results, args.config)
 
