@@ -1,7 +1,7 @@
 { 
 	"CLASSIFIER": {
 		"excel_flag": false,	
-		"input_folder": "output",
+		"input_folder": "2026-07-23-11-46",
 		"excel_path":"/Proyecto/NB/Final.xlsx",
 		"excel_column":"path"
 		}
