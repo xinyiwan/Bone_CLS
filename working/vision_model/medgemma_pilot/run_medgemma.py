@@ -9,13 +9,11 @@ for the same (case, feature) by majority vote -> results_sanity.csv.
 This deliberately avoids MedGemma's multi-image path: per Google's model card,
 MedGemma's multimodal eval is primarily single-image; multi-image comprehension
 is NOT formally evaluated. Single-image + aggregate is the trustworthy first
-pass. (A true multi-image variant would go in run_single / build_prompt -- see
-the MULTI-IMAGE flag -- but sanity-check on known-easy cases first.)
+pass. (A true multi-image variant would go in run_single -- see the MULTI-IMAGE
+flag -- but sanity-check on known-easy cases first.)
 
-Two backends (same code path otherwise):
-  - hf     : load the weights in-process (needs torch/transformers). Default.
-  - openai : call a locally-served OpenAI-compatible endpoint (vllm serve).
-             Client needs only openai + pandas + pillow + pyyaml, no torch.
+The model weights are loaded in-process with transformers (needs torch); there
+is no server/API backend.
 
 Workflow:
     # 1. Infer per-image (one row per image/plane; resume-safe, re-run to continue):
@@ -28,12 +26,14 @@ Workflow:
     # 3. Eval aggregated results:
     python run_medgemma.py --mode eval --results results_sanity.csv
 
-    # Against a local vllm server instead of in-process weights:
-    python run_medgemma.py --mode infer --backend openai \
-        --base-url http://localhost:9586/v1 --metadata meta.csv --out inference_results.csv
+    # Few-shot infer (prepend N held-out labeled example turns per feature; see feature_prompts.yaml):
+    python run_medgemma.py --mode infer --metadata meta.csv --num-few-shot 2 --out inference_fewshot.csv
 
     # Quick ad-hoc test: one prompt + one or more images, no CSV/YAML needed:
     python run_medgemma.py --mode quick --image scan1.jpg --prompt "Describe this image."
+
+PROMPTS: all prompt construction (system/user message split, few-shot) lives in
+prompts.py. This file only orchestrates infer/aggregate/eval.
 
 LICENSE: MedGemma is governed by the Health AI Developer Foundations (HAI-DEF)
 terms of use -- you are responsible for compliance. This script only loads the
@@ -45,7 +45,6 @@ Deps: torch, transformers, pandas, pillow, pyyaml.
 from __future__ import annotations
 
 import argparse
-import base64
 import csv
 import logging
 import time
@@ -57,6 +56,8 @@ from typing import Callable, Dict, List, Optional
 import pandas as pd
 import yaml
 from PIL import Image
+
+import prompts  # prompt construction (see prompts.py)
 
 log = logging.getLogger("medgemma")
 
@@ -97,83 +98,11 @@ def to_jpeg_rgb(path: str | Path, quality: int = 95) -> Image.Image:
 
 
 # ---------------------------------------------------------------------------
-# Prompt
+# Prompt construction lives in prompts.py (per-model strategy + few-shot). This
+# module builds MESSAGES (a list of role/content dicts), not a flat string, so
+# system/user roles are separated and few-shot examples can be added as prior
+# turns. See prompts.build_medgemma_messages / prompts.build_context.
 # ---------------------------------------------------------------------------
-def build_prompt(
-    feature_cfg: dict,
-    modality: str,
-    plane: str,
-    location: Optional[str] = None,
-    other_planes: Optional[List[str]] = None,
-    has_contour: bool = False,
-) -> str:
-    """Assemble a single-image prompt in a fixed STRUCTURE. All feature-specific
-    wording comes from feature_cfg (the YAML); this function only supplies the
-    general imaging/clinical context and the strict answer format.
-
-        [general context]  <- here (modality/plane/location/contour/other views)
-        + description       <- feature_cfg["description"]
-        + label definitions <- feature_cfg["label_definitions"] (optional)
-        + task              <- feature_cfg["task"]
-        + answer format     <- here (from feature_cfg["label_options"])
-
-    Args:
-        modality:      e.g. "T1", "T2FS", "T1FSC"  (per THIS image)
-        plane:         orientation of THIS image (axial/coronal/sagittal)
-        location:      lesion location, e.g. "distal femur, metaphysis" (from clinical CSV; optional)
-        other_planes:  other orientations of the SAME lesion assessed in separate calls,
-                       so the model knows this image is one view of a multi-view protocol.
-        has_contour:   True when a radiologist red-contour overlay is being fed.
-
-    NOTE (single-image protocol): we assess ONE image per call and aggregate, so
-    "other orientations are assessed separately" is accurate. If you switch to
-    several images in ONE prompt (MULTI-IMAGE FLAG in run_single), change that
-    wording to "shown alongside" and re-validate.
-    """
-    modality = (modality or "").strip() or "MRI"
-    plane = (plane or "").strip() or "unknown-plane"
-    opts = ", ".join(feature_cfg["label_options"])
-
-    parts: List[str] = []
-
-    # --- general context (structural; built from runtime values) ---
-    loc = f", from a bone lesion located in the {location}" if location else ", from a bone lesion"
-    parts.append(
-        f"You are an expert musculoskeletal radiologist. You are shown a {modality} MRI "
-        f"image in the {plane} plane{loc}. The image is cropped to a bounding box around "
-        f"the lesion (with a small margin), so the lesion fills most of the frame."
-    )
-    parts.append(
-        f"This is the {plane} slice with the LARGEST cross-sectional area of the lesion; "
-        f"make your assessment based on this slice."
-    )
-    if other_planes:
-        others = ", ".join(other_planes)
-        parts.append(
-            f"To help build a 3D picture of the same lesion, its largest-area slice in "
-            f"other orientations ({others}) is assessed separately in other images; "
-            f"judge only the image shown here."
-        )
-    if has_contour:
-        parts.append(
-            "A thin RED contour drawn on the image marks the lesion boundary segmented by "
-            "a radiologist. Use it to locate the lesion; assess the region it encloses."
-        )
-
-    # --- feature-specific wording (from config; description kept for back-compat) ---
-    description = (feature_cfg.get("description") or feature_cfg.get("prompt_description") or "").strip()
-    if description:
-        parts.append(description)
-    defs = feature_cfg.get("label_definitions")
-    if defs:
-        parts.append("Label meanings -- " + "; ".join(f"{k}: {v}" for k, v in defs.items()) + ".")
-    task = (feature_cfg.get("task") or "").strip()
-    if task:
-        parts.append(task)
-
-    # --- strict answer format (structural; guarantees parse_answer alignment) ---
-    parts.append(f"Respond with exactly one word from: {opts}.")
-    return " ".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -218,28 +147,18 @@ def load_model(model_id: str):
     return model, processor
 
 
-def run_single(model, processor, image: Image.Image, prompt: str, max_new_tokens: int = 20) -> str:
-    """One image + one prompt -> raw decoded text (greedy).
+def run_single(model, processor, messages: List[dict], max_new_tokens: int = 20) -> str:
+    """A chat message list -> raw decoded text (greedy).
 
-    Uses the processor's chat template so image placeholders are inserted the way
-    THIS model expects -- do not hand-insert <start_of_image>.
-
-    MULTI-IMAGE FLAG: to feed several images in ONE prompt later, add more
-    {"type": "image", ...} entries to `content` (Gemma 3 supports repeated image
-    tokens; all images should be the same shape and a batch pads to a fixed
-    count). Not used here -- sanity-check before trusting it.
+    `messages` is the backend-neutral format built in prompts.py: a list of
+    {"role", "content"} where content items are {"type": "text", ...} or
+    {"type": "image", "image": <PIL>}. The processor's chat template inserts the
+    image placeholders the way THIS model expects -- do not hand-insert
+    <start_of_image>. Few-shot example turns and multi-image prompts are just
+    additional messages / image content items; nothing here needs to change.
     """
     import torch
 
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {"type": "image", "image": image},
-                {"type": "text", "text": prompt},
-            ],
-        }
-    ]
     inputs = processor.apply_chat_template(
         messages,
         add_generation_prompt=True,
@@ -254,51 +173,14 @@ def run_single(model, processor, image: Image.Image, prompt: str, max_new_tokens
     return processor.decode(out[0][input_len:], skip_special_tokens=True).strip()
 
 
-def run_single_openai(client, model_id: str, image: Image.Image, prompt: str, max_new_tokens: int) -> str:
-    """One image + one prompt against an OpenAI-compatible server (e.g. a local
-    `vllm serve`). The image is sent as a base64 JPEG data URL.
-
-    VERIFY: multi-modal chat via vllm needs a vllm version with Gemma-3/MedGemma
-    vision support, and the server may need `--limit-mm-per-prompt image=1`.
-    We send text + one image_url; confirm the served model's chat template
-    accepts this content format.
-    """
-    buf = BytesIO()
-    image.save(buf, format="JPEG", quality=95)
-    b64 = base64.b64encode(buf.getvalue()).decode()
-    resp = client.chat.completions.create(
-        model=model_id,
-        messages=[{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": prompt},
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
-            ],
-        }],
-        max_tokens=max_new_tokens,
-        temperature=0.0,  # greedy, deterministic short-label task
-    )
-    return (resp.choices[0].message.content or "").strip()
-
-
-# A backend is just a callable: (image, prompt) -> raw text.
-Generate = Callable[[Image.Image, str], str]
+# A backend is just a callable: (messages) -> raw text.
+Generate = Callable[[List[dict]], str]
 
 
 def make_hf_generate(model_id: str, max_new_tokens: int) -> Generate:
     """In-process HuggingFace backend (loads weights locally; needs torch)."""
     model, processor = load_model(model_id)
-    return lambda image, prompt: run_single(model, processor, image, prompt, max_new_tokens)
-
-
-def make_openai_generate(base_url: str, api_key: str, model_id: str, max_new_tokens: int) -> Generate:
-    """Client backend for a locally-served OpenAI-compatible endpoint (vllm).
-    No torch/transformers needed on this side."""
-    from openai import OpenAI
-
-    client = OpenAI(base_url=base_url, api_key=api_key or "EMPTY")
-    log.info("using OpenAI-compatible backend at %s (model=%s)", base_url, model_id)
-    return lambda image, prompt: run_single_openai(client, model_id, image, prompt, max_new_tokens)
+    return lambda messages: run_single(model, processor, messages, max_new_tokens)
 
 
 # ---------------------------------------------------------------------------
@@ -373,18 +255,37 @@ def infer(
     generate: Generate,
     use_contour: bool = False,
     location_cols: Optional[List[str]] = None,
+    num_few_shot: int = 0,
 ) -> None:
     """Infer per-image labels from flattened metadata (one row per image/plane).
 
     Writes one output row per image; resume-safe (re-running skips images already
     present in out_path). A separate aggregate_results() call majority-votes the
     per-image labels into per-(case, feature) labels.
+
+    num_few_shot > 0 prepends up to that many labeled example turns (from each
+    feature's `examples:` block in the YAML) before the query image. Example
+    images are held out of inference automatically (leakage guard).
     """
     location_cols = location_cols or ["skeletal_location", "location_within_bone"]
     features = load_feature_config(config_path)
+    config_dir = Path(config_path).resolve().parent
     df = pd.read_csv(metadata_csv, dtype=str).fillna("")
     done = _done_keys(out_path)
     log.info("%d image row(s) in metadata; %d already done -> skipping those", len(df), len(done))
+
+    # Few-shot: load example turns per feature once (cached), and collect their
+    # image paths so we can exclude them from inference (no train-on-test leakage).
+    few_shot_by_feature: Dict[str, List[dict]] = {}
+    few_shot_paths: set = set()
+    if num_few_shot > 0:
+        for feat, fcfg in features.items():
+            for p in prompts.few_shot_image_paths(fcfg, config_dir):
+                few_shot_paths.add(p)
+                few_shot_paths.add(str(Path(p).resolve()))  # match however metadata spells the path
+            examples = prompts.resolve_few_shot(fcfg, config_dir, to_jpeg_rgb, limit=num_few_shot)
+            few_shot_by_feature[feat] = examples
+            log.info("feature %r: %d few-shot example(s) loaded", feat, len(examples))
 
     # Sibling orientations of the same lesion (assessed in separate calls) -> prompt context.
     planes_by_key: Dict[tuple, List[str]] = {}
@@ -404,6 +305,9 @@ def infer(
             feature = row["feature_name"]
             img_path_str = row["image_path"]
             if (case_id, feature, img_path_str) in done:
+                continue
+            if str(Path(img_path_str).resolve()) in few_shot_paths or img_path_str in few_shot_paths:
+                log.info("skip %s -- used as a few-shot example (leakage guard)", img_path_str)
                 continue
             if feature not in features:
                 log.warning("no config for feature %r (case %s) -- skipping", feature, case_id)
@@ -430,11 +334,14 @@ def infer(
 
             location = row_location(row, location_cols)
             other_planes = [p for p in planes_by_key.get((case_id, feature), []) if p != plane]
-            prompt = build_prompt(
-                fcfg, modality, plane,
+            context = prompts.build_context(
+                modality, plane,
                 location=location, other_planes=other_planes, has_contour=has_contour,
             )
-            raw = generate(image, prompt)
+            messages = prompts.build_medgemma_messages(
+                fcfg, image, context, few_shot=few_shot_by_feature.get(feature),
+            )
+            raw = generate(messages)
             label = parse_answer(raw, fcfg["label_options"])
 
             gt = row.get("ground_truth_label", "")
@@ -554,9 +461,13 @@ def run_quick(
             print(f"[{img_path}] could not load image: {e}")
             continue
 
+        messages = [{
+            "role": "user",
+            "content": [{"type": "image", "image": image}, {"type": "text", "text": prompt}],
+        }]
         for i in range(repeat):
             t0 = time.perf_counter()
-            raw = generate(image, prompt)
+            raw = generate(messages)
             dt = time.perf_counter() - t0
             tag = f"{img_path.name}" + (f" (run {i + 1}/{repeat})" if repeat > 1 else "")
             print(f"[{tag}] {dt:.2f}s -> {raw}")
@@ -580,16 +491,14 @@ def main() -> None:
     ap.add_argument("--model-id", default="google/medgemma-1.5-4b-it",
                     help="default 4B; pass google/medgemma-27b-it for a comparison run (see load_model)")
     ap.add_argument("--max-new-tokens", type=int, default=20)
-    # backend: in-process HF weights, or a locally-served OpenAI-compatible endpoint (vllm)
-    ap.add_argument("--backend", choices=["hf", "openai"], default="hf",
-                    help="hf = load weights in-process (needs torch); openai = call a local vllm server")
-    ap.add_argument("--base-url", default="http://localhost:9586/v1", help="server URL (openai backend)")
-    ap.add_argument("--api-key", default="EMPTY", help="API key (vllm ignores it; any non-empty string)")
     # prompt context
     ap.add_argument("--use-contour", action="store_true",
                     help="feed the radiologist red-contour '_overlay' image and tell the model about it")
     ap.add_argument("--location-cols", nargs="*", default=["skeletal_location", "location_within_bone"],
                     help="metadata columns joined into the lesion-location phrase (added by preprocess --clinical-csv)")
+    ap.add_argument("--num-few-shot", type=int, default=0,
+                    help="prepend up to N labeled example turns per feature from the YAML 'examples:' block "
+                         "(0 = zero-shot; example images are auto-excluded from inference)")
     # quick mode
     ap.add_argument("--image", type=Path, nargs="+",
                     help="one or more image paths (quick mode); each is sent in its own call")
@@ -603,12 +512,10 @@ def main() -> None:
     if args.mode == "infer":
         if not args.metadata:
             raise SystemExit("--metadata is required for --mode infer")
-        if args.backend == "openai":
-            generate = make_openai_generate(args.base_url, args.api_key, args.model_id, args.max_new_tokens)
-        else:
-            generate = make_hf_generate(args.model_id, args.max_new_tokens)
+        generate = make_hf_generate(args.model_id, args.max_new_tokens)
         infer(args.metadata, args.config, args.out or Path("inference_results.csv"), generate,
-              use_contour=args.use_contour, location_cols=args.location_cols)
+              use_contour=args.use_contour, location_cols=args.location_cols,
+              num_few_shot=args.num_few_shot)
     elif args.mode == "aggregate":
         if not args.inference_results:
             raise SystemExit("--inference-results is required for --mode aggregate")
@@ -616,10 +523,7 @@ def main() -> None:
     elif args.mode == "quick":
         if not args.image or not args.prompt:
             raise SystemExit("--image and --prompt are required for --mode quick")
-        if args.backend == "openai":
-            generate = make_openai_generate(args.base_url, args.api_key, args.model_id, args.max_new_tokens)
-        else:
-            generate = make_hf_generate(args.model_id, args.max_new_tokens)
+        generate = make_hf_generate(args.model_id, args.max_new_tokens)
         run_quick(generate, args.image, args.prompt, repeat=args.repeat)
     else:
         evaluate(args.results, args.config)
