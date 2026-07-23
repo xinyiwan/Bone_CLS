@@ -27,7 +27,7 @@ import pydicom
 from utils import find_scan_dirs
 
 DATADIR = Path("/data/")
-OUTPUT_CSV = Path("/results/batch_4.csv")
+OUTPUT_CSV = Path("/results/batch_5.csv")
 
 
 # ---------------------------------------------------------------------------
