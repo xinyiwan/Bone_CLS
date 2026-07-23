@@ -191,7 +191,22 @@ def extract_bone_labels(totalseg_dir: Path) -> dict[int, str]:
         print(f"    [WARN] {combined} not found")
         return {}
 
-    arr = sitk.GetArrayFromImage(sitk.ReadImage(str(combined)))
+    try:
+        # First try reading with SimpleITK
+        arr = sitk.GetArrayFromImage(sitk.ReadImage(str(combined)))
+    except RuntimeError as e:
+        if "ITK only supports orthonormal direction cosines" in str(e):
+            # Fallback: use nibabel to read the NIfTI file
+            try:
+                import nibabel as nib
+                img = nib.load(str(combined))
+                arr = img.get_fdata().astype(np.int16)  # Convert to int for label processing
+                print(f"    [INFO] Read {combined} with nibabel (non-orthonormal direction cosines detected)")
+            except ImportError:
+                print(f"    [ERROR] Need nibabel to read non-orthonormal NIfTI file: {combined}")
+                return {}
+        else:
+            raise e
     present = set(np.unique(arr)) - {0}
 
     try:
