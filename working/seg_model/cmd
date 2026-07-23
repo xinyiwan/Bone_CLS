@@ -11,13 +11,17 @@ docker run --rm -it --cpus=30 \
 
 docker run --rm -it --cpus=30 \
   -v /home/ext_xinwan/Bone_AI/Bone_CLS/working/:/working \
-  -v /home/ext_xinwan/Bone_AI/tmp_sorted_data:/data \
+  -v /mnt/tmp_storage/Bone_AI/tmp_sorted_data:/data \
   -v /home/ext_xinwan/Bone_AI/output/:/output \
   --entrypoint bash \
   testp11:latest
 
-
-python seg_model/to_nnunet.py  /data/ --out $nnUNet_raw --dataset-id 1 --dataset-name BoneTumour --seq-table /output/CLF_performance/combined_reviewed.csv 
+python3 seg_model/analyze_dataset.py /data --out-dir /output/preprocess   --seq-table /output/CLF_performance/batches_1_4/combined_reviewed.csv
+python seg_model/to_nnunet.py  /data/ --out $nnUNet_raw --dataset-id 1 \
+  --dataset-name BoneTumour \
+  --seq-table /output/CLF_performance/batches_1_4/combined_reviewed.csv \
+  --plane-table /output/preprocess/per_scan.csv \
+  --exclude-table /output/kira-0515-seg.csv 
 
 
 nnUNetv2_plan_and_preprocess -d 1 --verify_dataset_integrity

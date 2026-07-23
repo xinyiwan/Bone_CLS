@@ -11,21 +11,37 @@ python -c "import torchaudio; print(f'Torchaudio: {torchaudio.__version__}')"
 pip list | grep -E "torch|vllm|transformers"
 
 
+#extract assessment data from subjects 
+docker run --rm -it\
+  -v /home/ext_xinwan/Bone_AI/Bone_CLS/:/working \
+  -v /mnt/tmp_storage/Bone_AI/tmp_sorted_data:/data \
+  -v /home/ext_xinwan/Bone_AI/output/vision_model:/output\
+  -v /home/ext_xinwan/Bone_AI/output/nnUNet_raw/Dataset001_BoneTumour/case_metadata.csv:/sequences.csv\
+  -w /working \
+  --entrypoint python3 \
+  testp11:latest \
+  /working/working/vision_model/label/json_extract.py --data-root /data --subjects /sequences.csv \
+        --id-col subject --out-dir /output/label_out
+
 # check preprocessing on one subject for vision model
 docker run --rm -it\
   -v /home/ext_xinwan/Bone_AI/Bone_CLS/:/working \
   -v /mnt/tmp_storage/Bone_AI/tmp_sorted_data:/data \
   -v /home/ext_xinwan/Bone_AI/output/vision_model/preprocess:/output\
-  -v /home/ext_xinwan/Bone_AI/output/nnUNet_raw/Dataset002_BoneTumourV2/case_metadata.csv:/sequences.csv\
+  -v /home/ext_xinwan/Bone_AI/output/nnUNet_raw/Dataset001_BoneTumour/case_metadata.csv:/sequences.csv\
   -v /home/ext_xinwan/Bone_AI/Bone_CLS/working/vision_model/preprocess/feature_config.yaml:/feature_config.yaml\
+  -v /home/ext_xinwan/Bone_AI/output/vision_model/label_out:/label_out\
   -w /working \
-  --entrypoint python3 \
-  testp11:latest \
-  /working/working/vision_model/preprocess/run.py --data-root /data \
+  --entrypoint bash \
+  testp11:latest 
+  python3 /working/working/vision_model/preprocess/run.py --data-root /data \
   --out-root /output --sequence-table /sequences.csv \
-  --config /feature_config.yaml --subjects BONE_AI_127 
+  --config /feature_config.yaml --subjects BONE_AI_127 --overlay
+
+  python3/working/working/vision_model/preprocess/run.py --data-root /data \
+  --out-root /output --sequence-table /sequences.csv \
+  --config /feature_config.yaml --labels-dir /labels_out/jsons
   
- --index-only
 
 
 # run pilot vlm
@@ -44,3 +60,27 @@ docker run --rm -it \
   /working/working/vision_model/medgemma_pilot/run_medgemma.py --mode infer \
   --metadata /output/clinical_info/combined_clinical_info_batches1_to_4.csv \
   --config /working/working/vision_model/medgemma_pilot/feature_prompts.yaml --out results_sanity.csv
+
+
+
+docker run --rm -it --gpus 6 \
+  -v /home/ext_xinwan/Bone_AI/Bone_CLS/:/working \
+  -v /mnt/tmp_storage/Bone_AI/tmp_sorted_data:/data  \
+  -v /home/ext_xinwan/Bone_AI/output/vision_model:/results  \
+  -v /home/ext_xinwan/Bone_AI/output/clinical_info:/clinical \
+  -v /home/ext_xinwan/Bone_AI/output/vision_model/preprocess/:/output \
+  -w /working  --entrypoint bash \
+  medgemma-hf
+
+    python run_medgemma.py --mode infer --backend hf \
+        --model-id /models/medgemma-1.5-4b-it \
+        --metadata /results/preprocess/metadata.csv \
+        --config /working/working/vision_model/medgemma_pilot/feature_prompts.yaml \
+        --out /results/inference/inference_results.csv --location-cols skeletal_location
+
+# HF backend (loads weights in-process)
+python /working/working/vision_model/medgemma_pilot/run_medgemma.py --mode quick --model-id /models/medgemma-1.5-4b-it \
+  --image /output/BONE_AI_100/shape/T1_coronal_10.png \
+  --prompt "This is a bone lesion (bone tumor or bone mimicker) on a T1W MRI, coronal plane. Please describe the shape of this lesion."
+
+
