@@ -20,7 +20,7 @@ def draw_contour_overlay(
     img2d_float01: np.ndarray,
     mask2d: np.ndarray,
     color: Tuple[int, int, int] = (255, 0, 0),  # RGB
-    thickness: int = 1,
+    thickness: int = 2,
 ) -> np.ndarray:
     """Return an RGB uint8 image with the mask outline drawn on top."""
     rgb = cv2.cvtColor(to_uint8(img2d_float01), cv2.COLOR_GRAY2RGB)
