@@ -490,7 +490,7 @@ def main() -> None:
     # model / decoding
     ap.add_argument("--model-id", default="google/medgemma-1.5-4b-it",
                     help="default 4B; pass google/medgemma-27b-it for a comparison run (see load_model)")
-    ap.add_argument("--max-new-tokens", type=int, default=20)
+    ap.add_argument("--max-new-tokens", type=int, default=1024)
     # prompt context
     ap.add_argument("--use-contour", action="store_true",
                     help="feed the radiologist red-contour '_overlay' image and tell the model about it")

@@ -29,71 +29,101 @@ features:
     label_options: [oval, lobulated, geographic, irregular, exophytic]
     description: "The overall shape of the lesion's margin/contour as seen on this MRI slice."
     label_definitions:
-      oval: "a smooth, round or elliptical margin"
-      lobulated: "a smooth but undulating, multi-lobed margin"
-      irregular: "an ill-defined, jagged or spiculated margin"
-    task: "Decide which single descriptor best matches the lesion's margin."
+      oval: "A round, elliptical, or ovoid overall outline. The margin may have minor bumps
+             but the dominant shape is clearly egg-like or circular."
+
+      lobulated: "The overall outline consists of multiple, distinct, smoothly curved
+                  bulbous lobes or bumps (like a cluster of grapes). The margin does not
+                  need to be perfectly smooth, but the dominant contour is wavy with
+                  convex projections."
+
+      geographic: "The overall outline is defined by a large, sweeping concave arc or
+                   scalloped defect (i.e., the lesion appears to have a 'bite' taken out
+                   of it). This is a broad, smooth curve, not a sharp jagged spike."
+
+      irregular: "The overall outline is jagged, spiculated, ill-defined, or prominently
+                  angular/pointy. The margin lacks a coherent round, lobular, or concave
+                  pattern. This includes infiltrative or moth-eaten appearances."
+
+      exophytic: "The overall outline shows a prominent, outward, mushroom-like or
+                  polypoid convex projection extending from the main lesion mass.
+                  The dominant feature is a focal protrusion beyond the expected
+                  oval/lobulated boundary."
+    task: >
+      Decide which single descriptor best matches the lesion's global margin silhouette.
+      In cases of mixed features, choose the one that best describes the *overall*
+      gestalt of the lesion's shape, not the finest surface detail. Give your reasons.
     # Few-shot examples (used only with --num-few-shot N>0). Uncomment and point
     # image_path at HELD-OUT labeled crops; label must be one of label_options.
-    # examples:
-    #   - image_path: examples/shape/oval_case12_ax.png
-    #     label: oval
-    #     modality: T2FS
-    #     plane: axial
-    #     location: "distal femur, metaphysis"
-    #   - image_path: examples/shape/irregular_case07_cor.png
-    #     label: irregular
-    #     modality: T1
-    #     plane: coronal
-    #     location: "proximal tibia"
+    examples:
+      - image_path: /output/test/BONE_AI_100/shape/T1W_coronal_10.png
+        label: oval
+        modality: T1W
+        plane: coronal
+        location: "humerus_right"
+      - image_path: /output/test/BONE_AI_134/shape/T1W_sagittal_6.png
+        label: lobulated
+        modality: T1W
+        plane: sagittal
+        location: "humerus_left"
+      - image_path: /output/test/BONE_AI_174/shape/T1W_coronal_13.png
+        label: geographic
+        modality: T1W
+        plane: coronal
+        location: "humerus_left"
+      - image_path: /output/test/BONE_AI_462/shape/T1W_C_sagittal_14.png
+        label: irregular
+        modality: T1W_C
+        plane: sagittal
+        location: "vertebrae"
 
-  enhancement:
-    label_options: [homogeneous, heterogeneous, none]
-    description: "The pattern of contrast enhancement within the lesion on post-contrast (post-gadolinium T1) MRI."
-    label_definitions:
-      homogeneous: "uniform enhancement throughout the lesion"
-      heterogeneous: "patchy, mixed or non-uniform enhancement, or enhancement sparing part of the lesion"
-      none: "no appreciable enhancement relative to the pre-contrast signal"
-    task: "Decide which single pattern best describes the enhancement."
-    # examples:
-    #   - image_path: examples/enhancement/homogeneous_case03_ax.png
-    #     label: homogeneous
-    #     modality: T1FSC        # post-contrast (fat-sat T1 + gadolinium)
-    #     plane: axial
-    #   - image_path: examples/enhancement/heterogeneous_case21_sag.png
-    #     label: heterogeneous
-    #     modality: T1FSC
-    #     plane: sagittal
+  # enhancement:
+  #   label_options: [homogeneous, heterogeneous, none]
+  #   description: "The pattern of contrast enhancement within the lesion on post-contrast (post-gadolinium T1) MRI."
+  #   label_definitions:
+  #     homogeneous: "uniform enhancement throughout the lesion"
+  #     heterogeneous: "patchy, mixed or non-uniform enhancement, or enhancement sparing part of the lesion"
+  #     none: "no appreciable enhancement relative to the pre-contrast signal"
+  #   task: "Decide which single pattern best describes the enhancement."
+  #   examples:
+  #     - image_path: examples/enhancement/homogeneous_case03_ax.png
+  #       label: homogeneous
+  #       modality: T1W_FS_C        # post-contrast (fat-sat T1 + gadolinium)
+  #       plane: axial
+  #     - image_path: examples/enhancement/heterogeneous_case21_sag.png
+  #       label: heterogeneous
+  #       modality: T1W_FS_C
+  #       plane: sagittal
 
-  fluid_fluid_level:
-    label_options: [present, absent]
-    description: >-
-      A fluid-fluid level is a horizontal interface between two non-mixing fluids
-      of different signal intensity that have settled by gravity within the
-      lesion, best seen on T2-weighted images (classically in aneurysmal bone
-      cysts and telangiectatic osteosarcoma).
-    task: "State whether a fluid-fluid level is present or absent."
+  # fluid_fluid_level:
+  #   label_options: [present, absent]
+  #   description: >-
+  #     A fluid-fluid level is a horizontal interface between two non-mixing fluids
+  #     of different signal intensity that have settled by gravity within the
+  #     lesion, best seen on T2-weighted images (classically in aneurysmal bone
+  #     cysts and telangiectatic osteosarcoma).
+  #   task: "State whether a fluid-fluid level is present or absent."
     # examples:
     #   - image_path: examples/fluid_fluid_level/present_case05_ax.png
     #     label: present
-    #     modality: T2FS
+    #     modality: T2W_FS
     #     plane: axial
     #   - image_path: examples/fluid_fluid_level/absent_case18_ax.png
     #     label: absent
-    #     modality: T2FS
+    #     modality: T2W_FS
     #     plane: axial
 
-  soft_tissue_invasion:
-    label_options: [present, absent]
-    description: "Soft-tissue invasion is tumour extension through the bone cortex into the adjacent soft tissues, forming an extraosseous soft-tissue component."
-    task: "State whether soft-tissue invasion is present or absent."
+  # soft_tissue_invasion:
+  #   label_options: [present, absent]
+  #   description: "Soft-tissue invasion is tumour extension through the bone cortex into the adjacent soft tissues, forming an extraosseous soft-tissue component."
+  #   task: "State whether soft-tissue invasion is present or absent."
     # examples:
     #   - image_path: examples/soft_tissue_invasion/present_case09_ax.png
     #     label: present
-    #     modality: T2FS
+    #     modality: T2W_FS
     #     plane: axial
     #     location: "distal femur"
     #   - image_path: examples/soft_tissue_invasion/absent_case14_ax.png
     #     label: absent
-    #     modality: T2FS
+    #     modality: T2W_FS
     #     plane: axial

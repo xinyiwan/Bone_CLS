@@ -36,6 +36,7 @@ def build_context(
     location: Optional[str] = None,
     other_planes: Optional[List[str]] = None,
     has_contour: bool = False,
+    if_example: bool = False,
 ) -> str:
     """The per-image context sentence(s): what this particular image shows. Kept
     separate from the feature task because in a few-shot prompt the task is
@@ -56,9 +57,17 @@ def build_context(
     parts.append(
         f"This is a {modality} MRI image in the {plane} plane{loc}. The image is cropped to a "
         f"bounding box around the lesion (with a small margin), so the lesion fills most of the "
-        f"frame. It is the {plane} slice with the LARGEST cross-sectional area of the lesion; make "
-        f"your assessment based on this slice."
+        f"frame. It is the {plane} slice with the LARGEST cross-sectional area of the lesion;"
     )
+    if if_example:
+        parts.append(
+            "This is a few-shot example image, used to illustrate the task."
+        )
+    else:   
+        parts.append(
+            "This is a query image to be assessed. Make your assessment based on this slice. "
+        )
+    
     if other_planes:
         others = ", ".join(other_planes)
         parts.append(
@@ -78,9 +87,9 @@ def build_context(
 # ---------------------------------------------------------------------------
 SYSTEM_ROLE = ["You are an expert musculoskeletal radiologist assessing MRI images of benign, malignant bone tumors and bone tumor micmickers.",
                "Maintain strict compliance with these rules:",
-               "1. Use EXACT provided label options for your answer, with no extra words or punctuation.",
+               "1. Use EXACT  label options and structured output for your answer.",
                "2. If a feature is not clear from the image, use the specified default for that field.",
-               "3. NEVER add commentary, explanations, or deviate from the output structure"
+               "3. NEVER deviate from the output structure"
 ]
 SYSTEM_ROLE = "\n".join(SYSTEM_ROLE)
 
@@ -110,7 +119,8 @@ def build_system_text(feature_cfg: dict) -> str:
     if task:
         parts.append(task)
 
-    parts.append(f"Respond with exactly one word from label options: {opts}. Output only that word, nothing else.")
+    # Constraint on answers
+    # parts.append(f"Respond with exactly one word from label options: {opts}. Output only that word, nothing else.")
     return " ".join(parts)
 
 
