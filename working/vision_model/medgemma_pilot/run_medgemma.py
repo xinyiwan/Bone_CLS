@@ -186,39 +186,74 @@ def make_hf_generate(model_id: str, max_new_tokens: int) -> Generate:
 # ---------------------------------------------------------------------------
 # Parsing + aggregation
 # ---------------------------------------------------------------------------
+# MedGemma/Gemma-3 "thinking" mode wraps a chain-of-thought in <unused94>thought
+# ... <unused95> BEFORE the final answer. The thought itself echoes the label
+# options and draft JSON, so we MUST parse only the answer that follows the last
+# end-of-thought marker -- otherwise the label list inside the thought poisons
+# both JSON extraction and any word-scan fallback.
+THINK_END_MARKERS = ("<unused95>", "</thought>", "<end_of_turn>")
+
+
+def _answer_region(raw: str) -> str:
+    """Everything after the last end-of-thought marker (the final answer), or the
+    whole string when the model didn't emit a thinking block."""
+    s = raw
+    for marker in THINK_END_MARKERS:
+        if marker in s:
+            s = s.rsplit(marker, 1)[-1]
+    return s
+
+
 def _extract_json(raw: str) -> Optional[dict]:
-    """First JSON object in the model text, tolerant of ```json fences / prose."""
+    """The final JSON object in the answer region, tolerant of ```json fences and
+    of the thinking block. Prefers the LAST {...} that parses (the real answer,
+    not a draft inside the thought)."""
     import json
     import re
 
-    s = raw.strip()
-    try:                                  # clean case: the whole output is JSON
+    s = _answer_region(raw).replace("```json", "```")
+    if "```" in s:                        # prefer the last fenced chunk with a brace
+        for chunk in reversed([c for c in s.split("```") if "{" in c]):
+            s = chunk
+            break
+    s = s.strip()
+    try:                                  # clean case: the region is just the JSON
         obj = json.loads(s)
         if isinstance(obj, dict):
             return obj
     except Exception:  # noqa: BLE001
         pass
-    m = re.search(r"\{.*\}", s, re.DOTALL)  # else grab the first {...} block
-    if not m:
-        return None
-    try:
-        obj = json.loads(m.group(0))
-        return obj if isinstance(obj, dict) else None
-    except Exception:  # noqa: BLE001
-        return None
+    for cand in reversed(re.findall(r"\{[^{}]*\}", s, re.DOTALL)):  # last flat {...}
+        try:
+            obj = json.loads(cand)
+            if isinstance(obj, dict):
+                return obj
+        except Exception:  # noqa: BLE001
+            continue
+    return None
 
 
 def parse_answer(raw: str, options: List[str]) -> tuple[str, str]:
     """Parse the model's structured answer into (prediction, reason).
 
-    Expects {"prediction": "<label>", "reason": "..."}. `prediction` is matched
-    case-insensitively to `options` and returned in canonical casing; else
-    'PARSE_FAILED'. Falls back to a whole-word scan of the raw text when no JSON
-    prediction is found (older/non-JSON outputs). `reason` is "" when absent.
+    Reads ONLY the answer region (after the thinking block), most-reliable method
+    first:
+      1. a well-formed JSON object -> take prediction/reason;
+      2. else pull the "prediction"/"reason" keys directly with regex (salvages a
+         truncated or loosely-formatted final JSON -- prediction comes first, so
+         it survives even when the reason is cut off);
+      3. only as a last resort, scan the answer region for a standalone option
+         word (never the thought, so the printed options list can't poison it).
+    `prediction` is matched case-insensitively to `options` (canonical casing
+    returned); 'PARSE_FAILED' when nothing matches. `reason` is "" when absent.
     """
+    import re
+
     lowered = {o.lower(): o for o in options}
+    region = _answer_region(raw)
     reason = ""
 
+    # 1. Well-formed JSON.
     obj = _extract_json(raw)
     if obj is not None:
         reason = str(obj.get("reason", "")).strip()
@@ -226,8 +261,16 @@ def parse_answer(raw: str, options: List[str]) -> tuple[str, str]:
         if pred in lowered:
             return lowered[pred], reason
 
-    # Fallback: scan the raw text for a standalone option word.
-    words = set(raw.lower().replace(".", " ").replace(",", " ").replace('"', " ").split())
+    # 2. Loose/truncated JSON: pull the keys straight from the answer region.
+    mr = re.search(r'"reason"\s*:\s*"([^"]*)"', region, re.DOTALL)
+    if mr and not reason:
+        reason = mr.group(1).strip()
+    mp = re.search(r'"prediction"\s*:\s*"([^"]*)"', region)
+    if mp and mp.group(1).strip().lower() in lowered:
+        return lowered[mp.group(1).strip().lower()], reason
+
+    # 3. Last resort: a standalone option word in the answer region.
+    words = set(region.lower().replace(".", " ").replace(",", " ").replace('"', " ").split())
     for o_low, o in lowered.items():
         if o_low in words:
             return o, reason
@@ -377,6 +420,10 @@ def infer(
             )
             raw = generate(messages)
             label, reason = parse_answer(raw, fcfg["label_options"])
+            if label == "PARSE_FAILED":
+                truncated = ("<unused94>" in raw) and not any(m in raw for m in THINK_END_MARKERS)
+                log.warning("PARSE_FAILED %s / %s%s", case_id, feature,
+                            "  (thinking block truncated -- raise --max-new-tokens)" if truncated else "")
 
             gt = row.get("ground_truth_label", "")
             # label_options already use the assessment vocabulary, so a direct
