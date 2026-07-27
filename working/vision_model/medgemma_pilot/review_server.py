@@ -171,8 +171,7 @@ def subject_html(case_id: str) -> str:
 # Server
 # ---------------------------------------------------------------------------
 class Handler(BaseHTTPRequestHandler):
-    def log_message(self, *args):  # quieter console
-        pass
+    protocol_version = "HTTP/1.1"      # keep-alive + reliable Content-Length framing
 
     def _send(self, body: bytes, ctype: str, code: int = 200) -> None:
         self.send_response(code)
