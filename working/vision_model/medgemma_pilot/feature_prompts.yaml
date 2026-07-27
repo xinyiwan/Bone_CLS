@@ -58,25 +58,27 @@ features:
     examples:
       - image_path: /output/test/BONE_AI_100/shape/T1W_coronal_10.png
         label: oval
-        reason: "The lesion has a smooth, egg-like outline with no lobulation or spiculation."
+        reason: "It's oval-round because its outer edge follows one smooth, continuous curve — the internal nodules stay contained inside that boundary rather than bulging out to break up the contour, so the overall shape stays uniform instead of lobulated.."
         modality: T1W
         plane: coronal
         location: "humerus_right"
       - image_path: /output/test/BONE_AI_134/shape/T1W_sagittal_6.png
         label: lobulated
-        reason: "The contour is wavy with several distinct, smoothly curved convex bulges."
+        reason: "The lesion is lobulated because it's built from several rounded nodules of differing signal intensity clustered tightly together, rather than one uniform mass. 
+        Where these individual nodules meet, they don't blend smoothly — instead, they push against each other with shallow indentations at the contact points and thin septations dividing them internally. 
+        This nodule-within-a-mass architecture (each lobe bulging outward, separated by small dips rather than a continuous smooth curve) is what creates the scalloped, cauliflower-like outer contour seen here"
         modality: T1W
         plane: sagittal
         location: "humerus_left"
       - image_path: /output/test/BONE_AI_174/shape/T1W_coronal_13.png
         label: geographic
-        reason: "A broad, smooth concave arc gives the margin a scalloped, bitten-out appearance."
+        reason: "It's geographic rather than oval-round or lobulated because "geographic" describes the margin/zone of transition (a sharply defined border, however the outline is shaped), while "oval-round" and "lobulated" describe the outer contour shape itself — smooth and curved versus multi-bulged. Here the emphasis is on the sharp, well-defined edge, not on whether that edge traces a round curve or a series of lobes."
         modality: T1W
         plane: coronal
         location: "humerus_left"
       - image_path: /output/test/BONE_AI_462/shape/T1W_C_sagittal_14.png
         label: irregular
-        reason: "The outline is jagged and ill-defined, lacking any coherent round or lobular pattern."
+        reason: "This lesion is irregular because its border has no consistent geometry — the edge zigzags unpredictably with pointed, angular projections extending into surrounding tissue at random intervals, unlike the smooth single curve of oval-round, the organized repeating bulges of lobulated, or the sharply defined single border of geographic; here the margin is disorganized and unpredictable rather than following any repeatable pattern."
         modality: T1W_C
         plane: sagittal
         location: "vertebrae"
