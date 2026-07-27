@@ -24,6 +24,7 @@ which accepts the image as a PIL object directly):
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
@@ -119,8 +120,16 @@ def build_system_text(feature_cfg: dict) -> str:
     if task:
         parts.append(task)
 
-    # Constraint on answers
-    # parts.append(f"Respond with exactly one word from label options: {opts}. Output only that word, nothing else.")
+    # Strict structured-output constraint. The JSON shape is CONSTANT across
+    # features (only the allowed prediction values vary), so it lives here, built
+    # from label_options -- stating it explicitly is what makes every image's
+    # output consistent and forces the reason field.
+    parts.append(
+        "Respond with ONLY one JSON object and nothing else -- no markdown, no code "
+        "fences, no text before or after. Use exactly this structure: "
+        '{"prediction": "<LABEL>", "reason": "<one short sentence>"} '
+        f"where <LABEL> is EXACTLY one of: {opts}."
+    )
     return " ".join(parts)
 
 
@@ -156,7 +165,10 @@ def build_medgemma_messages(
     ]
     for ex in few_shot or []:
         messages.append(_user_turn(ex["image"], ex["context"]))
-        messages.append({"role": "assistant", "content": [{"type": "text", "text": ex["label"]}]})
+        # The exemplar answer must be the SAME JSON structure we ask the model to
+        # produce, or the examples teach a different format than the system text.
+        answer = json.dumps({"prediction": ex["label"], "reason": ex.get("reason", "")})
+        messages.append({"role": "assistant", "content": [{"type": "text", "text": answer}]})
     messages.append(_user_turn(query_image, query_context))
     return messages
 
@@ -173,6 +185,7 @@ def resolve_few_shot(
         examples:
           - image_path: examples/shape_oval_1.jpg   # relative to the config dir (or absolute)
             label: oval                             # must be one of label_options
+            reason: "smooth egg-like outline"       # shown in the exemplar JSON answer
             modality: T2                            # optional context for the example image
             plane: axial                            # optional
             location: "distal femur, metaphysis"    # optional
@@ -214,8 +227,15 @@ def resolve_few_shot(
             location=ex.get("location"),
             other_planes=None,
             has_contour=bool(ex.get("has_contour", False)),
+            if_example=True,  # frame this as a teaching example, not a query to assess
         )
-        resolved.append({"image": image, "context": context, "label": label, "image_path": str(img_path)})
+        resolved.append({
+            "image": image,
+            "context": context,
+            "label": label,
+            "reason": str(ex.get("reason", "")).strip(),
+            "image_path": str(img_path),
+        })
     return resolved
 
 

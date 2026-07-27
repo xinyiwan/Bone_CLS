@@ -52,27 +52,31 @@ features:
     task: >
       Decide which single descriptor best matches the lesion's global margin silhouette.
       In cases of mixed features, choose the one that best describes the *overall*
-      gestalt of the lesion's shape, not the finest surface detail. Give your reasons.
+      gestalt of the lesion's shape, not the finest surface detail.
     # Few-shot examples (used only with --num-few-shot N>0). Uncomment and point
     # image_path at HELD-OUT labeled crops; label must be one of label_options.
     examples:
       - image_path: /output/test/BONE_AI_100/shape/T1W_coronal_10.png
         label: oval
+        reason: "The lesion has a smooth, egg-like outline with no lobulation or spiculation."
         modality: T1W
         plane: coronal
         location: "humerus_right"
       - image_path: /output/test/BONE_AI_134/shape/T1W_sagittal_6.png
         label: lobulated
+        reason: "The contour is wavy with several distinct, smoothly curved convex bulges."
         modality: T1W
         plane: sagittal
         location: "humerus_left"
       - image_path: /output/test/BONE_AI_174/shape/T1W_coronal_13.png
         label: geographic
+        reason: "A broad, smooth concave arc gives the margin a scalloped, bitten-out appearance."
         modality: T1W
         plane: coronal
         location: "humerus_left"
       - image_path: /output/test/BONE_AI_462/shape/T1W_C_sagittal_14.png
         label: irregular
+        reason: "The outline is jagged and ill-defined, lacking any coherent round or lobular pattern."
         modality: T1W_C
         plane: sagittal
         location: "vertebrae"

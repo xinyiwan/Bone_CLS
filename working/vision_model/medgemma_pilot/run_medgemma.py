@@ -63,7 +63,7 @@ log = logging.getLogger("medgemma")
 
 INFERENCE_FIELDS = [
     "case_id", "feature_name", "plane", "modality", "image_path",
-    "raw_output", "parsed_label", "ground_truth_label", "correct",
+    "raw_output", "parsed_label", "reason", "ground_truth_label", "correct",
 ]
 
 RESULT_FIELDS = [
@@ -147,7 +147,7 @@ def load_model(model_id: str):
     return model, processor
 
 
-def run_single(model, processor, messages: List[dict], max_new_tokens: int = 20) -> str:
+def run_single(model, processor, messages: List[dict], max_new_tokens: int = 1024) -> str:
     """A chat message list -> raw decoded text (greedy).
 
     `messages` is the backend-neutral format built in prompts.py: a list of
@@ -186,18 +186,52 @@ def make_hf_generate(model_id: str, max_new_tokens: int) -> Generate:
 # ---------------------------------------------------------------------------
 # Parsing + aggregation
 # ---------------------------------------------------------------------------
-def parse_answer(raw: str, options: List[str]) -> str:
-    """Strict, case-insensitive match to one of `options`; else 'PARSE_FAILED'.
-    Prefers an exact one-word answer, then a whole-word occurrence."""
-    t = raw.strip().lower()
+def _extract_json(raw: str) -> Optional[dict]:
+    """First JSON object in the model text, tolerant of ```json fences / prose."""
+    import json
+    import re
+
+    s = raw.strip()
+    try:                                  # clean case: the whole output is JSON
+        obj = json.loads(s)
+        if isinstance(obj, dict):
+            return obj
+    except Exception:  # noqa: BLE001
+        pass
+    m = re.search(r"\{.*\}", s, re.DOTALL)  # else grab the first {...} block
+    if not m:
+        return None
+    try:
+        obj = json.loads(m.group(0))
+        return obj if isinstance(obj, dict) else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def parse_answer(raw: str, options: List[str]) -> tuple[str, str]:
+    """Parse the model's structured answer into (prediction, reason).
+
+    Expects {"prediction": "<label>", "reason": "..."}. `prediction` is matched
+    case-insensitively to `options` and returned in canonical casing; else
+    'PARSE_FAILED'. Falls back to a whole-word scan of the raw text when no JSON
+    prediction is found (older/non-JSON outputs). `reason` is "" when absent.
+    """
     lowered = {o.lower(): o for o in options}
-    if t in lowered:                      # exact single-word answer
-        return lowered[t]
-    words = set(t.replace(".", " ").replace(",", " ").split())
+    reason = ""
+
+    obj = _extract_json(raw)
+    if obj is not None:
+        reason = str(obj.get("reason", "")).strip()
+        pred = str(obj.get("prediction", "")).strip().lower()
+        if pred in lowered:
+            return lowered[pred], reason
+
+    # Fallback: scan the raw text for a standalone option word.
+    words = set(raw.lower().replace(".", " ").replace(",", " ").replace('"', " ").split())
     for o_low, o in lowered.items():
-        if o_low in words:                # option appears as a standalone word
-            return o
-    return "PARSE_FAILED"
+        if o_low in words:
+            return o, reason
+    return "PARSE_FAILED", reason
 
 
 def has_gt(gt: str) -> bool:
@@ -342,7 +376,7 @@ def infer(
                 fcfg, image, context, few_shot=few_shot_by_feature.get(feature),
             )
             raw = generate(messages)
-            label = parse_answer(raw, fcfg["label_options"])
+            label, reason = parse_answer(raw, fcfg["label_options"])
 
             gt = row.get("ground_truth_label", "")
             correct = (label.lower() == gt.strip().lower()) if has_gt(gt) and label != "PARSE_FAILED" else ""
@@ -355,6 +389,7 @@ def infer(
                 "image_path": img_path_str,
                 "raw_output": raw,
                 "parsed_label": label,
+                "reason": reason,
                 "ground_truth_label": gt,
                 "correct": correct,
             })
