@@ -379,6 +379,8 @@ def infer(
             label, reason = parse_answer(raw, fcfg["label_options"])
 
             gt = row.get("ground_truth_label", "")
+            # label_options already use the assessment vocabulary, so a direct
+            # case-insensitive match is the score (no mapping needed).
             correct = (label.lower() == gt.strip().lower()) if has_gt(gt) and label != "PARSE_FAILED" else ""
 
             writer.writerow({

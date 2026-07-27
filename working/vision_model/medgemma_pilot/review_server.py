@@ -146,7 +146,6 @@ def subject_html(case_id: str) -> str:
         rows = feats[feature]
         gt = feature_gt(rows)
         maj = majority([r["parsed_label"] for r in rows])
-        gt_disp = pred_badge(maj, gt) if has_gt(gt) else '<span class="badge neutral">unknown</span>'
         header = (
             f"<h2>{esc(feature)} "
             f'&nbsp;<span class="meta">ground truth: <b>{esc(gt)}</b> &nbsp;|&nbsp; '

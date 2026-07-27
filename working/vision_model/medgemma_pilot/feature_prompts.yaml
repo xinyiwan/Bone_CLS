@@ -35,26 +35,29 @@
 
 features:
   shape:
-    label_options: [oval, lobulated, geographic, irregular, exophytic]
+    # label_options use the EXACT ground-truth vocabulary from the assessment
+    # JSON (tumor_shape), so a prediction is scored correct by a direct
+    # case-insensitive match -- no mapping layer needed. Keep these strings
+    # identical to the assessment values.
+    label_options: ["Round/Oval", lobulated, geographic, irregular, exophytic]
     description: "The overall shape of the lesion's outer margin/contour as seen on this MRI slice."
     # Each definition says how the label DIFFERS from the others, so the model
     # can pick exactly one. Discriminating axes: number of convex bulges,
     # inward (concave) vs outward (convex) curvature, smooth/organised vs jagged,
     # and whether a focal protrusion sticks out past the main mass.
     label_definitions:
-      oval: >-
+      "Round/Oval": >-
         A single, smooth, continuous convex outline -- egg-like, round, or
-        elliptical. There is exactly ONE unbroken boundary curve; internal bumps
-        or nodules stay inside it and do not push the contour out into separate
-        bulges. Prefer over 'lobulated' when the silhouette reads as one uniform
-        curve rather than several distinct bumps.
+        elliptical. There are internal bumps or nodules stay inside it and 
+        do not push the contour out into separate bulges. Prefer over 'lobulated' 
+        when the outline reads as one uniform curve rather than several distinct bumps.
 
       lobulated: >-
         A boundary made of MULTIPLE rounded, convex lobes set side by side (like
         a cluster of grapes or cauliflower), separated by shallow notches or thin
         septa where the lobes meet. The contour is wavy but each bulge is smooth.
-        Prefer over 'oval' when there are several distinct outward bulges, and
-        over 'irregular' when those bulges are smooth and organised, not jagged.
+        Prefer over 'Round/Oval' when there are several distinct outward bulges,
+        and over 'irregular' when those bulges are smooth and organised, not jagged.
 
       geographic: >-
         A sharply-defined, well-demarcated margin whose outline sweeps as a
@@ -68,7 +71,7 @@ features:
         A disorganised boundary with no repeatable geometry -- jagged,
         spiculated, angular, ill-defined, infiltrative, or moth-eaten, with
         pointed projections at random intervals. Choose when the margin fits none
-        of the ordered patterns: not one smooth curve (oval), not organised
+        of the ordered patterns: not one smooth curve (Round/Oval), not organised
         convex bulges (lobulated), not a single sharp concave arc (geographic).
 
       exophytic: >-
@@ -88,9 +91,9 @@ features:
     # label_definitions above.
     examples:
       - image_path: /output/test/BONE_AI_100/shape/T1W_coronal_10.png
-        label: oval
+        label: "Round/Oval"
         reason: >-
-          Oval: the outer edge is one smooth, continuous convex curve. The
+          Round/Oval: the outer edge is one smooth, continuous convex curve. The
           internal nodules stay inside that single boundary instead of bulging
           out to break the contour, so the outline stays uniform -- not the
           several side-by-side bulges of lobulated, and not the inward concave
@@ -104,8 +107,9 @@ features:
           Lobulated: the mass is built from several rounded nodules clustered
           together; where they meet, the boundary dips into shallow notches with
           thin internal septa, giving a scalloped, cauliflower-like contour of
-          repeated convex bulges -- more than the single smooth curve of oval,
-          yet still smooth and organised rather than the jagged edge of irregular.
+          repeated convex bulges -- more than the single smooth curve of
+          Round/Oval, yet still smooth and organised rather than the jagged edge
+          of irregular.
         modality: T1W
         plane: sagittal
         location: "humerus_left"
@@ -126,8 +130,8 @@ features:
           Irregular: the border has no consistent geometry -- it zigzags with
           pointed, angular projections into surrounding tissue at random
           intervals. This disordered, unpredictable edge is unlike the single
-          smooth curve of oval, the repeating organised bulges of lobulated, or
-          the sharply-defined concave arc of geographic.
+          smooth curve of Round/Oval, the repeating organised bulges of
+          lobulated, or the sharply-defined concave arc of geographic.
         modality: T1W_C
         plane: sagittal
         location: "vertebrae"
