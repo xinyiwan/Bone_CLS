@@ -39,7 +39,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-CSV_PATH = Path("/output/CLF_performance/batches_1_4/combined_reviewed.csv")
+CSV_PATH = Path("/output/CLF_performance/batches_1_5/combined_reviewed.csv")
 SRC_ROOT = Path("/src/nifti")
 DST_ROOT = Path("/dst/tmp_sorted_data")
 
@@ -51,8 +51,9 @@ EXCLUDED_W = {"Other", "DW", "Localizer", "Zip/JPG", "PD"}
 SOURCE_TO_ADQ = {
     "batch_1": "ADQUISICIONES",
     "batch_2": "ADQUISICIONES_02_03_2026",
-    # "batch_3": "2026-04-24",
-    # "batch_4": "2026-05-13",
+    "batch_3": "2026-04-24",
+    "batch_4": "2026-05-13",
+    "batch_5": "2026-07-23",
 }
 
 

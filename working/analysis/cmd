@@ -24,7 +24,8 @@ docker run --rm -it\
     /data/batch_2/Results/Review_Sequence_Classifier_n.csv \
     /data/batch_3/Results/Review_Sequence_Classifier_filtered.csv \
     /data/batch_4/Results/Review_Sequence_Classifier_filtered.csv \
-    --out-dir /output/CLF_performance/modality_overview_1_to_4
+    /data/batch_5/Results/Review_Sequence_Classifier_filtered.csv \
+    --out-dir /output/CLF_performance/modality_overview_1_to_5
 
 # combine and move filtered data into sorted data 
 docker run --rm -it\
@@ -39,7 +40,9 @@ docker run --rm -it\
    --batch "batch_1=ADQUISICIONES" \
    --batch "batch_2=ADQUISICIONES_02_03_2026" \
    --batch "batch_3=2026-04-24" \
-   --batch "batch_4=2026-05-13" --dry-run 
+   --batch "batch_4=2026-05-13" \
+   --batch "batch_5=2026-07-23" \
+   --dry-run
 
 # check segmentation overview
 docker run --rm -it\
