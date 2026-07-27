@@ -1,7 +1,7 @@
-# MedGemma zero-shot feature classifier (pilot)
+# MedGemma feature classifier (pilot)
 
-Lean zero-shot evaluation of `google/medgemma-1.5-4b-it` on preprocessed 2D bone-
-tumour MRI crops. **No few-shot, no logprobs** — a correct end-to-end run first.
+Lean evaluation of `google/medgemma-1.5-4b-it` on preprocessed 2D bone-tumour MRI
+crops. Zero-shot by default; optional few-shot via held-out labeled exemplars.
 
 **Approach:** one image per inference call. The preprocessing pipeline outputs
 one row per image/plane (flattened — no mixing of orientations). We infer each
@@ -10,26 +10,15 @@ aggregate across images for each feature via majority vote into
 `results_sanity.csv` (per-feature labels). This avoids MedGemma's unvalidated
 multi-image path (see the note atop `run_medgemma.py`).
 
-## Two backends
+## Install
 
-**A. HuggingFace in-process (default, recommended).** Loads the model weights
-directly in Python; needs torch/transformers on the client.
-
-```bash
-pip install --user torch transformers pandas pillow pyyaml
-```
-
-**B. OpenAI-compatible vLLM server.** The model runs in a container behind an
-OpenAI-compatible API; the script is a thin client (only needs openai + pandas +
-pillow on the client side).
+Model weights load in-process with transformers (no server/API backend):
 
 ```bash
-# Build and serve MedGemma (on a machine with NVIDIA driver + nvidia-container-toolkit)
-docker build -f Dockerfile.hf -t medgemma-hf --build-arg HF_TOKEN=hf_xxx .
-docker run --rm -it --gpus 6 medgemma-hf
-# Inside container, run:
-#   python run_medgemma.py --mode infer --backend hf ...
+pip install torch transformers pandas pillow pyyaml
 ```
+
+Or in a container: `docker build -f Dockerfile.hf -t medgemma-hf --build-arg HF_TOKEN=hf_xxx .`
 
 ## Input
 
@@ -45,18 +34,26 @@ assessment JSON (`run.py --labels-dir ...`). Subjects without a label get
 (`eval` and the `correct` column treat `unknown` like a blank).
 
 **Feature config** (`feature_prompts.yaml`):
-Feature vocab + prompt wording — not hardcoded. `build_prompt` is a
-**structural assembler** that supplies the general imaging/clinical context and
-the strict answer format, then slots in each feature's `description` →
-`label_definitions` (optional) → `task` from the YAML. To tune wording for a
-feature, edit the YAML; to change the framing for *all* features, edit the
-general block in `build_prompt`.
+Feature vocab + prompt wording — not hardcoded. Prompt assembly lives in
+`prompts.py`, which builds chat **messages** (not a flat string): one system
+message carries the constant task (role + each feature's `description` →
+`label_definitions` (optional) → `task` → strict answer format from
+`label_options`), and each user turn carries the image + its per-image context
+(modality/plane/location/contour, built by `prompts.build_context`). To tune
+wording for a feature, edit the YAML; to change the framing for *all* features,
+edit `prompts.SYSTEM_ROLE` / `prompts.build_system_text` / `prompts.build_context`.
+
+**Few-shot (optional):** add an `examples:` block to a feature in the YAML (see
+the commented templates there) listing held-out labeled images, then pass
+`--num-few-shot N`. Each example becomes a prior (user image → assistant label)
+turn before the query image; example images are auto-excluded from inference to
+avoid leakage. Default (`--num-few-shot 0`) is zero-shot.
 
 ## Workflow
 
 ```bash
 # 1. Infer per-image (one row per image/plane):
-python run_medgemma.py --mode infer --backend hf \
+python run_medgemma.py --mode infer \
     --metadata ../preprocess/metadata.csv --config feature_prompts.yaml \
     --out inference_results.csv
 
@@ -68,10 +65,17 @@ python run_medgemma.py --mode aggregate \
 python run_medgemma.py --mode eval --results results_sanity.csv --config feature_prompts.yaml
 ```
 
+**Few-shot run** (after adding `examples:` to the YAML — see "Few-shot" above):
+```bash
+python run_medgemma.py --mode infer --num-few-shot 2 \
+    --metadata ../preprocess/metadata.csv --config feature_prompts.yaml \
+    --out inference_fewshot.csv
+```
+
 **Sanity check first** (optional, on a few known-easy cases):
 ```bash
 # Subset your metadata to easy cases, then run steps 1–3 above
-python run_medgemma.py --mode infer --backend hf \
+python run_medgemma.py --mode infer \
     --metadata easy_subset.csv --config feature_prompts.yaml \
     --out inference_results_sanity.csv
 python run_medgemma.py --mode aggregate \

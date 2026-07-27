@@ -5,13 +5,13 @@
 # parse it ships only cu128+ wheels that won't run on this host's NVIDIA driver
 # 550 (CUDA 12.4) without a from-source cu124 build. For a zero-shot eval
 # (one image per call) vLLM's batching buys nothing, so we run the model
-# card's officially supported path -- AutoModelForImageTextToText -- directly,
-# which run_medgemma.py already implements as `--backend hf` (the default).
+# card's officially supported path -- AutoModelForImageTextToText -- directly.
+# This in-process path is the only backend run_medgemma.py implements.
 #
 #   Build:  docker build -f Dockerfile.hf -t medgemma-hf --build-arg HF_TOKEN=hf_xxx .
 #   Run (mount your data + output dir):
 #     docker run --rm -it --gpus 6 -v /path/to/data:/data medgemma-hf \
-#       python run_medgemma.py --mode infer --backend hf \
+#       python run_medgemma.py --mode infer \
 #         --model-id /models/medgemma-1.5-4b-it \
 #         --metadata /data/meta.csv --config feature_prompts.yaml \
 #         --out /data/results.csv
@@ -56,7 +56,7 @@ RUN pip install --no-cache-dir \
     protobuf==5.28.3 \
     "huggingface_hub>=0.26.2"
 
-# Client/eval deps (pandas, pillow, pyyaml; openai unused by --backend hf).
+# Eval/data deps (pandas, pillow, pyyaml).
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 

@@ -1,4 +1,5 @@
 pandas==2.2.0
 pillow>=10.3
 pyyaml==6.0.1
-openai>=1.40
+# Model weights load in-process with transformers -- install torch + transformers
+# separately (heavy, environment-specific): pip install torch transformers

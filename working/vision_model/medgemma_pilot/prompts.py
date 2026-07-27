@@ -76,8 +76,13 @@ def build_context(
 # ---------------------------------------------------------------------------
 # medgemma (generative) — system text + chat messages
 # ---------------------------------------------------------------------------
-SYSTEM_ROLE = "You are an expert musculoskeletal radiologist assessing MRI images of benign, malignant bone tumors and bone tumor micmickers."
-
+SYSTEM_ROLE = ["You are an expert musculoskeletal radiologist assessing MRI images of benign, malignant bone tumors and bone tumor micmickers.",
+               "Maintain strict compliance with these rules:",
+               "1. Use EXACT provided label options for your answer, with no extra words or punctuation.",
+               "2. If a feature is not clear from the image, use the specified default for that field.",
+               "3. NEVER add commentary, explanations, or deviate from the output structure"
+]
+SYSTEM_ROLE = "\n".join(SYSTEM_ROLE)
 
 def build_system_text(feature_cfg: dict) -> str:
     """The CONSTANT task, assembled from the feature config (YAML). This is the
@@ -105,7 +110,7 @@ def build_system_text(feature_cfg: dict) -> str:
     if task:
         parts.append(task)
 
-    parts.append(f"Respond with exactly one word from: {opts}. Output only that word, nothing else.")
+    parts.append(f"Respond with exactly one word from label options: {opts}. Output only that word, nothing else.")
     return " ".join(parts)
 
 
