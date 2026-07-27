@@ -10,75 +10,124 @@
 # code (prompts.build_context), so all feature-specific WORDING lives here and
 # nothing about the vocabulary is hardcoded in the script.
 #
+# WHICH FIELDS DRIVE ZERO-SHOT vs FEW-SHOT:
+#   Zero-shot (default, --num-few-shot 0): only description + label_definitions +
+#   task reach the model. To make the model DISTINGUISH labels better, tune
+#   label_definitions -- make each one say how it differs from the others.
+#   Few-shot (--num-few-shot N>0): the examples below are ALSO prepended, and
+#   each example's `reason` is shown as the exemplar's JSON answer. The `reason`
+#   fields are IGNORED in zero-shot.
+#
 # Per feature:
 #   label_options:      the fixed vocabulary; parsing matches ONLY these (case-insensitive)
 #   description:        one-sentence definition of the feature (goes into the prompt verbatim)
-#   label_definitions:  optional {label: meaning} to disambiguate the vocabulary
+#   label_definitions:  optional {label: meaning}; the main lever for label discrimination
 #   task:               the instruction telling the model what to decide
 #   examples:           optional; few-shot exemplars used only with `--num-few-shot N > 0`.
 #                       Each is a HELD-OUT labeled image, prepended as a
-#                       (user image -> assistant label) turn. Example images are
-#                       auto-excluded from inference (leakage guard), but curate
-#                       them from cases you do NOT score. Fields per example:
+#                       (user image -> assistant {"prediction","reason"}) turn.
+#                       Example images are auto-excluded from inference (leakage
+#                       guard), but curate them from cases you do NOT score. Fields:
 #                         image_path: (required) relative to THIS yaml's dir, or absolute
 #                         label:      (required) exactly one of label_options
-#                         modality/plane/location/has_contour: (optional) context for the example
+#                         reason:     (optional) shown in the exemplar JSON answer
+#                         modality/plane/location/has_contour: (optional) context
 
 features:
   shape:
     label_options: [oval, lobulated, geographic, irregular, exophytic]
-    description: "The overall shape of the lesion's margin/contour as seen on this MRI slice."
+    description: "The overall shape of the lesion's outer margin/contour as seen on this MRI slice."
+    # Each definition says how the label DIFFERS from the others, so the model
+    # can pick exactly one. Discriminating axes: number of convex bulges,
+    # inward (concave) vs outward (convex) curvature, smooth/organised vs jagged,
+    # and whether a focal protrusion sticks out past the main mass.
     label_definitions:
-      oval: "A round, elliptical, or ovoid overall outline. The margin may have minor bumps
-             but the dominant shape is clearly egg-like or circular."
+      oval: >-
+        A single, smooth, continuous convex outline -- egg-like, round, or
+        elliptical. There is exactly ONE unbroken boundary curve; internal bumps
+        or nodules stay inside it and do not push the contour out into separate
+        bulges. Prefer over 'lobulated' when the silhouette reads as one uniform
+        curve rather than several distinct bumps.
 
-      lobulated: "The overall outline consists of multiple, distinct, smoothly curved
-                  bulbous lobes or bumps (like a cluster of grapes). The margin does not
-                  need to be perfectly smooth, but the dominant contour is wavy with
-                  convex projections."
+      lobulated: >-
+        A boundary made of MULTIPLE rounded, convex lobes set side by side (like
+        a cluster of grapes or cauliflower), separated by shallow notches or thin
+        septa where the lobes meet. The contour is wavy but each bulge is smooth.
+        Prefer over 'oval' when there are several distinct outward bulges, and
+        over 'irregular' when those bulges are smooth and organised, not jagged.
 
-      geographic: "The overall outline is defined by a large, sweeping concave arc or
-                   scalloped defect (i.e., the lesion appears to have a 'bite' taken out
-                   of it). This is a broad, smooth curve, not a sharp jagged spike."
+      geographic: >-
+        A sharply-defined, well-demarcated margin whose outline sweeps as a
+        broad, smooth CONCAVE arc or scalloped defect -- as if a bite were taken
+        out of the mass. The cues are a crisp border plus a single large inward
+        (concave) curve. Prefer over 'lobulated' when the margin curves inward
+        with a sharp edge rather than outward into multiple convex bulges, and
+        over 'irregular' when that border is smooth and well-defined, not jagged.
 
-      irregular: "The overall outline is jagged, spiculated, ill-defined, or prominently
-                  angular/pointy. The margin lacks a coherent round, lobular, or concave
-                  pattern. This includes infiltrative or moth-eaten appearances."
+      irregular: >-
+        A disorganised boundary with no repeatable geometry -- jagged,
+        spiculated, angular, ill-defined, infiltrative, or moth-eaten, with
+        pointed projections at random intervals. Choose when the margin fits none
+        of the ordered patterns: not one smooth curve (oval), not organised
+        convex bulges (lobulated), not a single sharp concave arc (geographic).
 
-      exophytic: "The overall outline shows a prominent, outward, mushroom-like or
-                  polypoid convex projection extending from the main lesion mass.
-                  The dominant feature is a focal protrusion beyond the expected
-                  oval/lobulated boundary."
-    task: >
-      Decide which single descriptor best matches the lesion's global margin silhouette.
-      In cases of mixed features, choose the one that best describes the *overall*
-      gestalt of the lesion's shape, not the finest surface detail.
-    # Few-shot examples (used only with --num-few-shot N>0). Uncomment and point
-    # image_path at HELD-OUT labeled crops; label must be one of label_options.
+      exophytic: >-
+        One dominant, focal protrusion that projects OUTWARD beyond the expected
+        lesion boundary -- a mushroom-like or polypoid outgrowth extending from
+        the main mass. Choose when the defining feature is a single bulging or
+        stalk-like projection sticking out past the main contour, rather than the
+        shape of the main mass itself.
+    task: >-
+      Decide which single descriptor best matches the lesion's global margin
+      silhouette (its OUTER outline, not internal signal or texture). In mixed
+      cases, choose the one that best describes the overall gestalt of the shape,
+      not the finest surface detail.
+    # Few-shot examples (used only with --num-few-shot N>0). image_path must point
+    # at HELD-OUT labeled crops; label must be one of label_options. `reason` is
+    # shown as the exemplar's JSON answer, so keep it consistent with the
+    # label_definitions above.
     examples:
       - image_path: /output/test/BONE_AI_100/shape/T1W_coronal_10.png
         label: oval
-        reason: "It's oval-round because its outer edge follows one smooth, continuous curve — the internal nodules stay contained inside that boundary rather than bulging out to break up the contour, so the overall shape stays uniform instead of lobulated.."
+        reason: >-
+          Oval: the outer edge is one smooth, continuous convex curve. The
+          internal nodules stay inside that single boundary instead of bulging
+          out to break the contour, so the outline stays uniform -- not the
+          several side-by-side bulges of lobulated, and not the inward concave
+          arc of geographic.
         modality: T1W
         plane: coronal
         location: "humerus_right"
       - image_path: /output/test/BONE_AI_134/shape/T1W_sagittal_6.png
         label: lobulated
-        reason: "The lesion is lobulated because it's built from several rounded nodules of differing signal intensity clustered tightly together, rather than one uniform mass. 
-        Where these individual nodules meet, they don't blend smoothly — instead, they push against each other with shallow indentations at the contact points and thin septations dividing them internally. 
-        This nodule-within-a-mass architecture (each lobe bulging outward, separated by small dips rather than a continuous smooth curve) is what creates the scalloped, cauliflower-like outer contour seen here"
+        reason: >-
+          Lobulated: the mass is built from several rounded nodules clustered
+          together; where they meet, the boundary dips into shallow notches with
+          thin internal septa, giving a scalloped, cauliflower-like contour of
+          repeated convex bulges -- more than the single smooth curve of oval,
+          yet still smooth and organised rather than the jagged edge of irregular.
         modality: T1W
         plane: sagittal
         location: "humerus_left"
       - image_path: /output/test/BONE_AI_174/shape/T1W_coronal_13.png
         label: geographic
-        reason: "It's geographic rather than oval-round or lobulated because "geographic" describes the margin/zone of transition (a sharply defined border, however the outline is shaped), while "oval-round" and "lobulated" describe the outer contour shape itself — smooth and curved versus multi-bulged. Here the emphasis is on the sharp, well-defined edge, not on whether that edge traces a round curve or a series of lobes."
+        reason: >-
+          Geographic: the margin is sharply defined and well-demarcated, sweeping
+          as a single broad concave arc (a bite out of the mass). The
+          distinguishing cue is the crisp border curving inward -- not the
+          outward convex bulges of lobulated, and not the jagged, ill-defined
+          edge of irregular.
         modality: T1W
         plane: coronal
         location: "humerus_left"
       - image_path: /output/test/BONE_AI_462/shape/T1W_C_sagittal_14.png
         label: irregular
-        reason: "This lesion is irregular because its border has no consistent geometry — the edge zigzags unpredictably with pointed, angular projections extending into surrounding tissue at random intervals, unlike the smooth single curve of oval-round, the organized repeating bulges of lobulated, or the sharply defined single border of geographic; here the margin is disorganized and unpredictable rather than following any repeatable pattern."
+        reason: >-
+          Irregular: the border has no consistent geometry -- it zigzags with
+          pointed, angular projections into surrounding tissue at random
+          intervals. This disordered, unpredictable edge is unlike the single
+          smooth curve of oval, the repeating organised bulges of lobulated, or
+          the sharply-defined concave arc of geographic.
         modality: T1W_C
         plane: sagittal
         location: "vertebrae"
