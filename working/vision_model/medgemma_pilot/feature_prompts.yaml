@@ -47,44 +47,34 @@ features:
     # and whether a focal protrusion sticks out past the main mass.
     label_definitions:
       "Round/Oval": >-
-        A single, smooth, continuous convex outline -- egg-like, round, or
-        elliptical. There are internal bumps or nodules stay inside it and 
-        do not push the contour out into separate bulges. Prefer over 'lobulated' 
-        when the outline reads as one uniform curve rather than several distinct bumps.
+        Round/Oval — the outer boundary is one smooth, continuous convex curve; 
+        the internal nodular foci sit inside that envelope without pushing out to 
+        create separate bulges reaching the margin.
 
       lobulated: >-
-        A boundary made of MULTIPLE rounded, convex lobes set side by side (like
-        a cluster of grapes or cauliflower), separated by shallow notches or thin
-        septa where the lobes meet. The contour is wavy but each bulge is smooth.
-        Prefer over 'Round/Oval' when there are several distinct outward bulges,
-        and over 'irregular' when those bulges are smooth and organised, not jagged.
+        Lobulated — the mass is made of several rounded convex lobes packed side by side, 
+        each bulge smooth on its own but separated by shallow notches where adjacent 
+        lobes meet, giving the cauliflower-like outline rather than one single curve.
 
       geographic: >-
-        A sharply-defined, well-demarcated margin whose outline sweeps as a
-        broad, smooth CONCAVE arc or scalloped defect -- as if a bite were taken
-        out of the mass. The cues are a crisp border plus a single large inward
-        (concave) curve. Prefer over 'lobulated' when the margin curves inward
-        with a sharp edge rather than outward into multiple convex bulges, and
-        over 'irregular' when that border is smooth and well-defined, not jagged.
+        Geographic — the margin sweeps as one broad, sharply demarcated concave arc, 
+        like a scalloped bite taken out of the bone, rather than bulging outward or 
+        breaking into jagged segments.
 
       irregular: >-
-        A disorganised boundary with no repeatable geometry -- jagged,
-        spiculated, angular, ill-defined, infiltrative, or moth-eaten, with
-        pointed projections at random intervals. Choose when the margin fits none
-        of the ordered patterns: not one smooth curve (Round/Oval), not organised
-        convex bulges (lobulated), not a single sharp concave arc (geographic).
+        Irregular — the margin has no repeatable geometry: 
+        jagged, angular, ill-defined projections scattered unpredictably, 
+        fitting none of the smooth-curve, lobed, or single-concave-arc patterns.
 
       exophytic: >-
-        One dominant, focal protrusion that projects OUTWARD beyond the expected
-        lesion boundary -- a mushroom-like or polypoid outgrowth extending from
-        the main mass. Choose when the defining feature is a single bulging or
-        stalk-like projection sticking out past the main contour, rather than the
-        shape of the main mass itself.
+        One dominant focal protrusion projecting OUTWARD past the main boundary
+        (mushroom-like / polypoid). Defined by that single sticking-out
+        projection, not the shape of the main mass.
+        
     task: >-
-      Decide which single descriptor best matches the lesion's global margin
-      silhouette (its OUTER outline, not internal signal or texture). In mixed
-      cases, choose the one that best describes the overall gestalt of the shape,
-      not the finest surface detail.
+      Pick the single descriptor best matching the lesion's OUTER margin
+      silhouette (not internal signal/texture). If mixed, judge the overall
+      gestalt, not fine surface detail.
     # Few-shot examples (used only with --num-few-shot N>0). image_path must point
     # at HELD-OUT labeled crops; label must be one of label_options. `reason` is
     # shown as the exemplar's JSON answer, so keep it consistent with the

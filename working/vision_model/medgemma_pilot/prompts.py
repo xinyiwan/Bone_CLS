@@ -53,35 +53,24 @@ def build_context(
         other_planes:  other orientations of the SAME lesion assessed separately
         has_contour:   True when a radiologist red-contour overlay is being fed
     """
-    modality = (modality or "").strip()
+    modality = (modality or "").strip() or "MRI"
     plane = (plane or "").strip() or "unknown-plane"
 
-    parts: List[str] = []
-    loc = f", from a bone lesion located in the {location}" if location else ", from a bone lesion"
-    parts.append(
-        f"This is a {modality} MRI image in the {plane} plane{loc}. The image is cropped to a "
-        f"bounding box around the lesion (with a small margin), so the lesion fills most of the "
-        f"frame. It is the {plane} slice with the LARGEST cross-sectional area of the lesion;"
-    )
+    loc = f" in the {location}" if location else ""
+    parts: List[str] = [
+        f"{modality} MRI, {plane} plane; a bone lesion{loc}, cropped to the lesion "
+        f"(the largest cross-sectional {plane} slice)."
+    ]
     if if_example:
-        parts.append(
-            "This is a few-shot example image, used to illustrate the task."
-        )
-    else:   
-        parts.append(
-            "This is a query image to be assessed. Make your assessment based on this slice. "
-        )
-    
+        parts.append("(Worked example.)")
     if other_planes:
-        others = ", ".join(other_planes)
         parts.append(
-            f"Its largest-area slice in other orientations ({others}) is assessed separately in "
-            f"other images; judge only the image shown here."
+            f"Other orientations ({', '.join(other_planes)}) are assessed separately; "
+            "judge only this image."
         )
     if has_contour:
         parts.append(
-            "A thin RED contour drawn on the image marks the lesion boundary segmented by a "
-            "radiologist. Use it to locate the lesion; assess the region it encloses."
+            "A thin RED contour marks the lesion boundary; assess the region it encloses."
         )
     return " ".join(parts)
 
@@ -89,13 +78,20 @@ def build_context(
 # ---------------------------------------------------------------------------
 # medgemma (generative) — system text + chat messages
 # ---------------------------------------------------------------------------
-SYSTEM_ROLE = ["You are an expert musculoskeletal radiologist assessing MRI images of benign, malignant bone tumors and bone tumor micmickers.",
-               "Maintain strict compliance with these rules:",
-               "1. Use EXACT  label options and structured output for your answer.",
-               "2. If a feature is not clear from the image, use the specified default for that field.",
-               "3. NEVER deviate from the output structure"
-]
-SYSTEM_ROLE = "\n".join(SYSTEM_ROLE)
+# Role + the one non-format rule. The output-structure rules that used to live
+# here are dropped -- the "# OUTPUT FORMAT" section states them once, in full.
+SYSTEM_ROLE = (
+    "You are an expert musculoskeletal radiologist assessing MRI images of benign "
+    "and malignant bone tumors and bone-tumor mimickers. If the feature is not "
+    "clearly assessable from the image, choose the closest label and note the "
+    "uncertainty in the reason."
+)
+
+# Lead-ins for few-shot: announce the worked examples, then mark the real query,
+# so the model doesn't read the examples as part of one run-on instruction.
+EXAMPLES_LEAD = ("The following {n} case(s) are WORKED EXAMPLES with the correct answer, "
+                 "shown to illustrate the task. Study them, then classify the final image.")
+QUERY_LEAD = "Now classify THIS image (the actual query):"
 
 def build_system_text(feature_cfg: dict) -> str:
     """The CONSTANT task, assembled from the feature config (YAML). This is the
@@ -111,29 +107,30 @@ def build_system_text(feature_cfg: dict) -> str:
         + answer format     <- from feature_cfg["label_options"]
     """
     opts = ", ".join(feature_cfg["label_options"])
-    parts: List[str] = [SYSTEM_ROLE]
+    sections: List[str] = [SYSTEM_ROLE]
 
     description = (feature_cfg.get("description") or feature_cfg.get("prompt_description") or "").strip()
     if description:
-        parts.append(description)
+        sections.append("# FEATURE\n" + description)
     defs = feature_cfg.get("label_definitions")
     if defs:
-        parts.append("Label meanings -- " + "; ".join(f"{k}: {v}" for k, v in defs.items()) + ".")
+        sections.append("# LABEL DEFINITIONS\n" + "\n".join(f"- {k}: {v}" for k, v in defs.items()))
     task = (feature_cfg.get("task") or "").strip()
     if task:
-        parts.append(task)
+        sections.append("# TASK\n" + task)
 
-    # Strict structured-output constraint. The JSON shape is CONSTANT across
-    # features (only the allowed prediction values vary), so it lives here, built
-    # from label_options -- stating it explicitly is what makes every image's
-    # output consistent and forces the reason field.
-    parts.append(
-        "Respond with ONLY one JSON object and nothing else -- no markdown, no code "
-        "fences, no text before or after. Use exactly this structure: "
-        '{"prediction": "<LABEL>", "reason": "<one short sentence>"} '
-        f"where <LABEL> is EXACTLY one of: {opts}."
+    # Strict structured-output constraint (constant across features; only the
+    # allowed values vary). Stating it explicitly keeps output consistent and
+    # forces the reason field.
+    sections.append(
+        "# OUTPUT FORMAT\n"
+        'Reply with ONLY this JSON, nothing else (no markdown/fences):\n'
+        '{"prediction": "<LABEL>", "reason": "<one short sentence>"}\n'
+        f"<LABEL> must be exactly one of: {opts}."
     )
-    return " ".join(parts)
+    # Blank line between sections so the model (and you, in the logged input_text)
+    # can tell role / feature / definitions / task / format apart.
+    return "\n\n".join(sections)
 
 
 def _user_turn(image, context: str) -> dict:
@@ -166,12 +163,20 @@ def build_medgemma_messages(
     messages: List[dict] = [
         {"role": "system", "content": [{"type": "text", "text": build_system_text(feature_cfg)}]}
     ]
-    for ex in few_shot or []:
-        messages.append(_user_turn(ex["image"], ex["context"]))
+    few = few_shot or []
+    for i, ex in enumerate(few):
+        # Announce the block on the first example (prepended to its user turn so we
+        # don't add a second consecutive user message and break role alternation).
+        ctx = ex["context"]
+        if i == 0:
+            ctx = EXAMPLES_LEAD.format(n=len(few)) + "\n\n" + ctx
+        messages.append(_user_turn(ex["image"], ctx))
         # The exemplar answer must be the SAME JSON structure we ask the model to
         # produce, or the examples teach a different format than the system text.
         answer = json.dumps({"prediction": ex["label"], "reason": ex.get("reason", "")})
         messages.append({"role": "assistant", "content": [{"type": "text", "text": answer}]})
+    # Mark the real query so it isn't mistaken for another example.
+    query_context = (QUERY_LEAD + "\n\n" + query_context) if few else query_context
     messages.append(_user_turn(query_image, query_context))
     return messages
 
