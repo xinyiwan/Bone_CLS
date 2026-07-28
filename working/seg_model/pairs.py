@@ -12,7 +12,6 @@ nnU-Net converter, so the two stay consistent.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import Optional
 
@@ -41,23 +40,13 @@ def _strip_seg_suffix(name: str):
             return name[: -len(suf)]
     return None
 
-# Fallback sequence parsing from the scan-folder name (used only when no
-# ground-truth table is supplied). Order matters: fat-sat/contrast first.
-SEQ_PATTERNS = [
-    ("T1W_FS_C", re.compile(r"T1.*(FS|FAT).*(C|GD|CE|POST)|(C|GD|POST).*T1.*(FS|FAT)", re.I)),
-    ("T1W_C",    re.compile(r"T1.*(C|GD|CE|POST)|(C|GD|POST).*T1", re.I)),
-    ("T1W_FS",   re.compile(r"T1.*(FS|FAT|STIR)", re.I)),
-    ("T2W_FS",   re.compile(r"T2.*(FS|FAT)|STIR|DPFS|PDFS|PD.*FS", re.I)),
-    ("T1W",      re.compile(r"T1", re.I)),
-    ("T2W",      re.compile(r"T2|PD|DP", re.I)),
-    ("DWI",      re.compile(r"DWI|DIFF|ADC", re.I)),
-]
 
-PLANE_PATTERNS = [
-    ("sagittal", re.compile(r"SAG", re.I)),
-    ("coronal",  re.compile(r"COR", re.I)),
-    ("axial",    re.compile(r"AX|TRA|TRANS", re.I)),
-]
+class MissingSequence(KeyError):
+    """Raised when a (subject, scan) has no entry in the sequence table.
+
+    Sequence types must come from the reviewed table -- there is no filename
+    fallback -- so callers decide whether to skip the case or flag it.
+    """
 
 
 def plane_from_affine(affine: np.ndarray, zooms) -> str:
@@ -79,36 +68,25 @@ def plane_from_affine(affine: np.ndarray, zooms) -> str:
     return "unknown"
 
 
-def sequence_from_name(scan_name: str) -> str:
-    for label, pat in SEQ_PATTERNS:
-        if pat.search(scan_name):
-            return label
-    return "unknown"
+def resolve_sequence(scan: str, subject: str, seq_lookup: dict) -> str:
+    """Sequence label from the reviewed table, keyed by (subject, scan).
 
-
-def plane_from_name(scan_name: str) -> str:
-    for label, pat in PLANE_PATTERNS:
-        if pat.search(scan_name):
-            return label
-    return "unknown"
-
-
-def resolve_sequence(scan: str, subject: str,
-                     seq_lookup: Optional[dict]) -> str:
-    """Sequence label: reviewed table first (keyed by subject+scan), else filename."""
-    if seq_lookup is not None:
-        hit = seq_lookup.get((subject, scan))
-        if hit and hit != "unknown":
-            return hit
-    return sequence_from_name(scan)
+    The table is the only source of truth: scan names do not reliably encode the
+    weighting / fat-sat / contrast state, so there is no filename fallback.
+    Raises MissingSequence if the pair is absent or its label is 'unknown'.
+    """
+    hit = seq_lookup.get((subject, scan))
+    if not hit or hit == "unknown":
+        raise MissingSequence(f"no sequence-table entry for ({subject}, {scan})")
+    return hit
 
 
 def load_plane_table(path: Path) -> dict:
     """Build {(subject, scan): plane} from an analyze_dataset.py per_scan.csv.
 
     Uses the 'plane' column, which analyze_dataset.py derives from the affine
-    via plane_from_affine -- far more reliable than filename pattern matching
-    (scan names don't reliably encode SAG/COR/AX).
+    via plane_from_affine -- scan names don't reliably encode SAG/COR/AX, so they
+    are never used as a source.
     """
     df = pd.read_csv(path, low_memory=False)
     need = ["subject", "scan", "plane"]
@@ -125,16 +103,14 @@ def load_plane_table(path: Path) -> dict:
 def resolve_plane(scan: str, subject: str, plane_lookup: Optional[dict],
                   affine: Optional[np.ndarray] = None, zooms=None) -> str:
     """Plane label: per_scan.csv table first (affine-derived, reliable), else
-    computed directly from the image affine, else filename pattern (last resort)."""
+    computed directly from the image affine, else 'unknown'."""
     if plane_lookup is not None:
         hit = plane_lookup.get((subject, scan))
         if hit and hit != "unknown":
             return hit
     if affine is not None and zooms is not None:
-        plane = plane_from_affine(affine, zooms)
-        if plane != "unknown":
-            return plane
-    return plane_from_name(scan)
+        return plane_from_affine(affine, zooms)
+    return "unknown"
 
 
 def resolve_seg(session_dir: Path, scan: str):

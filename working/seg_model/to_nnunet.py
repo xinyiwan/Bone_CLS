@@ -18,11 +18,11 @@ Output (nnU-Net v2 raw layout):
         splits_final.json                (subject-level K-fold; copy to preprocessed)
         case_metadata.csv                (case -> subject, sequence, plane, ...)
 
-Usage:
+Usage (--seq-table is REQUIRED: sequence types come only from the reviewed
+table, never from scan names; cases missing from it are skipped):
     python to_nnunet.py <root> --out $nnUNet_raw --dataset-id 501 \
-        --dataset-name BoneTumour
-    # with reviewed sequence types (clf_perf/combined_reviewed.csv) and
-    # affine-derived plane labels (analyze_dataset.py's per_scan.csv):
+        --dataset-name BoneTumour --seq-table clf_perf/combined_reviewed.csv
+    # plus affine-derived plane labels (analyze_dataset.py's per_scan.csv):
     python to_nnunet.py <root> --out $nnUNet_raw --dataset-id 501 \
         --dataset-name BoneTumour --seq-table clf_perf/combined_reviewed.csv \
         --plane-table analysis_out/per_scan.csv
@@ -46,8 +46,8 @@ import numpy as np
 import nibabel as nib
 from nibabel.processing import resample_from_to
 
-from pairs import (find_pairs, load_plane_table, load_sequence_table,
-                   resolve_plane, resolve_sequence)
+from pairs import (MissingSequence, find_pairs, load_plane_table,
+                   load_sequence_table, resolve_plane, resolve_sequence)
 
 
 def sanitize(s: str) -> str:
@@ -119,18 +119,17 @@ def main() -> None:
     ap.add_argument("--dataset-name", required=True)
     ap.add_argument("--folds", type=int, default=5)
     ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--seq-table", type=Path, default=None,
-                    help="clf_perf/combined_reviewed.csv (for true sequence type)")
+    ap.add_argument("--seq-table", type=Path, required=True,
+                    help="clf_perf/combined_reviewed.csv -- the only source of "
+                         "sequence types (required; no filename fallback)")
     ap.add_argument("--plane-table", type=Path, default=None,
                     help="analyze_dataset.py per_scan.csv (for affine-derived plane)")
     ap.add_argument("--exclude-table", type=Path, default=None,
                     help="CSV of subjects/scans to drop (e.g. lesion < 10mm)")
     args = ap.parse_args()
 
-    seq_lookup = None
-    if args.seq_table:
-        seq_lookup = load_sequence_table(args.seq_table)
-        print(f"loaded sequence table: {len(seq_lookup)} entries")
+    seq_lookup = load_sequence_table(args.seq_table)
+    print(f"loaded sequence table: {len(seq_lookup)} entries")
 
     plane_lookup = None
     if args.plane_table:
@@ -149,7 +148,7 @@ def main() -> None:
 
     meta = []                       # per-case metadata rows
     seen = {}                       # case_id -> seg_path (collision guard)
-    n_seg = n_missing = n_empty = n_excluded = 0
+    n_seg = n_missing = n_empty = n_excluded = n_no_seq = 0
 
     for subject, session, scan, image_path, seg_path, seg_source in find_pairs(args.root):
         n_seg += 1
@@ -169,6 +168,14 @@ def main() -> None:
             print(f"  [WARN] duplicate case id {case_id}; skipping {seg_path}")
             continue
 
+        # Sequence type is mandatory and comes only from the reviewed table.
+        try:
+            seq = resolve_sequence(scan, subject, seq_lookup)
+        except MissingSequence as e:
+            n_no_seq += 1
+            print(f"  [WARN] {e}; skipping {seg_path}")
+            continue
+
         try:
             label = load_binarised_label(seg_path, image_path)
         except ValueError as e:
@@ -185,7 +192,6 @@ def main() -> None:
         shutil.copyfile(image_path, images_dir / f"{case_id}_0000.nii.gz")
         nib.save(label, str(labels_dir / f"{case_id}.nii.gz"))
 
-        seq = resolve_sequence(scan, subject, seq_lookup)
         img_hdr = nib.load(str(image_path))
         plane = resolve_plane(scan, subject, plane_lookup,
                               img_hdr.affine, img_hdr.header.get_zooms()[:3])
@@ -200,7 +206,8 @@ def main() -> None:
     n = len(meta)
     from collections import Counter
     print(f"\nfound {n_seg} masks; {n_excluded} excluded; {n_missing} no image; "
-          f"{n_empty} empty; {n} cases written to {ds_dir}")
+          f"{n_no_seq} no sequence-table entry; {n_empty} empty; "
+          f"{n} cases written to {ds_dir}")
     print("mask source:", dict(Counter(m["seg_source"] for m in meta)))
 
     # dataset.json (nnU-Net v2 schema)

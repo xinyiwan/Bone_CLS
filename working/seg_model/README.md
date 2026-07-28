@@ -19,13 +19,15 @@ its `images.nii.gz`; unsegmented images are never visited.
 ## Steps
 
 1. **`analyze_dataset.py` — distribution analysis (do this first).**
-   Per labelled scan: plane (from affine), sequence (table or filename), per-axis
+   Per labelled scan: plane (from affine), sequence (reviewed table only), per-axis
    size/spacing, intensity stats (whole-image + in-lesion), tumour volume, label
    content. Writes `per_scan.csv`, `summary.txt`, and `plots/`.
 
+   `--seq-table` is **required** — sequence types come from the reviewed table
+   (composite of `Clase W/FS/C Final`), never from scan names. Scans missing from
+   the table are reported as `unmapped`.
+
    ```bash
-   python analyze_dataset.py <root> --out-dir analysis_out
-   # with reviewed sequence types (composite of Clase W/FS/C Final):
    python analyze_dataset.py <root> --out-dir analysis_out \
        --seq-table ../../clf_perf/combined_reviewed.csv
    ```
@@ -36,11 +38,14 @@ its `images.nii.gz`; unsegmented images are never visited.
    `case_metadata.csv` (case→subject/sequence/plane), and a **subject-level
    GroupKFold** `splits_final.json`.
 
+   `--seq-table` is **required**; cases with no entry in it are skipped (and
+   counted in the summary) rather than guessed from the scan name.
+
    ```bash
    export nnUNet_raw=... nnUNet_preprocessed=... nnUNet_results=...
    python to_nnunet.py <root> --out $nnUNet_raw --dataset-id 501 \
        --dataset-name BoneTumour \
-       --seq-table ../../clf_perf/combined_reviewed.csv   # true sequence types
+       --seq-table ../../clf_perf/combined_reviewed.csv   # required
    ```
 
 3. **Train nnU-Net** — fingerprint + preprocess (auto normalisation/spacing/patch),

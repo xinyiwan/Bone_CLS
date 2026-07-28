@@ -17,8 +17,8 @@ to its image. For every (mask, image) pair it records the
 geometry and intensity facts that drive segmentation preprocessing:
 
   * acquisition plane   (sagittal / coronal / axial) -- derived from the affine
-  * sequence type       (T1W / T2W / ... ) -- from a ground-truth table if given,
-                        else parsed from the scan-folder name
+  * sequence type       (T1W / T2W / ... ) -- from the reviewed sequence table
+                        only (--seq-table, required); never from the scan name
   * shape per axis      (nx, ny, nz)
   * spacing per axis    (mm) + slice thickness (largest-spacing axis)
   * intensity stats     whole-image and within the segmentation foreground
@@ -39,10 +39,8 @@ These numbers tell you, before training:
   - the intensity range (-> normalisation scheme; MRI has no fixed scale).
 
 Usage:
-    python analyze_dataset.py <root> --out-dir analysis_out
     python analyze_dataset.py <root> --out-dir analysis_out \
-        --seq-table sequences.csv --seq-subject-col Paciente \
-        --seq-series-col Serie --seq-class-col "Clase W Final"
+        --seq-table clf_perf/combined_reviewed.csv
 """
 
 from __future__ import annotations
@@ -56,8 +54,8 @@ import pandas as pd
 
 import nibabel as nib
 
-from pairs import (find_pairs, load_sequence_table, plane_from_affine,
-                   plane_from_name, resolve_sequence)
+from pairs import (MissingSequence, find_pairs, load_sequence_table,
+                   plane_from_affine, resolve_sequence)
 
 
 # ---------------------------------------------------------------------------
@@ -65,7 +63,7 @@ from pairs import (find_pairs, load_sequence_table, plane_from_affine,
 # ---------------------------------------------------------------------------
 
 def analyse_pair(image_path: Path, seg_path: Path,
-                 seq_lookup: Optional[dict], subject: str, scan: str) -> dict:
+                 seq_lookup: dict, subject: str, scan: str) -> dict:
     img = nib.load(str(image_path))
     arr = img.get_fdata(dtype=np.float32)
     zooms = img.header.get_zooms()[:3]
@@ -81,7 +79,12 @@ def analyse_pair(image_path: Path, seg_path: Path,
     # intensity within foreground (what normalisation must handle)
     fg_vals = arr[fg] if n_fg > 0 else np.array([0.0], dtype=np.float32)
 
-    seq = resolve_sequence(scan, subject, seq_lookup)
+    # Sequence type comes only from the reviewed table; scans absent from it are
+    # reported as 'unmapped' (the row is kept so the plane table stays complete).
+    try:
+        seq = resolve_sequence(scan, subject, seq_lookup)
+    except MissingSequence:
+        seq = "unmapped"
     plane = plane_from_affine(affine, zooms)
 
     return dict(
@@ -90,7 +93,6 @@ def analyse_pair(image_path: Path, seg_path: Path,
         sz=round(float(zooms[2]), 4),
         slice_thickness=round(float(max(zooms)), 4),
         plane=plane,
-        plane_name=plane_from_name(scan),
         sequence=seq,
         img_min=float(arr.min()), img_max=float(arr.max()),
         img_mean=float(arr.mean()), img_p99=float(np.percentile(arr, 99)),
@@ -191,16 +193,15 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("root", type=Path, help="dataset root")
     ap.add_argument("--out-dir", type=Path, default=Path("analysis_out"))
-    ap.add_argument("--seq-table", type=Path, default=None,
-                    help="clf_perf/combined_reviewed.csv (for true sequence type)")
+    ap.add_argument("--seq-table", type=Path, required=True,
+                    help="clf_perf/combined_reviewed.csv -- the only source of "
+                         "sequence types (required; no filename fallback)")
     args = ap.parse_args()
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
-    seq_lookup = None
-    if args.seq_table:
-        seq_lookup = load_sequence_table(args.seq_table)
-        print(f"loaded sequence table: {len(seq_lookup)} entries")
+    seq_lookup = load_sequence_table(args.seq_table)
+    print(f"loaded sequence table: {len(seq_lookup)} entries")
 
     rows = []
     n_segs = n_missing_img = 0
