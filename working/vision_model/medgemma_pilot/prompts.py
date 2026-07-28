@@ -173,6 +173,22 @@ def build_medgemma_messages(
     return messages
 
 
+def messages_to_text(messages: List[dict]) -> str:
+    """Render a chat message list as readable text -- the exact input fed to the
+    model, with each image shown as an '<image>' placeholder. Used to log what
+    was paired with each query image (system task + few-shot turns + context)."""
+    lines: List[str] = []
+    for m in messages:
+        parts = []
+        for item in m.get("content", []):
+            if item.get("type") == "image":
+                parts.append("<image>")
+            else:
+                parts.append(item.get("text", ""))
+        lines.append(f"[{m.get('role', '?')}] " + " ".join(p for p in parts if p))
+    return "\n".join(lines)
+
+
 def resolve_few_shot(
     feature_cfg: dict,
     base_dir: Path,

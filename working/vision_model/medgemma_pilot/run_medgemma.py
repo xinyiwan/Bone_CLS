@@ -63,7 +63,8 @@ log = logging.getLogger("medgemma")
 
 INFERENCE_FIELDS = [
     "case_id", "feature_name", "plane", "modality", "image_path",
-    "raw_output", "parsed_label", "reason", "ground_truth_label", "correct",
+    "input_text", "raw_output", "parsed_label", "reason",
+    "ground_truth_label", "correct",
 ]
 
 RESULT_FIELDS = [
@@ -418,6 +419,7 @@ def infer(
             messages = prompts.build_medgemma_messages(
                 fcfg, image, context, few_shot=few_shot_by_feature.get(feature),
             )
+            input_text = prompts.messages_to_text(messages)  # exact text fed to the model
             raw = generate(messages)
             label, reason = parse_answer(raw, fcfg["label_options"])
             if label == "PARSE_FAILED":
@@ -436,6 +438,7 @@ def infer(
                 "plane": plane,
                 "modality": modality,
                 "image_path": img_path_str,
+                "input_text": input_text,
                 "raw_output": raw,
                 "parsed_label": label,
                 "reason": reason,
