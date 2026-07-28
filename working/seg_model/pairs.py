@@ -175,8 +175,10 @@ def _composite_sequence(w: str, fs: str, c: str) -> str:
 
         T1W -> T1W_{FS|nFS}_{CE|nCE}
         T2W -> T2W_{FS|nFS}
+        PD  -> PD_{FS|nFS}          (PD is never contrast-enhanced in this table)
         DW  -> DWI
-        else (Other, T2*, PD, ...) -> the raw W value
+        else (Other, T2*, Localizer, ...) -> the raw W value; T2* is always
+             non-FS / non-CE, so it needs no suffix
     'Y-STIR' counts as fat-sat; anything not 'Y' counts as non-FS / non-CE.
     """
     w, fs, c = (str(x).strip() for x in (w, fs, c))
@@ -186,6 +188,8 @@ def _composite_sequence(w: str, fs: str, c: str) -> str:
         return f"T1W_{'FS' if is_fs else 'nFS'}_{'CE' if is_ce else 'nCE'}"
     if w == "T2W":
         return f"T2W_{'FS' if is_fs else 'nFS'}"
+    if w == "PD":
+        return f"PD_{'FS' if is_fs else 'nFS'}"
     if w in ("DW", "DWI"):
         return "DWI"
     return w or "unknown"
