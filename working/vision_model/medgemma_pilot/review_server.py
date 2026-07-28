@@ -45,7 +45,7 @@ def load(results_csv: Path) -> None:
     for _, r in df.iterrows():
         row = {k: r.get(k, "") for k in (
             "plane", "modality", "image_path", "parsed_label",
-            "reason", "ground_truth_label", "correct", "raw_output")}
+            "reason", "ground_truth_label", "correct", "input_text", "raw_output")}
         DATA.setdefault(r["case_id"], {}).setdefault(r["feature_name"], []).append(row)
         if row["image_path"]:
             IMAGE_WHITELIST.add(row["image_path"])
@@ -93,6 +93,14 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8"><title>{title}</title
  .bad {{ background: #fce8e6; color: #c5221f; }}
  .neutral {{ background: #eef; color: #333; }}
  .fail {{ background: #fff3cd; color: #856404; }}
+ .summary {{ background: #f6f8fa; border: 1px solid #ddd; border-radius: 8px; padding: 12px 18px; margin-bottom: 20px; }}
+ .summary h1 {{ margin: 0 0 4px; }}
+ .statgrid {{ display: flex; gap: 40px; flex-wrap: wrap; margin-top: 8px; }}
+ .statgrid h3 {{ font-size: 13px; margin: 0 0 4px; color: #666; text-transform: uppercase; letter-spacing: .03em; }}
+ details.raw {{ margin-top: 6px; }}
+ details.raw summary {{ cursor: pointer; font-size: 12px; color: #2557a7; }}
+ details.raw pre {{ white-space: pre-wrap; word-break: break-word; font-size: 11px; line-height: 1.4;
+                   max-height: 320px; overflow: auto; background: #f7f7f7; padding: 8px; border-radius: 4px; margin: 6px 0 0; }}
 </style></head><body>{body}</body></html>"""
 
 
@@ -113,6 +121,56 @@ def pred_badge(pred: str, gt: str) -> str:
     return f'<span class="badge {cls}">{esc(pred)}</span>'
 
 
+def _is_correct(r: dict) -> bool:
+    return r["correct"].strip().lower() in {"true", "1"}
+
+
+def acc_str(correct: int, scored: int) -> str:
+    return f"{correct}/{scored} ({correct / scored * 100:.0f}%)" if scored else "—"
+
+
+def compute_stats():
+    """Overall + per-orientation + per-modality (correct, scored) over every
+    image that has a known ground truth."""
+    overall = [0, 0]
+    by_plane: Dict[str, list] = {}
+    by_modality: Dict[str, list] = {}
+    for feats in DATA.values():
+        for frows in feats.values():
+            for r in frows:
+                if not has_gt(r["ground_truth_label"]):
+                    continue
+                c = 1 if _is_correct(r) else 0
+                overall[0] += c
+                overall[1] += 1
+                for key, table in ((r["plane"] or "?", by_plane), (r["modality"] or "?", by_modality)):
+                    table.setdefault(key, [0, 0])
+                    table[key][0] += c
+                    table[key][1] += 1
+    return overall, by_plane, by_modality
+
+
+def _stat_table(title: str, table: Dict[str, list]) -> str:
+    rows = "".join(
+        f"<tr><td>{esc(k)}</td><td>{acc_str(c, n)}</td></tr>"
+        for k, (c, n) in sorted(table.items())
+    )
+    return f"<div><h3>by {title}</h3><table>{rows}</table></div>"
+
+
+def summary_html() -> str:
+    overall, by_plane, by_modality = compute_stats()
+    return (
+        '<div class="summary">'
+        f"<h1>Overall accuracy: {acc_str(*overall)}</h1>"
+        '<span class="meta">correct / scored images (only images with a known ground truth)</span>'
+        '<div class="statgrid">'
+        + _stat_table("orientation", by_plane)
+        + _stat_table("modality", by_modality)
+        + "</div></div>"
+    )
+
+
 def index_html() -> str:
     rows = []
     for case_id in sorted(DATA):
@@ -123,16 +181,16 @@ def index_html() -> str:
             for r in frows:
                 if has_gt(r["ground_truth_label"]):
                     n_scored += 1
-                    if r["correct"].strip().lower() in {"true", "1"}:
+                    if _is_correct(r):
                         n_correct += 1
-        acc = f"{n_correct}/{n_scored}" if n_scored else "—"
+        acc = acc_str(n_correct, n_scored) if n_scored else "—"
         rows.append(
             f'<tr><td><a href="/subject?id={urllib.parse.quote(case_id)}">{esc(case_id)}</a></td>'
             f"<td>{len(feats)}</td><td>{n_img}</td><td>{acc}</td></tr>"
         )
     body = (
-        f"<h1>MedGemma review — {len(DATA)} subject(s)</h1>"
-        "<p>Per-image correct / scored shown where ground truth is known.</p>"
+        summary_html()
+        + f"<h1>MedGemma review — {len(DATA)} subject(s)</h1>"
         "<table><tr><th>subject</th><th>features</th><th>images</th><th>correct/scored</th></tr>"
         + "".join(rows) + "</table>"
     )
@@ -154,12 +212,24 @@ def subject_html(case_id: str) -> str:
         cards = []
         for r in rows:
             reason = esc(r["reason"]) if r["reason"] else '<i style="color:#999">(no reason)</i>'
+            inp = r.get("input_text", "")
+            input_block = (
+                f"<details class='raw'><summary>input / prompt</summary>"
+                f"<pre>{esc(inp)}</pre></details>" if inp else ""
+            )
+            raw = r.get("raw_output", "")
+            raw_block = (
+                f"<details class='raw'><summary>thinking / raw output</summary>"
+                f"<pre>{esc(raw)}</pre></details>" if raw else ""
+            )
             cards.append(
                 '<div class="card">'
                 f'<img src="{img_url(r["image_path"])}" loading="lazy">'
                 f'<div class="meta">{esc(r["modality"])} · {esc(r["plane"])}</div>'
                 f'<div>prediction: {pred_badge(r["parsed_label"], gt)}</div>'
                 f'<div class="reason">{reason}</div>'
+                f"{input_block}"
+                f"{raw_block}"
                 "</div>"
             )
         sections.append(header + '<div class="grid">' + "".join(cards) + "</div>")
