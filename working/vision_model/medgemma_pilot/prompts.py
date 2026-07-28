@@ -56,21 +56,27 @@ def build_context(
     modality = (modality or "").strip() or "MRI"
     plane = (plane or "").strip() or "unknown-plane"
 
-    loc = f" in the {location}" if location else ""
-    parts: List[str] = [
-        f"{modality} MRI, {plane} plane; a bone lesion{loc}, cropped to the lesion "
-        f"(the largest cross-sectional {plane} slice)."
-    ]
-    if if_example:
-        parts.append("(Worked example.)")
-    if other_planes:
+    loc = f", of a bone lesion in the {location}" if location else ", of a bone lesion"
+    parts: List[str] = [f"This is a {modality} MRI in the {plane} plane{loc}."]
+
+    # The imaging explanation (cropped to the lesion, largest-area slice, sibling
+    # orientations) is only needed for the QUERY -- stating it on every example
+    # turn just repeats it. Examples keep a short context (modality/plane/location).
+    if not if_example:
         parts.append(
-            f"Other orientations ({', '.join(other_planes)}) are assessed separately; "
-            "judge only this image."
+            "The image is cropped to a bounding box around the lesion, so the lesion fills most "
+            f"of the frame; it is the {plane} slice with the LARGEST cross-sectional area of the lesion. "
+            "Make your assessment based on this slice."
         )
+        if other_planes:
+            parts.append(
+                f"Its largest-area slice in other orientations ({', '.join(other_planes)}) is "
+                "assessed separately in other images; judge only the image shown here."
+            )
     if has_contour:
         parts.append(
-            "A thin RED contour marks the lesion boundary; assess the region it encloses."
+            "A thin RED contour drawn on the image marks the lesion boundary segmented by a "
+            "radiologist. Use it to locate the lesion; assess the region it encloses."
         )
     return " ".join(parts)
 
@@ -81,19 +87,22 @@ def build_context(
 # Role + the one non-format rule. The output-structure rules that used to live
 # here are dropped -- the "# OUTPUT FORMAT" section states them once, in full.
 SYSTEM_ROLE = (
-    "You are an expert musculoskeletal radiologist assessing MRI images of benign "
-    "and malignant bone tumors and bone-tumor mimickers. If the feature is not "
-    "clearly assessable from the image, choose the closest label and note the "
+    "You are an expert musculoskeletal radiologist. For each case, you are shown "
+    "a single MRI slice of a bone lesion and asked to assess ONE specific imaging "
+    "feature, choosing from a fixed set of labels defined below. Base your "
+    "judgment only on what is visible in the image provided, not on other slices, "
+    "planes, or assumptions about the case. If the feature is not clearly "
+    "assessable from the image, choose the closest label and note the "
     "uncertainty in the reason."
 )
 
-# Lead-ins for few-shot: announce the worked examples, then mark the real query,
-# so the model doesn't read the examples as part of one run-on instruction.
-EXAMPLES_LEAD = ("The following {n} case(s) are WORKED EXAMPLES with the correct answer, "
-                 "shown to illustrate the task. Study them, then classify the final image.")
-QUERY_LEAD = "Now classify THIS image (the actual query):"
+# Announced once at the end of the system message (only in few-shot), BEFORE any
+# example turns -- so the examples aren't glued onto the first image's context.
+EXAMPLES_NOTE = ("The next turns are WORKED EXAMPLES: each shows an image and the correct answer, "
+                 "to illustrate the task. Study them, then classify the final (query) image.")
 
-def build_system_text(feature_cfg: dict) -> str:
+
+def build_system_text(feature_cfg: dict, has_examples: bool = False) -> str:
     """The CONSTANT task, assembled from the feature config (YAML). This is the
     system message: role + what the feature IS + what each label MEANS + what to
     DECIDE + the strict one-word answer format. It does not mention any specific
@@ -128,6 +137,10 @@ def build_system_text(feature_cfg: dict) -> str:
         '{"prediction": "<LABEL>", "reason": "<one short sentence>"}\n'
         f"<LABEL> must be exactly one of: {opts}."
     )
+    # Announce few-shot examples here (once, before any example turn) rather than
+    # gluing the announcement onto the first example's image context.
+    if has_examples:
+        sections.append("# EXAMPLES\n" + EXAMPLES_NOTE)
     # Blank line between sections so the model (and you, in the logged input_text)
     # can tell role / feature / definitions / task / format apart.
     return "\n\n".join(sections)
@@ -160,23 +173,17 @@ def build_medgemma_messages(
     few_shot: list of {"image": PIL, "context": str, "label": str} produced by
     resolve_few_shot(). None/empty -> zero-shot (system + single query turn).
     """
-    messages: List[dict] = [
-        {"role": "system", "content": [{"type": "text", "text": build_system_text(feature_cfg)}]}
-    ]
     few = few_shot or []
-    for i, ex in enumerate(few):
-        # Announce the block on the first example (prepended to its user turn so we
-        # don't add a second consecutive user message and break role alternation).
-        ctx = ex["context"]
-        if i == 0:
-            ctx = EXAMPLES_LEAD.format(n=len(few)) + "\n\n" + ctx
-        messages.append(_user_turn(ex["image"], ctx))
+    messages: List[dict] = [
+        {"role": "system",
+         "content": [{"type": "text", "text": build_system_text(feature_cfg, has_examples=bool(few))}]}
+    ]
+    for ex in few:
+        messages.append(_user_turn(ex["image"], ex["context"]))
         # The exemplar answer must be the SAME JSON structure we ask the model to
         # produce, or the examples teach a different format than the system text.
         answer = json.dumps({"prediction": ex["label"], "reason": ex.get("reason", "")})
         messages.append({"role": "assistant", "content": [{"type": "text", "text": answer}]})
-    # Mark the real query so it isn't mistaken for another example.
-    query_context = (QUERY_LEAD + "\n\n" + query_context) if few else query_context
     messages.append(_user_turn(query_image, query_context))
     return messages
 

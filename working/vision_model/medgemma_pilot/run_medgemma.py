@@ -129,7 +129,9 @@ def load_model(model_id: str):
     from transformers import AutoModelForImageTextToText, AutoProcessor
 
     dtype = torch.bfloat16  # bf16: stable, and VRAM is not a constraint here
-    processor = AutoProcessor.from_pretrained(model_id)
+    # use_fast=True -> the fast (torchvision) image processor; silences the
+    # "slow image processor" warning and speeds up preprocessing.
+    processor = AutoProcessor.from_pretrained(model_id, use_fast=True)
     model = AutoModelForImageTextToText.from_pretrained(
         model_id,
         torch_dtype=dtype,
