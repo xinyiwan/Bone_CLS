@@ -25,8 +25,11 @@ which accepts the image as a PIL object directly):
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
+
+log = logging.getLogger("medgemma.prompts")
 
 # ---------------------------------------------------------------------------
 # Shared: per-image clinical/imaging context (runtime values, not feature-specific)
@@ -189,11 +192,18 @@ def messages_to_text(messages: List[dict]) -> str:
     return "\n".join(lines)
 
 
+def overlay_variant(path: Path) -> Path:
+    """The `_overlay` (red-contour) sibling of a crop, as written by the
+    preprocessing pipeline (matches run_medgemma._overlay_variant)."""
+    return path.with_name(path.stem + "_overlay" + path.suffix)
+
+
 def resolve_few_shot(
     feature_cfg: dict,
     base_dir: Path,
     load_image: Callable[[Path], object],
     limit: Optional[int] = None,
+    use_contour: bool = False,
 ) -> List[dict]:
     """Load the per-feature few-shot examples declared in the YAML into ready-to-use
     turns. Each YAML example is:
@@ -236,13 +246,27 @@ def resolve_few_shot(
             )
         label = options_lower[label.lower()]  # canonical casing
 
-        image = load_image(img_path)  # raises if missing/unreadable -- intentional
+        # Match the query-image style: when contour is on (globally via use_contour
+        # or per-example has_contour), feed the red-contour overlay instead of the
+        # plain crop -- but only if the overlay actually exists, else fall back so
+        # we never claim a contour the model can't see.
+        want_contour = use_contour or bool(ex.get("has_contour", False))
+        has_contour = False
+        load_path = img_path
+        if want_contour:
+            ov = overlay_variant(img_path)
+            if ov.exists():
+                load_path, has_contour = ov, True
+            else:
+                log.warning("few-shot: no overlay for %s -- using plain crop (no contour)", img_path)
+
+        image = load_image(load_path)  # raises if missing/unreadable -- intentional
         context = build_context(
             ex.get("modality", ""),
             ex.get("plane", ""),
             location=ex.get("location"),
             other_planes=None,
-            has_contour=bool(ex.get("has_contour", False)),
+            has_contour=has_contour,
             if_example=True,  # frame this as a teaching example, not a query to assess
         )
         resolved.append({
@@ -250,7 +274,7 @@ def resolve_few_shot(
             "context": context,
             "label": label,
             "reason": str(ex.get("reason", "")).strip(),
-            "image_path": str(img_path),
+            "image_path": str(img_path),  # plain path (leakage guard/subject keys off this)
         })
     return resolved
 

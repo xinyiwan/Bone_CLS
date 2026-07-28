@@ -45,7 +45,7 @@ def load(results_csv: Path) -> None:
     for _, r in df.iterrows():
         row = {k: r.get(k, "") for k in (
             "plane", "modality", "image_path", "parsed_label",
-            "reason", "ground_truth_label", "correct", "input_text", "raw_output")}
+            "reason", "ground_truth_label", "correct", "input_text", "thinking", "raw_output")}
         DATA.setdefault(r["case_id"], {}).setdefault(r["feature_name"], []).append(row)
         if row["image_path"]:
             IMAGE_WHITELIST.add(row["image_path"])
@@ -217,9 +217,14 @@ def subject_html(case_id: str) -> str:
                 f"<details class='raw'><summary>input / prompt</summary>"
                 f"<pre>{esc(inp)}</pre></details>" if inp else ""
             )
+            think = r.get("thinking", "")
+            think_block = (
+                f"<details class='raw'><summary>model thinking (chain-of-thought)</summary>"
+                f"<pre>{esc(think)}</pre></details>" if think else ""
+            )
             raw = r.get("raw_output", "")
             raw_block = (
-                f"<details class='raw'><summary>thinking / raw output</summary>"
+                f"<details class='raw'><summary>full raw output</summary>"
                 f"<pre>{esc(raw)}</pre></details>" if raw else ""
             )
             cards.append(
@@ -228,6 +233,7 @@ def subject_html(case_id: str) -> str:
                 f'<div class="meta">{esc(r["modality"])} · {esc(r["plane"])}</div>'
                 f'<div>prediction: {pred_badge(r["parsed_label"], gt)}</div>'
                 f'<div class="reason">{reason}</div>'
+                f"{think_block}"
                 f"{input_block}"
                 f"{raw_block}"
                 "</div>"

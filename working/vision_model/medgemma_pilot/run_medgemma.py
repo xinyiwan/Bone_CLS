@@ -63,7 +63,7 @@ log = logging.getLogger("medgemma")
 
 INFERENCE_FIELDS = [
     "case_id", "feature_name", "plane", "modality", "image_path",
-    "input_text", "raw_output", "parsed_label", "reason",
+    "input_text", "raw_output", "thinking", "parsed_label", "reason",
     "ground_truth_label", "correct",
 ]
 
@@ -192,6 +192,7 @@ def make_hf_generate(model_id: str, max_new_tokens: int) -> Generate:
 # options and draft JSON, so we MUST parse only the answer that follows the last
 # end-of-thought marker -- otherwise the label list inside the thought poisons
 # both JSON extraction and any word-scan fallback.
+THINK_START_MARKERS = ("<unused94>", "<start_of_thought>")
 THINK_END_MARKERS = ("<unused95>", "</thought>", "<end_of_turn>")
 
 
@@ -203,6 +204,29 @@ def _answer_region(raw: str) -> str:
         if marker in s:
             s = s.rsplit(marker, 1)[-1]
     return s
+
+
+def extract_thinking(raw: str) -> str:
+    """The model's full chain-of-thought: the text between the think-start and
+    think-end markers. "" when the model emitted no thinking block. This is the
+    real reasoning -- richer than the one-line `reason` in the final answer JSON."""
+    start = -1
+    for m in THINK_START_MARKERS:
+        i = raw.find(m)
+        if i != -1:
+            start = i + len(m)
+            break
+    if start == -1:
+        return ""
+    rest = raw[start:].lstrip()
+    if rest[:7].lower() == "thought":            # drop the leading "thought" token
+        rest = rest[7:].lstrip()
+    for m in THINK_END_MARKERS:
+        j = rest.find(m)
+        if j != -1:
+            rest = rest[:j]
+            break
+    return rest.strip()
 
 
 def _extract_json(raw: str) -> Optional[dict]:
@@ -314,8 +338,9 @@ def _done_keys(out_path: Path) -> set:
 
 
 def _overlay_variant(path: Path) -> Optional[Path]:
-    """The `_overlay` (red-contour) sibling produced by the preprocessing pipeline."""
-    ov = path.with_name(path.stem + "_overlay" + path.suffix)
+    """The `_overlay` (red-contour) sibling produced by the preprocessing pipeline,
+    or None if it doesn't exist. Naming shared with prompts.overlay_variant."""
+    ov = prompts.overlay_variant(path)
     return ov if ov.exists() else None
 
 
@@ -376,7 +401,8 @@ def infer(
                 few_shot_paths.add(p)
                 few_shot_paths.add(str(Path(p).resolve()))
                 few_shot_subjects.add(subject_of_image(p))
-            examples = prompts.resolve_few_shot(fcfg, config_dir, to_jpeg_rgb, limit=num_few_shot)
+            examples = prompts.resolve_few_shot(fcfg, config_dir, to_jpeg_rgb,
+                                                limit=num_few_shot, use_contour=use_contour)
             few_shot_by_feature[feat] = examples
             log.info("feature %r: %d few-shot example(s) loaded", feat, len(examples))
 
@@ -447,6 +473,7 @@ def infer(
             )
             input_text = prompts.messages_to_text(messages)  # exact text fed to the model
             raw = generate(messages)
+            thinking = extract_thinking(raw)  # full chain-of-thought (richer than `reason`)
             label, reason = parse_answer(raw, fcfg["label_options"])
             if label == "PARSE_FAILED":
                 truncated = ("<unused94>" in raw) and not any(m in raw for m in THINK_END_MARKERS)
@@ -466,6 +493,7 @@ def infer(
                 "image_path": img_path_str,
                 "input_text": input_text,
                 "raw_output": raw,
+                "thinking": thinking,
                 "parsed_label": label,
                 "reason": reason,
                 "ground_truth_label": gt,
