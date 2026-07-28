@@ -319,6 +319,14 @@ def _overlay_variant(path: Path) -> Optional[Path]:
     return ov if ov.exists() else None
 
 
+def subject_of_image(path_str: str) -> str:
+    """Subject id from a crop path. Preprocess writes crops as
+    out_root/<case_id>/<feature>/<file>, and case_id is '<subject>' or, for
+    --unit study, '<subject>__<session>' (pipeline._safe_name turns '/' into
+    '__'). So the subject is the case_id directory's part before any '__'."""
+    return Path(path_str).parent.parent.name.split("__")[0]
+
+
 def row_location(row: pd.Series, loc_cols: List[str]) -> Optional[str]:
     """Anatomical location for a row, read from metadata columns (the preprocess
     step's --clinical-csv merge writes these in). Blank if none present."""
@@ -342,8 +350,10 @@ def infer(
     per-image labels into per-(case, feature) labels.
 
     num_few_shot > 0 prepends up to that many labeled example turns (from each
-    feature's `examples:` block in the YAML) before the query image. Example
-    images are held out of inference automatically (leakage guard).
+    feature's `examples:` block in the YAML) before the query image. To avoid
+    train-on-test leakage, EVERY image of any subject used as an example is held
+    out of inference (subject-level, since an example reveals that subject's
+    label); the count is logged at startup.
     """
     location_cols = location_cols or ["skeletal_location", "location_within_bone"]
     features = load_feature_config(config_path)
@@ -352,18 +362,29 @@ def infer(
     done = _done_keys(out_path)
     log.info("%d image row(s) in metadata; %d already done -> skipping those", len(df), len(done))
 
-    # Few-shot: load example turns per feature once (cached), and collect their
-    # image paths so we can exclude them from inference (no train-on-test leakage).
+    # Few-shot: load example turns per feature once (cached). A few-shot example
+    # reveals the label for its whole subject, so to avoid train-on-test leakage
+    # we exclude EVERY image of any example subject from inference (not just the
+    # exact example image). Subject is read from the crop path's layout
+    # (out_root/<case_id>/<feature>/<file>; case_id may be '<subj>__<session>').
     few_shot_by_feature: Dict[str, List[dict]] = {}
+    few_shot_subjects: set = set()
     few_shot_paths: set = set()
     if num_few_shot > 0:
         for feat, fcfg in features.items():
             for p in prompts.few_shot_image_paths(fcfg, config_dir):
                 few_shot_paths.add(p)
-                few_shot_paths.add(str(Path(p).resolve()))  # match however metadata spells the path
+                few_shot_paths.add(str(Path(p).resolve()))
+                few_shot_subjects.add(subject_of_image(p))
             examples = prompts.resolve_few_shot(fcfg, config_dir, to_jpeg_rgb, limit=num_few_shot)
             few_shot_by_feature[feat] = examples
             log.info("feature %r: %d few-shot example(s) loaded", feat, len(examples))
+
+        # Report how much of the eval set the leakage guard removes.
+        subj_series = df["case_id"].str.split("/").str[0]
+        n_excluded = int(subj_series.isin(few_shot_subjects).sum())
+        log.warning("leakage guard: %d example subject(s) %s -> excluding their %d image(s) "
+                    "from inference/eval", len(few_shot_subjects), sorted(few_shot_subjects), n_excluded)
 
     # Sibling orientations of the same lesion (assessed in separate calls) -> prompt context.
     planes_by_key: Dict[tuple, List[str]] = {}
@@ -384,8 +405,13 @@ def infer(
             img_path_str = row["image_path"]
             if (case_id, feature, img_path_str) in done:
                 continue
-            if str(Path(img_path_str).resolve()) in few_shot_paths or img_path_str in few_shot_paths:
-                log.info("skip %s -- used as a few-shot example (leakage guard)", img_path_str)
+            # Leakage guard: skip every image of any subject used as a few-shot
+            # example (subject-level, not just the exact example image).
+            if case_id.split("/")[0] in few_shot_subjects:
+                log.info("skip %s -- subject used as a few-shot example (leakage guard)", img_path_str)
+                continue
+            if img_path_str in few_shot_paths or str(Path(img_path_str).resolve()) in few_shot_paths:
+                log.info("skip %s -- few-shot example image (leakage guard)", img_path_str)
                 continue
             if feature not in features:
                 log.warning("no config for feature %r (case %s) -- skipping", feature, case_id)
