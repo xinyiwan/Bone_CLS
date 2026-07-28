@@ -61,8 +61,16 @@ import prompts  # prompt construction (see prompts.py)
 
 log = logging.getLogger("medgemma")
 
+# `image_path` is the metadata crop path -- the resume/dedup key (see _done_keys)
+# and so NOT necessarily what the model saw. `fed_image_path` is the image
+# actually loaded and sent (the `_overlay` sibling under --use-contour), and
+# `has_contour` records whether that swap really happened for this row (it can
+# fall back to the plain crop when no overlay exists). `model_id`,
+# `num_few_shot` and `use_contour` stamp the run config onto every row so a
+# results CSV is self-describing.
 INFERENCE_FIELDS = [
     "case_id", "feature_name", "plane", "modality", "image_path",
+    "fed_image_path", "has_contour", "model_id", "num_few_shot", "use_contour",
     "input_text", "raw_output", "thinking", "parsed_label", "reason",
     "ground_truth_label", "correct",
 ]
@@ -339,6 +347,26 @@ def _done_keys(out_path: Path) -> set:
     return set(zip(df["case_id"], df["feature_name"], df["image_path"]))
 
 
+def _check_resumable(out_path: Path) -> None:
+    """Fail loudly when --out exists but was written with a different column set.
+
+    We append with a fixed DictWriter fieldname list, so appending to a CSV whose
+    header doesn't match would silently write values under the wrong headings.
+    Older runs (before fed_image_path / model_id / ... were added) hit this."""
+    if not out_path.exists() or out_path.stat().st_size == 0:
+        return
+    with open(out_path, newline="") as fh:
+        header = next(csv.reader(fh), [])
+    if header != INFERENCE_FIELDS:
+        missing = [c for c in INFERENCE_FIELDS if c not in header]
+        raise SystemExit(
+            f"{out_path} was written with a different schema, so this run cannot append to it.\n"
+            f"  missing column(s): {missing or 'none'}\n"
+            f"  extra column(s):   {[c for c in header if c not in INFERENCE_FIELDS] or 'none'}\n"
+            "Pass a fresh --out path (the old CSV stays valid for aggregate/review)."
+        )
+
+
 def _overlay_variant(path: Path) -> Optional[Path]:
     """The `_overlay` (red-contour) sibling produced by the preprocessing pipeline,
     or None if it doesn't exist. Naming shared with prompts.overlay_variant."""
@@ -369,6 +397,7 @@ def infer(
     use_contour: bool = False,
     location_cols: Optional[List[str]] = None,
     num_few_shot: int = 0,
+    model_id: str = "",
 ) -> None:
     """Infer per-image labels from flattened metadata (one row per image/plane).
 
@@ -381,13 +410,21 @@ def infer(
     train-on-test leakage, EVERY image of any subject used as an example is held
     out of inference (subject-level, since an example reveals that subject's
     label); the count is logged at startup.
+
+    `model_id` is recorded on every row (with num_few_shot / use_contour) purely
+    so the CSV says which run produced it -- generation itself goes through the
+    `generate` callable, which already has the model bound.
     """
     location_cols = location_cols or ["skeletal_location", "location_within_bone"]
     features = load_feature_config(config_path)
     config_dir = Path(config_path).resolve().parent
     df = pd.read_csv(metadata_csv, dtype=str).fillna("")
+    _check_resumable(out_path)
     done = _done_keys(out_path)
     log.info("%d image row(s) in metadata; %d already done -> skipping those", len(df), len(done))
+    log.info("run config: model=%s | %s | contour=%s", model_id or "(unset)",
+             f"{num_few_shot}-shot" if num_few_shot > 0 else "zero-shot",
+             "on" if use_contour else "off")
 
     # Few-shot: load example turns per feature once (cached). A few-shot example
     # reveals the label for its whole subject, so to avoid train-on-test leakage
@@ -493,6 +530,13 @@ def infer(
                 "plane": plane,
                 "modality": modality,
                 "image_path": img_path_str,
+                # what the model actually saw -- differs from image_path whenever
+                # the --use-contour overlay swap above succeeded.
+                "fed_image_path": str(img_path),
+                "has_contour": has_contour,
+                "model_id": model_id,
+                "num_few_shot": num_few_shot,
+                "use_contour": use_contour,
                 "input_text": input_text,
                 "raw_output": raw,
                 "thinking": thinking,
@@ -658,7 +702,7 @@ def main() -> None:
         generate = make_hf_generate(args.model_id, args.max_new_tokens)
         infer(args.metadata, args.config, args.out or Path("inference_results.csv"), generate,
               use_contour=args.use_contour, location_cols=args.location_cols,
-              num_few_shot=args.num_few_shot)
+              num_few_shot=args.num_few_shot, model_id=args.model_id)
     elif args.mode == "aggregate":
         if not args.inference_results:
             raise SystemExit("--inference-results is required for --mode aggregate")

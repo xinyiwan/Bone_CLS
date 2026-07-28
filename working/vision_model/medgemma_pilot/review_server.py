@@ -31,6 +31,21 @@ import pandas as pd
 # image paths we're allowed to serve.
 DATA: Dict[str, Dict[str, List[dict]]] = {}
 IMAGE_WHITELIST: set = set()
+# Run configuration read off the result rows (model / shot count / contour), so
+# the page states which run it is showing. Blank for pre-schema CSVs.
+RUN_INFO: Dict[str, object] = {}
+
+# Columns kept per row. The last few are stamped by run_medgemma.infer() and are
+# absent from CSVs written before that schema change -> default to "".
+ROW_COLS = (
+    "plane", "modality", "image_path", "parsed_label",
+    "reason", "ground_truth_label", "correct", "input_text", "thinking", "raw_output",
+    "fed_image_path", "has_contour", "model_id", "num_few_shot", "use_contour",
+)
+
+
+def truthy(s) -> bool:
+    return str(s).strip().lower() in {"true", "1", "yes"}
 
 
 # ---------------------------------------------------------------------------
@@ -43,12 +58,41 @@ def load(results_csv: Path) -> None:
             raise SystemExit(f"{results_csv}: missing required column {col!r} (have {list(df.columns)})")
 
     for _, r in df.iterrows():
-        row = {k: r.get(k, "") for k in (
-            "plane", "modality", "image_path", "parsed_label",
-            "reason", "ground_truth_label", "correct", "input_text", "thinking", "raw_output")}
+        row = {k: r.get(k, "") for k in ROW_COLS}
         DATA.setdefault(r["case_id"], {}).setdefault(r["feature_name"], []).append(row)
+        # Serve (and display) the image the model actually saw. fed_image_path is
+        # the contour overlay under --use-contour; fall back to the crop path for
+        # rows written before that column existed.
         if row["image_path"]:
             IMAGE_WHITELIST.add(row["image_path"])
+        if row["fed_image_path"]:
+            IMAGE_WHITELIST.add(row["fed_image_path"])
+
+    RUN_INFO.update(_run_info(df))
+
+
+def _run_info(df: pd.DataFrame) -> Dict[str, object]:
+    """Summarize the run config stamped on the rows. Values are lists because one
+    CSV can hold several appended runs (resume with different flags)."""
+    def distinct(col: str) -> List[str]:
+        if col not in df.columns:
+            return []
+        return sorted({str(v).strip() for v in df[col] if str(v).strip()})
+
+    contour_col = df["has_contour"] if "has_contour" in df.columns else None
+    return {
+        "models": distinct("model_id"),
+        "shots": distinct("num_few_shot"),
+        "use_contour": distinct("use_contour"),
+        # Images where the overlay swap actually happened -- can be lower than the
+        # requested flag suggests, since infer() falls back when no overlay exists.
+        "n_contour": int(sum(truthy(v) for v in contour_col)) if contour_col is not None else 0,
+        "n_rows": len(df),
+    }
+
+
+def image_of(r: dict) -> str:
+    return r.get("fed_image_path") or r.get("image_path", "")
 
 
 def majority(labels: List[str]) -> str:
@@ -95,6 +139,9 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8"><title>{title}</title
  .fail {{ background: #fff3cd; color: #856404; }}
  .summary {{ background: #f6f8fa; border: 1px solid #ddd; border-radius: 8px; padding: 12px 18px; margin-bottom: 20px; }}
  .summary h1 {{ margin: 0 0 4px; }}
+ .runinfo {{ margin-top: 10px; padding-top: 8px; border-top: 1px solid #e3e3e3; font-size: 13px; }}
+ .runinfo code {{ background: #eceff4; padding: 1px 5px; border-radius: 3px; font-size: 12px; }}
+ .path {{ color: #999; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
  .statgrid {{ display: flex; gap: 40px; flex-wrap: wrap; margin-top: 8px; }}
  .statgrid h3 {{ font-size: 13px; margin: 0 0 4px; color: #666; text-transform: uppercase; letter-spacing: .03em; }}
  details.raw {{ margin-top: 6px; }}
@@ -158,13 +205,49 @@ def _stat_table(title: str, table: Dict[str, list]) -> str:
     return f"<div><h3>by {title}</h3><table>{rows}</table></div>"
 
 
+def _shot_label(shots: List[str]) -> str:
+    """'zero-shot' / '4-shot' / '0, 4-shot' when a CSV mixes appended runs."""
+    if not shots:
+        return "unknown"
+    parts = ["zero-shot" if s in {"0", ""} else f"{s}-shot" for s in shots]
+    return ", ".join(dict.fromkeys(parts))
+
+
+def run_info_html() -> str:
+    """The run configuration, so a page is never ambiguous about which model /
+    prompt setup produced the numbers below it."""
+    if not RUN_INFO.get("models") and not RUN_INFO.get("shots"):
+        return ('<div class="runinfo"><b>run config:</b> '
+                '<span class="meta">not recorded in this CSV (written before the '
+                'model_id / num_few_shot / has_contour columns were added)</span></div>')
+
+    n_contour, n_rows = int(RUN_INFO["n_contour"]), int(RUN_INFO["n_rows"])
+    if n_contour == 0:
+        contour = '<span class="badge neutral">no contour</span>'
+    elif n_contour == n_rows:
+        contour = '<span class="badge ok">contour overlay</span>'
+    else:                                  # some rows fell back to the plain crop
+        contour = (f'<span class="badge fail">contour on {n_contour}/{n_rows} images</span>'
+                   ' <span class="meta">(rest fell back to the plain crop — no _overlay found)</span>')
+
+    models = ", ".join(RUN_INFO["models"]) or "unknown"
+    return (
+        '<div class="runinfo">'
+        f'<b>model:</b> <code>{esc(models)}</code>'
+        f' &nbsp;·&nbsp; <b>prompt:</b> {esc(_shot_label(RUN_INFO["shots"]))}'
+        f' &nbsp;·&nbsp; <b>image:</b> {contour}'
+        "</div>"
+    )
+
+
 def summary_html() -> str:
     overall, by_plane, by_modality = compute_stats()
     return (
         '<div class="summary">'
         f"<h1>Overall accuracy: {acc_str(*overall)}</h1>"
         '<span class="meta">correct / scored images (only images with a known ground truth)</span>'
-        '<div class="statgrid">'
+        + run_info_html()
+        + '<div class="statgrid">'
         + _stat_table("orientation", by_plane)
         + _stat_table("modality", by_modality)
         + "</div></div>"
@@ -199,7 +282,8 @@ def index_html() -> str:
 
 def subject_html(case_id: str) -> str:
     feats = DATA[case_id]
-    sections = [f'<h1><a href="/">&larr; all subjects</a> &nbsp; {esc(case_id)}</h1>']
+    sections = [f'<h1><a href="/">&larr; all subjects</a> &nbsp; {esc(case_id)}</h1>',
+                f'<div class="summary">{run_info_html()}</div>']
     for feature in sorted(feats):
         rows = feats[feature]
         gt = feature_gt(rows)
@@ -227,10 +311,15 @@ def subject_html(case_id: str) -> str:
                 f"<details class='raw'><summary>full raw output</summary>"
                 f"<pre>{esc(raw)}</pre></details>" if raw else ""
             )
+            # Show the image that was fed (contour overlay when there was one) and
+            # say so, so a red outline on screen is never mistaken for the crop.
+            fed = image_of(r)
+            contour_tag = " · <b>contour</b>" if truthy(r.get("has_contour")) else ""
             cards.append(
                 '<div class="card">'
-                f'<img src="{img_url(r["image_path"])}" loading="lazy">'
-                f'<div class="meta">{esc(r["modality"])} · {esc(r["plane"])}</div>'
+                f'<img src="{img_url(fed)}" loading="lazy">'
+                f'<div class="meta">{esc(r["modality"])} · {esc(r["plane"])}{contour_tag}</div>'
+                f'<div class="meta path" title="{esc(fed)}">{esc(Path(fed).name)}</div>'
                 f'<div>prediction: {pred_badge(r["parsed_label"], gt)}</div>'
                 f'<div class="reason">{reason}</div>'
                 f"{think_block}"
