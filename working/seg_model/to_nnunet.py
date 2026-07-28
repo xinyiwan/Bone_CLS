@@ -68,17 +68,30 @@ def load_exclusions(path: Path) -> set:
     some subjects have one 'done' and one 'exclude' session. The date comes from
     'fechaHoraRealizacion'; if absent we fall back to (subject, '') = whole
     subject. Rows with If_segmented blank/'done' are kept.
+
+    Escalation to the SUBJECT level: if a subject's only row in the table is an
+    'exclude' row, the whole subject is dropped — (subject, ''). The table does
+    not list every session present on disk, so a lone 'exclude' row means the
+    subject was rejected outright and its other sessions were never reviewed;
+    session-level matching would silently let them through.
     """
     import csv
-    excl = set()
+    excl, rows_per_subject = set(), {}
     with open(path, newline="") as f:
         for r in csv.DictReader(f):
+            subj = str(r.get("subject_code", "")).strip()
+            rows_per_subject[subj] = rows_per_subject.get(subj, 0) + 1
             if str(r.get("If_segmented", "")).strip().lower() != "exclude":
                 continue
-            subj = str(r.get("subject_code", "")).strip()
             m = re.search(r"(\d{4})-(\d{2})-(\d{2})", str(r.get("fechaHoraRealizacion", "")))
             date = "".join(m.groups()) if m else ""
             excl.add((subj, date))
+
+    whole = {s for s, _ in excl if rows_per_subject.get(s, 0) == 1}
+    if whole:
+        print(f"  exclusions escalated to whole subject (single table row): "
+              f"{len(whole)} -> {sorted(whole)}")
+    excl |= {(s, "") for s in whole}
     return excl
 
 
