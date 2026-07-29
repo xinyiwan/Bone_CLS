@@ -28,7 +28,7 @@ docker run --rm -it\
   -v /home/ext_xinwan/Bone_AI/Bone_CLS/:/working \
   -v /mnt/tmp_storage/Bone_AI/tmp_sorted_data:/data \
   -v /home/ext_xinwan/Bone_AI/output/vision_model/preprocess:/output\
-  -v /home/ext_xinwan/Bone_AI/output/nnUNet_raw/Dataset001_BoneTumour/case_metadata.csv:/sequences.csv\
+  -v /home/ext_xinwan/Bone_AI/output/nnUNet_raw/Dataset002_BoneTumour/case_metadata.csv:/sequences.csv\
   -v /home/ext_xinwan/Bone_AI/Bone_CLS/working/vision_model/preprocess/feature_config.yaml:/feature_config.yaml\
   -v /home/ext_xinwan/Bone_AI/output/vision_model/label_out:/label_out\
   -w /working \
@@ -38,9 +38,9 @@ docker run --rm -it\
   --out-root /output --sequence-table /sequences.csv \
   --config /feature_config.yaml --subjects BONE_AI_127 --overlay
 
-  python3/working/working/vision_model/preprocess/run.py --data-root /data \
+  python3 /working/working/vision_model/preprocess/run.py --data-root /data \
   --out-root /output --sequence-table /sequences.csv \
-  --config /feature_config.yaml --labels-dir /labels_out/jsons
+  --config /feature_config.yaml --labels-dir /label_out/jsons
   
 
 
@@ -63,7 +63,8 @@ docker run --rm -it \
 
 
 
-docker run --rm -it --gpus 6 \
+docker run --rm -it --gpus 7 \
+  -p 8547:8547 \
   -v /home/ext_xinwan/Bone_AI/Bone_CLS/:/working \
   -v /mnt/tmp_storage/Bone_AI/tmp_sorted_data:/data  \
   -v /home/ext_xinwan/Bone_AI/output/vision_model:/results  \
@@ -72,11 +73,37 @@ docker run --rm -it --gpus 6 \
   -w /working  --entrypoint bash \
   medgemma-hf
 
-    python run_medgemma.py --mode infer --backend hf \
+    python run_medgemma.py --mode infer \
         --model-id /models/medgemma-1.5-4b-it \
         --metadata /results/preprocess/metadata.csv \
         --config /working/working/vision_model/medgemma_pilot/feature_prompts.yaml \
         --out /results/inference/inference_results.csv --location-cols skeletal_location
+
+
+docker run --rm -it --gpus 6  \
+  -v /home/ext_xinwan/Bone_AI/Bone_CLS/working/vision_model:/working   \
+  -v /mnt/tmp_storage/Bone_AI/tmp_sorted_data:/data    \
+  -v /home/ext_xinwan/Bone_AI/output/vision_model:/results    \
+  -v /home/ext_xinwan/Bone_AI/output/clinical_info:/clinical   \
+  -v /home/ext_xinwan/Bone_AI/output/vision_model/preprocess/:/output   \
+  -w /working  --entrypoint bash   \
+  medgemma-hf
+
+
+    python medgemma_pilot/run_medgemma.py --mode infer \
+        --model-id /models/medgemma-1.5-4b-it \
+        --metadata /results/preprocess/overlay_128/metadata.csv \
+        --config medgemma_pilot/feature_prompts.yaml \
+        --out /results/inference/img128/inference_results_zero.csv --location-cols skeletal_location
+    
+    python medgemma_pilot/run_medgemma.py --mode infer \
+        --model-id /models/medgemma-1.5-4b-it \
+        --metadata /results/preprocess/overlay_128/metadata.csv \
+        --config medgemma_pilot/feature_prompts.yaml \
+        --out /results/inference/img128/inference_results_few.csv --location-cols skeletal_location --num-few-shot 4
+
+
+
 
 # HF backend (loads weights in-process)
 python /working/working/vision_model/medgemma_pilot/run_medgemma.py --mode quick --model-id /models/medgemma-1.5-4b-it \
@@ -84,3 +111,6 @@ python /working/working/vision_model/medgemma_pilot/run_medgemma.py --mode quick
   --prompt "This is a bone lesion (bone tumor or bone mimicker) on a T1W MRI, coronal plane. Please describe the shape of this lesion."
 
 
+
+# Run server to check results
+python review_server.py --results /results/inference/inference_results.csv --port 8547 --host 0.0.0.0
