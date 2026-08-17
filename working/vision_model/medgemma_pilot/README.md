@@ -12,13 +12,71 @@ multi-image path (see the note atop `run_medgemma.py`).
 
 ## Install
 
-Model weights load in-process with transformers (no server/API backend):
+Model weights load in-process with transformers (no server/API backend).
+Dependencies are declared in `pyproject.toml` and pinned in `uv.lock`:
 
 ```bash
-pip install torch transformers pandas pillow pyyaml
+uv sync
 ```
 
+Then fetch the weights. MedGemma is **gated** under the
+[HAI-DEF license](https://huggingface.co/google/medgemma-1.5-4b-it) — the token
+must have accepted access there. Never commit it.
+
+```bash
+export HF_TOKEN=hf_xxx
+uv run hf download google/medgemma-1.5-4b-it \
+    --token "$HF_TOKEN" --local-dir ./models/medgemma-1.5-4b-it
+```
+
+Prefix every command below with `uv run` and no activation step is needed.
+
+> **torch is pinned to `2.6.0+cu124`** on Linux — the last cu124 build, matching
+> NVIDIA driver 550.144.03. Do not bump to 2.7+: those drop cu124 and target CUDA
+> 12.6/12.8, which need driver >=560. On macOS the plain PyPI wheel (CPU/MPS) is
+> selected instead, from the same lockfile. See `[tool.uv.sources]` in
+> `pyproject.toml`.
+
 Or in a container: `docker build -f Dockerfile.hf -t medgemma-hf --build-arg HF_TOKEN=hf_xxx .`
+
+### GPU selection
+
+The container used `--gpus 6` with `ENV CUDA_VISIBLE_DEVICES=0` (contradictory —
+the env var wins, so it was effectively single-GPU). Running natively, set it
+explicitly; `device_map="auto"` shards across whatever is visible:
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5 uv run python run_medgemma.py --mode infer ...
+```
+
+Paths are ordinary host paths — there is no `-v /data:/data` bind mount to mirror,
+so drop the `/data` prefix the Docker examples use.
+
+### On a cluster (SLURM)
+
+Run `uv sync` and `hf download` on the login node first, so the job only consumes
+what already exists. Point the weights and cache at scratch — they are several GB.
+
+```bash
+#!/bin/bash
+#SBATCH --partition=gpu
+#SBATCH --gpus=1
+#SBATCH --time=04:00:00
+
+export UV_CACHE_DIR=/scratch-shared/$USER/uv-cache
+export HF_HOME=/scratch-shared/$USER/hf-cache
+
+cd $HOME/Bone_CLS/working/vision_model/medgemma_pilot
+uv run --no-sync python run_medgemma.py --mode infer \
+    --model-id /scratch-shared/$USER/models/medgemma-1.5-4b-it \
+    --metadata /scratch-shared/$USER/data/meta.csv \
+    --config feature_prompts.yaml \
+    --out /scratch-shared/$USER/results.csv
+```
+
+`--no-sync` makes the job fail immediately if the environment is missing, rather
+than downloading ~2 GB of wheels on a GPU node. See the repo root `README.md` for
+the shared cache / `.venv`-on-scratch setup.
 
 ## Input
 
@@ -53,21 +111,21 @@ avoid leakage. Default (`--num-few-shot 0`) is zero-shot.
 
 ```bash
 # 1. Infer per-image (one row per image/plane):
-python run_medgemma.py --mode infer \
+uv run python run_medgemma.py --mode infer \
     --metadata ../preprocess/metadata.csv --config feature_prompts.yaml \
     --out inference_results.csv
 
 # 2. Aggregate to per-feature (majority-vote across images for each case+feature):
-python run_medgemma.py --mode aggregate \
+uv run python run_medgemma.py --mode aggregate \
     --inference-results inference_results.csv --out results_sanity.csv
 
 # 3. Eval aggregated results:
-python run_medgemma.py --mode eval --results results_sanity.csv --config feature_prompts.yaml
+uv run python run_medgemma.py --mode eval --results results_sanity.csv --config feature_prompts.yaml
 ```
 
 **Few-shot run** (after adding `examples:` to the YAML — see "Few-shot" above):
 ```bash
-python run_medgemma.py --mode infer --num-few-shot 2 \
+uv run python run_medgemma.py --mode infer --num-few-shot 2 \
     --metadata ../preprocess/metadata.csv --config feature_prompts.yaml \
     --out inference_fewshot.csv
 ```
@@ -75,10 +133,10 @@ python run_medgemma.py --mode infer --num-few-shot 2 \
 **Sanity check first** (optional, on a few known-easy cases):
 ```bash
 # Subset your metadata to easy cases, then run steps 1–3 above
-python run_medgemma.py --mode infer \
+uv run python run_medgemma.py --mode infer \
     --metadata easy_subset.csv --config feature_prompts.yaml \
     --out inference_results_sanity.csv
-python run_medgemma.py --mode aggregate \
+uv run python run_medgemma.py --mode aggregate \
     --inference-results inference_results_sanity.csv --out results_sanity_sanity.csv
 ```
 
