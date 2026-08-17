@@ -47,9 +47,31 @@ uv run streamlit run main.py
 | Subproject | Python | Status |
 | :--- | :--- | :--- |
 | `working/dicom_sort/viewer_web` | 3.11 | migrated to uv |
+| `working/vision_model/medgemma_pilot` | 3.11 | migrated to uv (GPU, see below) |
 | `working/dicom_sort/Classifier_final` | 3.9–3.10 (TensorFlow 2.10) | still `requirements.txt` |
-| `working/vision_model/medgemma_pilot` | — | still `requirements.txt` |
 | `working/nnInteractive` | — | still `requirements.txt` |
+
+### medgemma_pilot and CUDA
+
+`torch` is pinned to `2.6.0` — the last cu124 build — because the GPU host runs
+NVIDIA driver 550.144.03. Bumping to 2.7+ drops cu124 and targets CUDA 12.6/12.8,
+which need driver >=560. The constraint is documented in `Dockerfile.hf`; keep the
+two in sync.
+
+The CUDA build comes from PyTorch's own index rather than PyPI, selected per
+platform in `[tool.uv.sources]`:
+
+| Platform | Resolves to |
+| :--- | :--- |
+| Linux x86_64 | `torch==2.6.0+cu124` from `download.pytorch.org/whl/cu124` |
+| macOS arm64 | `torch==2.6.0` from PyPI (CPU/MPS, for local development) |
+
+One lockfile covers both. `[tool.uv] environments` restricts resolution to those
+two targets, since no matching torch build exists for Windows.
+
+Downloading MedGemma weights needs a Hugging Face token with accepted access to
+the gated [HAI-DEF license](https://huggingface.co/google/medgemma-1.5-4b-it).
+Pass it via `HF_TOKEN` at build time — never commit it.
 
 Where a subproject has a `Dockerfile`, keep its `requires-python` in sync with the
 base image.
@@ -112,9 +134,20 @@ ln -s /scratch-shared/$USER/envs/viewer-web working/dicom_sort/viewer_web/.venv
 
 Then run `uv sync` in each project directory as normal.
 
+In `ln -s TARGET LINK`, the scratch **target** must exist (that is the `mkdir -p`);
+the `.venv` **link** must *not* exist. Two ways this goes wrong silently:
+
 > **Create the target directory before the symlink.** If the symlink dangles, uv
 > deletes it and creates a real directory in its place -- putting the environment
 > back on `$HOME`, which is what this avoids. An empty directory is enough.
+
+> **Remove any existing `.venv` first.** If `.venv` is already a directory, `ln -s`
+> does not fail -- it exits 0 and creates the link *inside* it
+> (`.venv/viewer-web -> ...`). Run `rm -rf .venv` first; it is always rebuildable
+> with `uv sync`.
+
+Check the result with `ls -ld .venv`: it should start with `l` and show an arrow to
+scratch. A leading `d` means the link did not take.
 
 Scratch is purged periodically. Both the cache and the environments are
 disposable; `uv sync` rebuilds them from `uv.lock`.
