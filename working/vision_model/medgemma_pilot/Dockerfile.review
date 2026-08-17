@@ -1,0 +1,44 @@
+# Review UI only -- serves review_server.py. No GPU, no model, no torch:
+# stdlib http.server + pandas, so the image is small and builds in seconds.
+#
+#   Build:  docker build -f Dockerfile.review -t medgemma-review .
+#   Run:    docker run --rm -p 8547:8547 \
+#             -v /results:/results:ro \
+#             -v /output:/output:ro \
+#             medgemma-review
+#   Then open http://localhost:8547
+#
+# Two mounts, because the CSV and the images it points at are separate trees:
+#   /results -> holds inference_results.csv (path passed via --results)
+#   /output  -> holds the crop PNGs; image_path values in the CSV are ABSOLUTE
+#              (e.g. /output/.../shape/T1W_axial_10.png) and must resolve at the
+#              same path inside the container, or the images render broken.
+# Adjust the host side of each -v to wherever those live on your machine.
+
+FROM python:3.11-slim
+
+# --- corporate proxy (build-time pip); drop these two lines off-network ---
+# ENV http_proxy="http://proxy.san.gva.es:8080"
+# ENV https_proxy="http://proxy.san.gva.es:8080"
+ENV no_proxy="127.0.0.1,localhost"
+
+ENV PYTHONUNBUFFERED=1
+ENV PIP_NO_CACHE_DIR=1
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
+
+WORKDIR /app
+
+# pandas is the only third-party import in review_server.py.
+RUN pip install --no-cache-dir "pandas==2.2.0"
+
+COPY review_server.py .
+
+EXPOSE 8547
+
+# --host 0.0.0.0 is required for the port to be reachable from outside the
+# container. Override --results at `docker run` if your CSV sits elsewhere:
+#   docker run ... medgemma-review python review_server.py \
+#       --results /results/other.csv --port 8547 --host 0.0.0.0
+CMD ["python", "review_server.py", \
+     "--results", "/results/inference/inference_results.csv", \
+     "--port", "8547", "--host", "0.0.0.0"]
