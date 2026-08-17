@@ -7,11 +7,37 @@ There is **one entry point, `run.py`**. It reads the segmentation project's real
 on-disk layout via `seg_model/pairs.py:find_pairs` and takes the sequence label
 per scan from your classified-sequence table.
 
-## Install (no root needed)
+## Install
+
+This project runs on the **repo-root `bone-cls` environment** — it does not need
+its own. Its dependencies (nibabel, numpy, opencv, pandas, matplotlib, pyyaml)
+are already declared in the root `pyproject.toml`.
 
 ```bash
-pip install --user nibabel numpy opencv-python pandas matplotlib pyyaml
+cd <repo root>
+uv sync
 ```
+
+Then run from the repo root, prefixing with `uv run`:
+
+```bash
+uv run python working/vision_model/preprocess/run.py --help
+```
+
+Sharing the root environment is deliberate, not incidental: `run.py` inserts
+`working/seg_model` on `sys.path` to import `pairs.find_pairs` (see `run.py:65`),
+so this project and `seg_model` must resolve their dependencies from the *same*
+environment. Splitting them into separate projects would break that import.
+
+> **Not the same environment as `medgemma_pilot`.** That one is a standalone uv
+> project pinned to Python 3.11 with a CUDA torch stack. The two exchange data
+> through `metadata.csv` on disk, not through a shared environment — so the
+> commands there start with `cd working/vision_model/medgemma_pilot`, while the
+> ones here run from the repo root.
+
+`opencv-python-headless` is used rather than `opencv-python`: nothing here calls
+`imshow`, and the headless build avoids a `libGL.so.1` failure on cluster nodes
+that have no GUI libraries installed.
 
 ## Data layout (as produced by the segmentation project)
 
@@ -32,7 +58,7 @@ thick axial stack into a fake coronal.
 
 ```bash
 # This project's sequence table names the subject column 'case':
-python run.py --data-root /data --out-root ./out \
+uv run python run.py --data-root /data --out-root ./out \
     --sequence-table sequences.csv --config feature_config.yaml \
     --seq-subject-col case --index-only
 ```
@@ -44,17 +70,17 @@ it prints in `feature_config.yaml` (directly, or via `sequence_aliases:`).
 ## Step 2 — extract one subject first, with overlays, then eyeball it
 
 ```bash
-python run.py --data-root /data --out-root ./out \
+uv run python run.py --data-root /data --out-root ./out \
     --sequence-table sequences.csv --config feature_config.yaml \
     --seq-subject-col case --subjects SUBJ001 --overlay
 
-python qc_contact_sheet.py ./out/metadata.csv --n 12 --out contact_sheet.png
+uv run python qc_contact_sheet.py ./out/metadata.csv --n 12 --out contact_sheet.png
 ```
 
 ## Step 3 — full batch (with ground-truth labels)
 
 ```bash
-python run.py --data-root /data --out-root ./out \
+uv run python run.py --data-root /data --out-root ./out \
     --sequence-table sequences.csv --config feature_config.yaml --seq-subject-col case \
     --labels-dir ../label/label_out/jsons
 ```
