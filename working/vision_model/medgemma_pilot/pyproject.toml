@@ -1,0 +1,57 @@
+[project]
+name = "medgemma-pilot"
+version = "0.1.0"
+description = "MedGemma 1.5 zero-shot evaluation over bone MR images (in-process HuggingFace backend)"
+readme = "README.md"
+# Matches the `python:3.11-slim` base image in Dockerfile.hf -- keep the two in sync.
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    # --- model stack (see Dockerfile.hf) ---
+    # transformers 4.57.1 matches the version MedGemma 1.5 was saved with, so the
+    # Gemma-3 config (layer_types / rope_type) parses natively -- no config patching.
+    "transformers==4.57.1",
+    # accelerate powers device_map="auto" in run_medgemma.py.
+    "accelerate>=1.0",
+    # sentencepiece / protobuf are required by the Gemma tokenizer.
+    "sentencepiece==0.2.0",
+    "protobuf==5.28.3",
+    "huggingface-hub>=0.26.2",
+    # torch is pinned to the LAST cu124 build, matching NVIDIA driver 550.144.03.
+    # Do NOT bump to 2.7+ -- those drop cu124 and target CUDA 12.6/12.8, which
+    # need driver >=560. See [tool.uv.sources] below for how the CUDA build is
+    # selected per platform.
+    "torch==2.6.0",
+    "torchvision==0.21.0",
+
+    # --- eval / data deps (formerly requirements.txt) ---
+    "pandas==2.2.0",
+    "pillow>=10.3",
+    "pyyaml==6.0.1",
+]
+
+# Standalone project, not a member of the root workspace: the torch stack and the
+# pandas pin conflict with the root environment, and it ships its own containers.
+[tool.uv]
+package = false
+
+# Resolve only for the platforms this actually runs on: Linux x86_64 (GPU hosts,
+# Snellius) and macOS arm64 (local development, CPU/MPS). Without this, uv also
+# solves for Windows, which has no matching torch build.
+environments = [
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "sys_platform == 'darwin' and platform_machine == 'arm64'",
+]
+
+# PyTorch publishes CUDA builds on its own index, not PyPI. `explicit = true`
+# means this index is used ONLY for the packages mapped to it below, so every
+# other dependency still resolves from PyPI.
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
+# On Linux take the +cu124 GPU build; on macOS (no CUDA) fall back to the plain
+# PyPI wheel, which supports CPU and MPS. One lockfile covers both.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu124", marker = "sys_platform == 'linux'" }]
+torchvision = [{ index = "pytorch-cu124", marker = "sys_platform == 'linux'" }]
