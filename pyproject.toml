@@ -1,0 +1,36 @@
+[project]
+name = "bone-cls"
+version = "0.1.0"
+description = "Bone imaging research scripts: DICOM sorting, segmentation, classification"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "highdicom>=0.22",
+    "matplotlib>=3.9",
+    "nibabel>=5.2",
+    "numpy>=1.26",
+    "openpyxl>=3.1",
+    "pandas>=2.2",
+    "pydicom>=3.0",
+    "scikit-learn>=1.5",
+    "seaborn>=0.13",
+    "simpleitk>=2.4",
+    "tqdm>=4.66",
+]
+
+[dependency-groups]
+dev = ["ruff>=0.16"]
+
+# This is NOT a distributable package -- `working/` holds task scripts, not an
+# importable library. `package = false` tells uv to build the environment
+# without trying to install this project into it, so no build backend is needed.
+[tool.uv]
+package = false
+
+[tool.ruff]
+# Subprojects below carry their own pins and environments.
+exclude = [
+    "working/dicom_sort/viewer_web",
+    "working/dicom_sort/Classifier_final",
+    "working/vision_model/medgemma_pilot",
+]

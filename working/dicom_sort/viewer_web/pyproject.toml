@@ -1,0 +1,22 @@
+[project]
+name = "lung-review-tool"
+version = "0.1.0"
+description = "Streamlit app for manual review of thoracic CT scans flagged as 'Lung incomplete'"
+readme = "README.md"
+# Matches the `python:3.11-slim` base image in Dockerfile -- keep the two in sync.
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "openpyxl==3.1.5",
+    "pandas==2.3.3",
+    "pillow==12.0.0",
+    "pydicom==3.0.2",
+    "scikit-image==0.25.2",
+    "streamlit==1.51.0",
+    "tqdm==4.66.1",
+    "watchdog==6.0.0",
+]
+
+# Standalone project, not a member of the root workspace: these pins conflict
+# with the root environment (pandas, pydicom) and it ships its own container.
+[tool.uv]
+package = false

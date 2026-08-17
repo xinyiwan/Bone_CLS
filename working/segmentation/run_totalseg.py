@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "TotalSegmentator>=2.4",
+#     "nibabel>=5.2",
+#     "numpy>=1.26",
+#     "pandas>=2.2",
+# ]
+# ///
 """
 Run TotalSegmentator (total_mr task) on MR images and extract bone segmentations.
 
