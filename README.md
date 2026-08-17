@@ -53,3 +53,99 @@ uv run streamlit run main.py
 
 Where a subproject has a `Dockerfile`, keep its `requires-python` in sync with the
 base image.
+
+## What is committed
+
+| Path | Committed | Why |
+| :--- | :--- | :--- |
+| `pyproject.toml` | yes | declares dependencies |
+| `uv.lock` | yes | exact versions; makes environments reproducible across machines |
+| `.python-version` | yes | interpreter pin |
+| `<script>.py.lock` | yes | lock for a PEP 723 script |
+| `.venv/` | **no** | machine-specific, rebuilt by `uv sync` |
+
+`uv lock` resolves *universally* — one lockfile covers macOS and Linux, x86_64 and
+arm64. A lock generated on a laptop reproduces identically on a Linux cluster with
+no re-resolution. So moving to another machine is just:
+
+```bash
+git clone https://github.com/xinyiwan/Bone_CLS.git
+cd Bone_CLS && uv sync
+```
+
+## Running on HPC (Snellius)
+
+Install uv without root — it also downloads its own CPython, so no `module load python`:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh    # installs to ~/.local/bin
+```
+
+### Keep the cache off `$HOME`
+
+The uv cache reaches tens of GB and hundreds of thousands of files once torch or
+TensorFlow is involved. On HPC the *inode* quota usually bites before the size
+quota. Add to `~/.bashrc`:
+
+```bash
+export UV_CACHE_DIR=/scratch-shared/$USER/uv-cache
+```
+
+Verify with `uv cache dir` — it must print the scratch path. uv silently ignores
+misspelled variables, so a typo fails invisibly.
+
+### Keep each `.venv` off `$HOME` -- one per project
+
+Do **not** set `UV_PROJECT_ENVIRONMENT` globally in `~/.bashrc`. It is a single
+absolute path applied to *every* project, so syncing a second project uninstalls
+the first one's packages into the same directory. They cannot coexist.
+
+Instead, symlink each project's `.venv` to its own scratch directory:
+
+```bash
+mkdir -p /scratch-shared/$USER/envs/bone-cls
+ln -s /scratch-shared/$USER/envs/bone-cls .venv
+
+mkdir -p /scratch-shared/$USER/envs/viewer-web
+ln -s /scratch-shared/$USER/envs/viewer-web working/dicom_sort/viewer_web/.venv
+```
+
+Then run `uv sync` in each project directory as normal.
+
+> **Create the target directory before the symlink.** If the symlink dangles, uv
+> deletes it and creates a real directory in its place -- putting the environment
+> back on `$HOME`, which is what this avoids. An empty directory is enough.
+
+Scratch is purged periodically. Both the cache and the environments are
+disposable; `uv sync` rebuilds them from `uv.lock`.
+
+### SLURM jobs
+
+Run `uv sync` on the **login node** before submitting, so jobs only *use* the
+environment. This avoids array tasks hammering PyPI in parallel and does not
+depend on compute nodes having outbound network access.
+
+```bash
+#!/bin/bash
+#SBATCH --job-name=bone-cls
+#SBATCH --time=01:00:00
+
+export UV_CACHE_DIR=/scratch-shared/$USER/uv-cache
+
+uv run --no-sync python working/analysis/compare.py
+```
+
+`--no-sync` makes the job fail immediately if the environment is missing, rather
+than silently attempting a download mid-job.
+
+Setting the exports in the job script (rather than relying on `~/.bashrc`) is
+deliberate: many `.bashrc` files return early for non-interactive shells, so
+anything below that guard never runs under SLURM.
+
+### GPU builds
+
+`working/vision_model/` and `working/segmentation/dot_sanity` need torch. A bare
+`torch` dependency resolves to the default (often CPU) build. For the GPU nodes,
+pin an explicit CUDA index with `[[tool.uv.index]]` plus platform markers rather
+than relying on the default resolution. Not yet configured -- see the migration
+table above.
