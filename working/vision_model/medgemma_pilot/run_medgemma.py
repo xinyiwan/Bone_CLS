@@ -34,6 +34,12 @@ Workflow:
     python run_medgemma.py --mode aggregate --inference-results inference_results.csv \
         --out results_sanity.csv
 
+    # 2b. Merge shards but KEEP one row per image (this is what review_server.py
+    #     reads -- the aggregate above drops image_path):
+    python run_medgemma.py --mode combine --inference-results inference_results.shard*.csv \
+        --out inference_results_all.csv
+    python review_server.py --results inference_results_all.csv
+
     # 3. Eval aggregated results:
     python run_medgemma.py --mode eval --results results_sanity.csv
 
@@ -86,10 +92,14 @@ INFERENCE_FIELDS = [
     "ground_truth_label", "correct",
 ]
 
+# Run config (model_id / num_few_shot / use_contour) is carried through from the
+# per-image rows so the aggregate is self-describing too -- otherwise a
+# results_sanity.csv can't say which model or prompt setup produced it.
 RESULT_FIELDS = [
     "case_id", "feature_name", "num_images_used",
     "per_image_labels", "num_images_correct",
     "raw_output", "parsed_label", "ground_truth_label", "correct",
+    "model_id", "num_few_shot", "use_contour", "num_images_with_contour",
 ]
 
 # ---------------------------------------------------------------------------
@@ -743,16 +753,13 @@ def infer(
 
 
 # ---------------------------------------------------------------------------
-# Aggregation (per-image results -> per-feature majority-vote results)
+# Combining shards / aggregation
 # ---------------------------------------------------------------------------
-def aggregate_results(inference_csvs: List[Path] | Path, out_path: Path) -> None:
-    """Read one or more inference_results CSVs (one row per image) and write
-    results_sanity.csv with majority-voted labels per (case_id, feature) across
-    all images/planes.
+def load_inference_rows(inference_csvs: List[Path] | Path) -> pd.DataFrame:
+    """One or more per-image CSVs -> a single de-duplicated per-image frame.
 
-    Accepts several inputs so a sharded multi-GPU run (one CSV per GPU) can be
-    aggregated directly -- the shards are disjoint by construction, but we still
-    drop duplicate (case, feature, image) rows so a re-run overlap can't
+    Shards from a multi-GPU run are disjoint by construction, but we still drop
+    duplicate (case, feature, image) rows so an overlapping re-run can't
     double-count a vote."""
     paths = [inference_csvs] if isinstance(inference_csvs, Path) else list(inference_csvs)
     frames = [pd.read_csv(p, dtype=str).fillna("") for p in paths]
@@ -762,6 +769,42 @@ def aggregate_results(inference_csvs: List[Path] | Path, out_path: Path) -> None
         df = df.drop_duplicates(subset=["case_id", "feature_name", "image_path"], keep="first")
         log.info("combined %d shard file(s): %d row(s), %d after de-duplication",
                  len(paths), before, len(df))
+    return df
+
+
+def combine_results(inference_csvs: List[Path] | Path, out_path: Path) -> None:
+    """Merge shard CSVs into ONE per-image CSV, keeping every column.
+
+    Unlike aggregate_results (which majority-votes down to one row per
+    (case, feature) and so drops image_path / input_text / reason), this keeps
+    the per-image rows intact -- which is what review_server.py needs to show
+    each image next to its prediction. Use this on a sharded multi-GPU run
+    before opening the viewer."""
+    df = load_inference_rows(inference_csvs)
+    if df.empty:
+        log.warning("inference results CSV is empty")
+        return
+    # Preserve the canonical column order; keep any extra columns at the end so
+    # nothing is silently dropped from an older or hand-edited CSV.
+    ordered = [c for c in INFERENCE_FIELDS if c in df.columns]
+    df = df[ordered + [c for c in df.columns if c not in ordered]]
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(out_path, index=False)
+    log.info("combined %d per-image row(s) -> %s", len(df), out_path)
+    if "image_path" not in df.columns:
+        log.warning("no image_path column -- review_server.py will not be able to show images")
+
+
+def aggregate_results(inference_csvs: List[Path] | Path, out_path: Path) -> None:
+    """Read one or more inference_results CSVs (one row per image) and write
+    results_sanity.csv with majority-voted labels per (case_id, feature) across
+    all images/planes.
+
+    Accepts several inputs so a sharded multi-GPU run (one CSV per GPU) can be
+    aggregated directly -- the shards are disjoint by construction, but we still
+    drop duplicate (case, feature, image) rows so a re-run overlap can't
+    double-count a vote."""
+    df = load_inference_rows(inference_csvs)
     if df.empty:
         log.warning("inference results CSV is empty")
         return
@@ -778,6 +821,15 @@ def aggregate_results(inference_csvs: List[Path] | Path, out_path: Path) -> None
         num_correct = sum(1 for l in labels if l.lower() == gt.strip().lower()) if has_gt(gt) else 0
         raws = " ||| ".join(group["raw_output"].tolist())
 
+        # Run config carried through from the per-image rows, so the aggregate
+        # says which model / prompt setup produced it. Joined over the distinct
+        # values in the group, so a file mixing runs shows both rather than
+        # silently reporting the first. Blank for pre-schema inputs.
+        def cfg(col: str) -> str:
+            if col not in group.columns:
+                return ""
+            return ";".join(sorted({str(v).strip() for v in group[col] if str(v).strip()}))
+
         aggregated.append({
             "case_id": case_id,
             "feature_name": feature,
@@ -788,9 +840,17 @@ def aggregate_results(inference_csvs: List[Path] | Path, out_path: Path) -> None
             "parsed_label": final,
             "ground_truth_label": gt,
             "correct": correct,
+            "model_id": cfg("model_id"),
+            "num_few_shot": cfg("num_few_shot"),
+            "use_contour": cfg("use_contour"),
+            # How many of this group's images really carried a contour overlay
+            # (can be < num_images_used when an _overlay was missing).
+            "num_images_with_contour": sum(
+                1 for v in group.get("has_contour", []) if str(v).strip().lower() in {"true", "1"}
+            ),
         })
 
-    df_agg = pd.DataFrame(aggregated)
+    df_agg = pd.DataFrame(aggregated, columns=RESULT_FIELDS)
     df_agg.to_csv(out_path, index=False)
     log.info("aggregated %d (case, feature) pairs -> %s", len(aggregated), out_path)
 
@@ -880,11 +940,11 @@ def run_quick(
 # ---------------------------------------------------------------------------
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--mode", choices=["infer", "aggregate", "eval", "quick"], required=True)
+    ap.add_argument("--mode", choices=["infer", "combine", "aggregate", "eval", "quick"], required=True)
     ap.add_argument("--metadata", type=Path, help="metadata CSV (infer mode)")
     ap.add_argument("--inference-results", type=Path, nargs="+",
-                    help="per-image results CSV(s) (aggregate mode); pass every shard file "
-                         "from a multi-GPU run and they are combined before voting")
+                    help="per-image results CSV(s) (combine/aggregate mode); pass every shard file "
+                         "from a multi-GPU run and they are merged first")
     ap.add_argument("--results", type=Path, default=Path("results_sanity.csv"),
                     help="results CSV (eval mode input, or aggregate mode output)")
     ap.add_argument("--config", type=Path, default=Path("feature_prompts.yaml"),
@@ -948,6 +1008,12 @@ def main() -> None:
               num_few_shot=args.num_few_shot, model_id=args.model_id,
               batch_size=args.batch_size,
               shard_index=args.shard_index, num_shards=args.num_shards)
+    elif args.mode == "combine":
+        if not args.inference_results:
+            raise SystemExit("--inference-results is required for --mode combine")
+        if not args.out:
+            raise SystemExit("--out is required for --mode combine (the merged per-image CSV)")
+        combine_results(args.inference_results, args.out)
     elif args.mode == "aggregate":
         if not args.inference_results:
             raise SystemExit("--inference-results is required for --mode aggregate")

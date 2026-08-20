@@ -53,6 +53,23 @@ def truthy(s) -> bool:
 # ---------------------------------------------------------------------------
 def load(results_csv: Path) -> None:
     df = pd.read_csv(results_csv, dtype=str).fillna("")
+
+    # The aggregate output (results_sanity.csv) is one row per (case, feature)
+    # with the per-image rows already majority-voted away -- it has no image
+    # paths, prompts or reasons, so there is nothing for this UI to show. Name
+    # the mistake instead of reporting a bare missing column.
+    if "image_path" not in df.columns and "num_images_used" in df.columns:
+        raise SystemExit(
+            f"{results_csv} looks like the AGGREGATED results (one row per case/feature, "
+            "written by --mode aggregate). It has no image paths, so it can't be reviewed here.\n"
+            "Point --results at the per-image CSV instead -- the --mode infer --out file, "
+            "e.g. inference_results.csv. For a sharded multi-GPU run, merge the shards "
+            "while keeping one row per image:\n"
+            "  python run_medgemma.py --mode combine --inference-results inference_results.shard*.csv "
+            "--out inference_results_all.csv\n"
+            "For the aggregated numbers use: python run_medgemma.py --mode eval --results "
+            f"{results_csv}"
+        )
     for col in ("case_id", "feature_name", "image_path", "parsed_label"):
         if col not in df.columns:
             raise SystemExit(f"{results_csv}: missing required column {col!r} (have {list(df.columns)})")
