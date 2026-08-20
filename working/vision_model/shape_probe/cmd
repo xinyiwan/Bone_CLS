@@ -1,0 +1,69 @@
+# ---------------------------------------------------------------------------
+# Shape probe: does MedGemma see the red overlay at all?  (chance = 25%)
+# Same container as the main pilot; see README.md for the rationale.
+# ---------------------------------------------------------------------------
+
+docker run --rm -it --gpus 6  \
+  -v /home/ext_xinwan/Bone_AI/Bone_CLS/working/vision_model:/working   \
+  -v /mnt/tmp_storage/Bone_AI/tmp_sorted_data:/data    \
+  -v /home/ext_xinwan/Bone_AI/output/vision_model:/results    \
+  -w /working  --entrypoint bash   \
+  medgemma-hf
+
+
+# --- 1. build pseudo-segmentation images (CPU only) ------------------------
+    # main condition: geometric shape over the real lesion crop
+    python shape_probe/build_shapes.py \
+        --metadata /results/preprocess/overlay_128/metadata.csv \
+        --out-root /results/shape_probe/mri --background mri
+
+    # controls
+    python shape_probe/build_shapes.py \
+        --metadata /results/preprocess/overlay_128/metadata.csv \
+        --out-root /results/shape_probe/blank --background blank
+    python shape_probe/build_shapes.py \
+        --metadata /results/preprocess/overlay_128/metadata.csv \
+        --out-root /results/shape_probe/noise --background noise
+
+    # easier variants, if the model is at chance everywhere
+    python shape_probe/build_shapes.py \
+        --metadata /results/preprocess/overlay_128/metadata.csv \
+        --out-root /results/shape_probe/mri_big --background mri --shape-scale 1.5
+    python shape_probe/build_shapes.py \
+        --metadata /results/preprocess/overlay_128/metadata.csv \
+        --out-root /results/shape_probe/mri_filled --background mri --filled
+
+
+# --- 2. QC the images BEFORE spending GPU time ----------------------------
+    python shape_probe/preview.py \
+        --metadata /results/shape_probe/mri/shape_metadata.csv \
+        --out /results/shape_probe/mri/preview.png --n 24
+
+
+# --- 3. infer (resume-safe; re-run the same line to continue) -------------
+    # quick read first
+    python shape_probe/run_shape_probe.py --mode infer --limit 40 \
+        --model-id /models/medgemma-1.5-4b-it \
+        --metadata /results/shape_probe/mri/shape_metadata.csv \
+        --out /results/shape_probe/mri/probe_results.csv
+
+    # full run (same --out: picks up where the --limit run stopped)
+    python shape_probe/run_shape_probe.py --mode infer \
+        --model-id /models/medgemma-1.5-4b-it \
+        --metadata /results/shape_probe/mri/shape_metadata.csv \
+        --out /results/shape_probe/mri/probe_results.csv
+
+    python shape_probe/run_shape_probe.py --mode infer \
+        --model-id /models/medgemma-1.5-4b-it \
+        --metadata /results/shape_probe/blank/shape_metadata.csv \
+        --out /results/shape_probe/blank/probe_results.csv
+
+
+# --- 4. score --------------------------------------------------------------
+    python shape_probe/run_shape_probe.py --mode eval \
+        --results /results/shape_probe/mri/probe_results.csv
+
+    # all conditions in one table (eval breaks down by `background`)
+    head -1 /results/shape_probe/mri/probe_results.csv  > /results/shape_probe/all.csv
+    tail -q -n +2 /results/shape_probe/*/probe_results.csv >> /results/shape_probe/all.csv
+    python shape_probe/run_shape_probe.py --mode eval --results /results/shape_probe/all.csv
