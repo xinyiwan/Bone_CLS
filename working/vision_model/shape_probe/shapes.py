@@ -88,6 +88,8 @@ def draw_shape(
     if shape == "circle":
         cv2.circle(out, (int(round(center[0])), int(round(center[1]))), int(round(radius)), col, t)
     else:
+        # generate a randon rotation degree
+        rotation_deg = np.random.uniform(0, 360)
         poly = shape_polygon(shape, center, radius, rotation_deg)
         if filled:
             cv2.fillPoly(out, [poly], col)
