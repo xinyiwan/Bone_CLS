@@ -13,13 +13,24 @@ pass. (A true multi-image variant would go in run_single -- see the MULTI-IMAGE
 flag -- but sanity-check on known-easy cases first.)
 
 The model weights are loaded in-process with transformers (needs torch); there
-is no server/API backend.
+is no server/API backend. `--backend vllm` swaps the same in-process load for
+vLLM (continuous batching) without changing anything else -- both backends
+implement the one-line Generate contract (list of message lists -> list of texts).
+
+THROUGHPUT: generation is batched (--batch-size) and shardable across GPUs
+(--num-shards / --shard-index). A 4B model decoding one sequence at a time is
+memory-bandwidth bound and leaves an A100 nearly idle; see run_batch.
 
 Workflow:
     # 1. Infer per-image (one row per image/plane; resume-safe, re-run to continue):
     python run_medgemma.py --mode infer --metadata meta.csv --out inference_results.csv
 
-    # 2. Aggregate to per-feature majority-vote:
+    # 1b. Same, but batched (many images per GPU call -- see run_batch) and split
+    #     over the node's 4 GPUs (see jobs/run_medgemma_multigpu.sh):
+    python run_medgemma.py --mode infer --metadata meta.csv --batch-size 16 \
+        --num-shards 4 --shard-index $i --out inference_results.csv   # -> ...shard$i.csv
+
+    # 2. Aggregate to per-feature majority-vote (pass every shard file):
     python run_medgemma.py --mode aggregate --inference-results inference_results.csv \
         --out results_sanity.csv
 
@@ -140,6 +151,12 @@ def load_model(model_id: str):
     # use_fast=True -> the fast (torchvision) image processor; silences the
     # "slow image processor" warning and speeds up preprocessing.
     processor = AutoProcessor.from_pretrained(model_id, use_fast=True)
+    # LEFT padding is mandatory for BATCHED generation on a decoder-only model:
+    # generation continues from the LAST position, so right-padding would make the
+    # model continue from pad tokens and emit garbage for every short prompt in the
+    # batch. It also makes every sequence's prompt end at the same index, so
+    # run_batch can slice off the generated part with a single input_len.
+    processor.tokenizer.padding_side = "left"
     model = AutoModelForImageTextToText.from_pretrained(
         model_id,
         torch_dtype=dtype,
@@ -158,40 +175,136 @@ def load_model(model_id: str):
     return model, processor
 
 
-def run_single(model, processor, messages: List[dict], max_new_tokens: int = 1024) -> str:
-    """A chat message list -> raw decoded text (greedy).
+def run_batch(model, processor, batch: List[List[dict]], max_new_tokens: int = 1024) -> List[str]:
+    """A LIST of chat message lists -> one raw decoded text each (greedy).
 
-    `messages` is the backend-neutral format built in prompts.py: a list of
+    Each `messages` is the backend-neutral format built in prompts.py: a list of
     {"role", "content"} where content items are {"type": "text", ...} or
     {"type": "image", "image": <PIL>}. The processor's chat template inserts the
     image placeholders the way THIS model expects -- do not hand-insert
     <start_of_image>. Few-shot example turns and multi-image prompts are just
     additional messages / image content items; nothing here needs to change.
+
+    WHY BATCH: decoding a 4B model at batch size 1 is memory-bandwidth bound --
+    every generated token streams all the weights from HBM to serve a single
+    sequence, leaving the GPU's compute units almost idle. Batching streams the
+    weights once per step for N sequences, so throughput scales nearly linearly
+    until the batch becomes compute-bound. Prompts are padded LEFT (see
+    load_model), so the prompt of every sequence ends at the same index and
+    `out[:, input_len:]` is exactly the generated continuation for each row.
+
+    Caveat inherent to static batching: the call returns only when the SLOWEST
+    member of the batch stops, so one long thinking block holds up its whole
+    batch. infer() mitigates this by grouping same-feature rows together; the
+    vLLM backend removes it entirely via continuous batching.
     """
     import torch
 
     inputs = processor.apply_chat_template(
-        messages,
+        batch,
         add_generation_prompt=True,
         tokenize=True,
         return_dict=True,
         return_tensors="pt",
+        padding=True,
     ).to(model.device, dtype=model.dtype)  # .to(dtype) casts only float tensors (pixel_values); input_ids stay long
 
     input_len = inputs["input_ids"].shape[-1]
     with torch.inference_mode():
         out = model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False)
-    return processor.decode(out[0][input_len:], skip_special_tokens=True).strip()
+    return [t.strip() for t in processor.batch_decode(out[:, input_len:], skip_special_tokens=True)]
 
 
-# A backend is just a callable: (messages) -> raw text.
-Generate = Callable[[List[dict]], str]
+# A backend is just a callable: (list of message lists) -> list of raw texts.
+# Batch-shaped even for a single item, so the HF and vLLM backends are drop-in
+# swappable (vLLM only pays off when it is handed many prompts at once).
+Generate = Callable[[List[List[dict]]], List[str]]
 
 
 def make_hf_generate(model_id: str, max_new_tokens: int) -> Generate:
-    """In-process HuggingFace backend (loads weights locally; needs torch)."""
+    """In-process HuggingFace backend (loads weights locally; needs torch).
+
+    Retries on CUDA OOM by splitting the batch in half, so an over-large
+    --batch-size degrades to slower-but-working instead of killing the run.
+    """
+    import torch
+
     model, processor = load_model(model_id)
-    return lambda messages: run_single(model, processor, messages, max_new_tokens)
+
+    def generate(batch: List[List[dict]]) -> List[str]:
+        try:
+            return run_batch(model, processor, batch, max_new_tokens)
+        except torch.cuda.OutOfMemoryError:
+            if len(batch) == 1:
+                raise
+            torch.cuda.empty_cache()
+            mid = len(batch) // 2
+            log.warning("CUDA OOM at batch size %d -- retrying as %d + %d "
+                        "(lower --batch-size to avoid this)", len(batch), mid, len(batch) - mid)
+            return generate(batch[:mid]) + generate(batch[mid:])
+
+    return generate
+
+
+def make_vllm_generate(
+    model_id: str,
+    max_new_tokens: int,
+    max_images_per_prompt: int = 1,
+    gpu_memory_utilization: float = 0.90,
+    max_model_len: Optional[int] = None,
+) -> Generate:
+    """vLLM backend: same (messages -> text) contract, much higher throughput.
+
+    vLLM does CONTINUOUS batching -- a finished sequence is immediately replaced
+    by a queued one instead of the whole batch waiting on its slowest member --
+    plus a paged KV cache and CUDA graphs. Feed it large batches (--batch-size
+    256+); the scheduler decides the real per-step batch itself.
+
+    We build the prompt STRING with the HF processor's chat template (tokenize=
+    False) and hand the PIL images to vLLM separately via multi_modal_data. That
+    is the documented offline multimodal path and it keeps the exact same prompt
+    text as the HF backend, so results are comparable between the two.
+
+    VERIFY against the installed vLLM: multimodal Gemma-3 support, and that
+    `limit_mm_per_prompt` covers your few-shot image count (1 query image + N
+    few-shot images) -- prompts exceeding it are rejected.
+    """
+    from transformers import AutoProcessor
+    from vllm import LLM, SamplingParams
+
+    processor = AutoProcessor.from_pretrained(model_id, use_fast=True)
+    llm = LLM(
+        model=model_id,
+        dtype="bfloat16",
+        limit_mm_per_prompt={"image": max_images_per_prompt},
+        gpu_memory_utilization=gpu_memory_utilization,
+        **({"max_model_len": max_model_len} if max_model_len else {}),
+    )
+    # do_sample=False in the HF path == greedy == temperature 0 here.
+    sampling = SamplingParams(temperature=0.0, max_tokens=max_new_tokens)
+
+    def generate(batch: List[List[dict]]) -> List[str]:
+        requests = []
+        for messages in batch:
+            text = processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+            images = [c["image"] for m in messages
+                      for c in m.get("content", []) if c.get("type") == "image"]
+            req = {"prompt": text}
+            if images:
+                req["multi_modal_data"] = {"image": images}
+            requests.append(req)
+        outs = llm.generate(requests, sampling)
+        return [o.outputs[0].text.strip() for o in outs]
+
+    return generate
+
+
+def make_generate(backend: str, model_id: str, max_new_tokens: int, num_few_shot: int = 0) -> Generate:
+    """Build the backend named by --backend. Both honour the same Generate contract."""
+    if backend == "vllm":
+        return make_vllm_generate(model_id, max_new_tokens,
+                                  max_images_per_prompt=max(1, num_few_shot + 1))
+    return make_hf_generate(model_id, max_new_tokens)
 
 
 # ---------------------------------------------------------------------------
@@ -398,12 +511,26 @@ def infer(
     location_cols: Optional[List[str]] = None,
     num_few_shot: int = 0,
     model_id: str = "",
+    batch_size: int = 1,
+    shard_index: int = 0,
+    num_shards: int = 1,
 ) -> None:
     """Infer per-image labels from flattened metadata (one row per image/plane).
 
     Writes one output row per image; resume-safe (re-running skips images already
     present in out_path). A separate aggregate_results() call majority-votes the
     per-image labels into per-(case, feature) labels.
+
+    batch_size > 1 sends that many images to the model per generate() call (see
+    run_batch for why this is the main throughput lever). Rows are stable-sorted
+    by feature first so a batch shares one system prompt -- less padding waste,
+    and members finish at more similar lengths, which matters because a static
+    batch is only as fast as its slowest member.
+
+    shard_index/num_shards split the work across processes (one per GPU) by
+    taking every num_shards-th row. Every shard MUST write its own --out file:
+    they append concurrently and would otherwise interleave into corrupt CSV
+    rows. Pass all the shard CSVs to --mode aggregate afterwards.
 
     num_few_shot > 0 prepends up to that many labeled example turns (from each
     feature's `examples:` block in the YAML) before the query image. To avoid
@@ -419,6 +546,18 @@ def infer(
     features = load_feature_config(config_path)
     config_dir = Path(config_path).resolve().parent
     df = pd.read_csv(metadata_csv, dtype=str).fillna("")
+    # The UNSHARDED frame: the "other planes of this lesion" prompt context must
+    # be derived from all images of a case, not just the ones in this shard, or
+    # the prompt would silently depend on how the work was split.
+    df_full = df
+    n_total = len(df)
+    if num_shards > 1:
+        # Strided (not contiguous) split: every shard gets a mix of cases, so an
+        # uneven number of images per case can't leave one GPU running long after
+        # the others have finished.
+        df = df.iloc[shard_index::num_shards]
+        log.info("shard %d/%d -> %d of %d metadata row(s)",
+                 shard_index, num_shards, len(df), n_total)
     _check_resumable(out_path)
     done = _done_keys(out_path)
     log.info("%d image row(s) in metadata; %d already done -> skipping those", len(df), len(done))
@@ -446,15 +585,73 @@ def infer(
             log.info("feature %r: %d few-shot example(s) loaded", feat, len(examples))
 
         # Report how much of the eval set the leakage guard removes.
-        subj_series = df["case_id"].str.split("/").str[0]
+        subj_series = df_full["case_id"].str.split("/").str[0]
         n_excluded = int(subj_series.isin(few_shot_subjects).sum())
         log.warning("leakage guard: %d example subject(s) %s -> excluding their %d image(s) "
                     "from inference/eval", len(few_shot_subjects), sorted(few_shot_subjects), n_excluded)
 
     # Sibling orientations of the same lesion (assessed in separate calls) -> prompt context.
     planes_by_key: Dict[tuple, List[str]] = {}
-    for (cid, feat), g in df.groupby(["case_id", "feature_name"]):
+    for (cid, feat), g in df_full.groupby(["case_id", "feature_name"]):
         planes_by_key[(cid, feat)] = [p for p in dict.fromkeys(g["plane"]) if p]
+
+    # --- Pass 1: plan. Resolve every row that still needs inference into a task
+    # (all the skip/leakage/contour decisions, and the prompt context), WITHOUT
+    # loading images -- so we can order the work before committing memory.
+    tasks: List[dict] = []
+    for _, row in df.iterrows():
+        case_id = row["case_id"]
+        feature = row["feature_name"]
+        img_path_str = row["image_path"]
+        if (case_id, feature, img_path_str) in done:
+            continue
+        # Leakage guard: skip every image of any subject used as a few-shot
+        # example (subject-level, not just the exact example image).
+        if case_id.split("/")[0] in few_shot_subjects:
+            log.info("skip %s -- subject used as a few-shot example (leakage guard)", img_path_str)
+            continue
+        if img_path_str in few_shot_paths or str(Path(img_path_str).resolve()) in few_shot_paths:
+            log.info("skip %s -- few-shot example image (leakage guard)", img_path_str)
+            continue
+        if feature not in features:
+            log.warning("no config for feature %r (case %s) -- skipping", feature, case_id)
+            continue
+
+        plane = row.get("plane", "")
+        img_path = Path(img_path_str)
+
+        has_contour = False
+        if use_contour:  # feed the radiologist-contour overlay instead of the plain crop
+            ov = _overlay_variant(img_path)
+            if ov is not None:
+                img_path, has_contour = ov, True
+            else:
+                log.warning("no _overlay for %s -- using plain crop (no contour)", img_path_str)
+
+        other_planes = [p for p in planes_by_key.get((case_id, feature), []) if p != plane]
+        tasks.append({
+            "case_id": case_id,
+            "feature": feature,
+            "plane": plane,
+            "modality": row.get("modality", ""),
+            "image_path": img_path_str,
+            "fed_path": img_path,
+            "has_contour": has_contour,
+            "gt": row.get("ground_truth_label", ""),
+            "context": prompts.build_context(
+                row.get("modality", ""), plane,
+                location=row_location(row, location_cols),
+                other_planes=other_planes, has_contour=has_contour,
+            ),
+        })
+
+    # Group same-feature rows into the same batch: they share the (long) system
+    # prompt, so padding waste is minimal and they tend to finish at similar
+    # lengths -- which matters because a static batch costs its SLOWEST member.
+    # Stable sort, so metadata order is preserved within a feature.
+    tasks.sort(key=lambda t: t["feature"])
+    n_batches = (len(tasks) + batch_size - 1) // max(batch_size, 1)
+    log.info("%d image(s) to infer in %d batch(es) of up to %d", len(tasks), n_batches, batch_size)
 
     new_file = not out_path.exists()
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -464,89 +661,83 @@ def infer(
             writer.writeheader()
             fh.flush()
 
-        for _, row in df.iterrows():
-            case_id = row["case_id"]
-            feature = row["feature_name"]
-            img_path_str = row["image_path"]
-            if (case_id, feature, img_path_str) in done:
-                continue
-            # Leakage guard: skip every image of any subject used as a few-shot
-            # example (subject-level, not just the exact example image).
-            if case_id.split("/")[0] in few_shot_subjects:
-                log.info("skip %s -- subject used as a few-shot example (leakage guard)", img_path_str)
-                continue
-            if img_path_str in few_shot_paths or str(Path(img_path_str).resolve()) in few_shot_paths:
-                log.info("skip %s -- few-shot example image (leakage guard)", img_path_str)
-                continue
-            if feature not in features:
-                log.warning("no config for feature %r (case %s) -- skipping", feature, case_id)
-                continue
-            fcfg = features[feature]
-
-            plane = row.get("plane", "")
-            modality = row.get("modality", "")
-            img_path = Path(img_path_str)
-
-            has_contour = False
-            if use_contour:  # feed the radiologist-contour overlay instead of the plain crop
-                ov = _overlay_variant(img_path)
-                if ov is not None:
-                    img_path, has_contour = ov, True
-                else:
-                    log.warning("no _overlay for %s -- using plain crop (no contour)", img_path_str)
-
-            try:
-                image = to_jpeg_rgb(img_path)
-            except Exception as e:  # noqa: BLE001 -- missing/unreadable image
-                log.warning("skip image %s (%s / %s): %s", img_path, case_id, feature, e)
+        # --- Pass 2: execute, one batch at a time. Images are loaded per batch
+        # (not all up front) so peak host memory stays bounded by batch_size.
+        t_start = time.perf_counter()
+        n_done = 0
+        for bi in range(n_batches):
+            chunk = tasks[bi * batch_size:(bi + 1) * batch_size]
+            batch_messages: List[List[dict]] = []
+            batch_tasks: List[dict] = []
+            for t in chunk:
+                try:
+                    image = to_jpeg_rgb(t["fed_path"])
+                except Exception as e:  # noqa: BLE001 -- missing/unreadable image
+                    log.warning("skip image %s (%s / %s): %s",
+                                t["fed_path"], t["case_id"], t["feature"], e)
+                    continue
+                messages = prompts.build_medgemma_messages(
+                    features[t["feature"]], image, t["context"],
+                    few_shot=few_shot_by_feature.get(t["feature"]),
+                )
+                batch_messages.append(messages)
+                batch_tasks.append({**t, "input_text": prompts.messages_to_text(messages)})
+            if not batch_messages:
                 continue
 
-            location = row_location(row, location_cols)
-            other_planes = [p for p in planes_by_key.get((case_id, feature), []) if p != plane]
-            context = prompts.build_context(
-                modality, plane,
-                location=location, other_planes=other_planes, has_contour=has_contour,
-            )
-            messages = prompts.build_medgemma_messages(
-                fcfg, image, context, few_shot=few_shot_by_feature.get(feature),
-            )
-            input_text = prompts.messages_to_text(messages)  # exact text fed to the model
-            raw = generate(messages)
-            thinking = extract_thinking(raw)  # full chain-of-thought (richer than `reason`)
-            label, reason = parse_answer(raw, fcfg["label_options"])
-            if label == "PARSE_FAILED":
-                truncated = ("<unused94>" in raw) and not any(m in raw for m in THINK_END_MARKERS)
-                log.warning("PARSE_FAILED %s / %s%s", case_id, feature,
-                            "  (thinking block truncated -- raise --max-new-tokens)" if truncated else "")
+            raws = generate(batch_messages)
+            if len(raws) != len(batch_tasks):  # a backend that drops/reorders would misattribute every row
+                raise RuntimeError(
+                    f"backend returned {len(raws)} output(s) for a batch of {len(batch_tasks)} prompt(s); "
+                    "outputs must be one-per-prompt and in order"
+                )
 
-            gt = row.get("ground_truth_label", "")
-            # label_options already use the assessment vocabulary, so a direct
-            # case-insensitive match is the score (no mapping needed).
-            correct = (label.lower() == gt.strip().lower()) if has_gt(gt) and label != "PARSE_FAILED" else ""
+            for t, raw in zip(batch_tasks, raws):
+                fcfg = features[t["feature"]]
+                thinking = extract_thinking(raw)  # full chain-of-thought (richer than `reason`)
+                label, reason = parse_answer(raw, fcfg["label_options"])
+                if label == "PARSE_FAILED":
+                    truncated = ("<unused94>" in raw) and not any(m in raw for m in THINK_END_MARKERS)
+                    log.warning("PARSE_FAILED %s / %s%s", t["case_id"], t["feature"],
+                                "  (thinking block truncated -- raise --max-new-tokens)" if truncated else "")
 
-            writer.writerow({
-                "case_id": case_id,
-                "feature_name": feature,
-                "plane": plane,
-                "modality": modality,
-                "image_path": img_path_str,
-                # what the model actually saw -- differs from image_path whenever
-                # the --use-contour overlay swap above succeeded.
-                "fed_image_path": str(img_path),
-                "has_contour": has_contour,
-                "model_id": model_id,
-                "num_few_shot": num_few_shot,
-                "use_contour": use_contour,
-                "input_text": input_text,
-                "raw_output": raw,
-                "thinking": thinking,
-                "parsed_label": label,
-                "reason": reason,
-                "ground_truth_label": gt,
-                "correct": correct,
-            })
+                gt = t["gt"]
+                # label_options already use the assessment vocabulary, so a direct
+                # case-insensitive match is the score (no mapping needed).
+                correct = (label.lower() == gt.strip().lower()) if has_gt(gt) and label != "PARSE_FAILED" else ""
+
+                writer.writerow({
+                    "case_id": t["case_id"],
+                    "feature_name": t["feature"],
+                    "plane": t["plane"],
+                    "modality": t["modality"],
+                    "image_path": t["image_path"],
+                    # what the model actually saw -- differs from image_path whenever
+                    # the --use-contour overlay swap above succeeded.
+                    "fed_image_path": str(t["fed_path"]),
+                    "has_contour": t["has_contour"],
+                    "model_id": model_id,
+                    "num_few_shot": num_few_shot,
+                    "use_contour": use_contour,
+                    "input_text": t["input_text"],
+                    "raw_output": raw,
+                    "thinking": thinking,
+                    "parsed_label": label,
+                    "reason": reason,
+                    "ground_truth_label": gt,
+                    "correct": correct,
+                })
+                log.info("%s / %s [%s] -> %s (gt=%s)",
+                         t["case_id"], t["feature"], t["plane"] or "?", label, gt or "?")
+            # Flush once per batch (not per row): the file stays resume-safe at
+            # batch granularity, which is all a killed job can lose.
             fh.flush()
-            log.info("%s / %s [%s] -> %s (gt=%s)", case_id, feature, plane or "?", label, gt or "?")
+
+            n_done += len(batch_tasks)
+            rate = n_done / max(time.perf_counter() - t_start, 1e-9)
+            log.info("batch %d/%d done -- %d/%d image(s), %.2f img/s, ~%.1f min left",
+                     bi + 1, n_batches, n_done, len(tasks), rate,
+                     (len(tasks) - n_done) / rate / 60 if rate > 0 else float("nan"))
 
     log.info("done -> %s", out_path)
 
@@ -554,10 +745,23 @@ def infer(
 # ---------------------------------------------------------------------------
 # Aggregation (per-image results -> per-feature majority-vote results)
 # ---------------------------------------------------------------------------
-def aggregate_results(inference_csv: Path, out_path: Path) -> None:
-    """Read inference_results.csv (one row per image) and write results_sanity.csv
-    with majority-voted labels per (case_id, feature) across all images/planes."""
-    df = pd.read_csv(inference_csv, dtype=str).fillna("")
+def aggregate_results(inference_csvs: List[Path] | Path, out_path: Path) -> None:
+    """Read one or more inference_results CSVs (one row per image) and write
+    results_sanity.csv with majority-voted labels per (case_id, feature) across
+    all images/planes.
+
+    Accepts several inputs so a sharded multi-GPU run (one CSV per GPU) can be
+    aggregated directly -- the shards are disjoint by construction, but we still
+    drop duplicate (case, feature, image) rows so a re-run overlap can't
+    double-count a vote."""
+    paths = [inference_csvs] if isinstance(inference_csvs, Path) else list(inference_csvs)
+    frames = [pd.read_csv(p, dtype=str).fillna("") for p in paths]
+    df = pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
+    if len(paths) > 1:
+        before = len(df)
+        df = df.drop_duplicates(subset=["case_id", "feature_name", "image_path"], keep="first")
+        log.info("combined %d shard file(s): %d row(s), %d after de-duplication",
+                 len(paths), before, len(df))
     if df.empty:
         log.warning("inference results CSV is empty")
         return
@@ -631,6 +835,7 @@ def run_quick(
     image_paths: List[Path],
     prompt: str,
     repeat: int = 1,
+    batch_size: int = 1,
 ) -> None:
     """Run a single free-form prompt against one or more images, one image per
     call (same "one image per inference" contract as the rest of the script).
@@ -640,6 +845,9 @@ def run_quick(
 
     `repeat` re-runs the SAME image+prompt N times, useful for timing (e.g.
     measuring steady-state latency after the first, slower, "warm-up" call).
+    `batch_size` sends that many copies of the prompt in one call -- the quickest
+    way to measure the throughput gain from batching before committing to a
+    --batch-size for a real infer run. Always discard the first (warm-up) run.
     """
     for img_path in image_paths:
         try:
@@ -654,10 +862,17 @@ def run_quick(
         }]
         for i in range(repeat):
             t0 = time.perf_counter()
-            raw = generate(messages)
+            # batch of `batch_size` copies of the same prompt: with batch_size > 1
+            # this measures per-image throughput at that batch size, which is the
+            # number to compare against batch 1 when picking --batch-size.
+            raws = generate([messages] * batch_size)
             dt = time.perf_counter() - t0
             tag = f"{img_path.name}" + (f" (run {i + 1}/{repeat})" if repeat > 1 else "")
-            print(f"[{tag}] {dt:.2f}s -> {raw}")
+            if batch_size > 1:
+                print(f"[{tag}] batch={batch_size}  {dt:.2f}s total, "
+                      f"{dt / batch_size:.2f}s/image, {batch_size / dt:.2f} img/s -> {raws[0]}")
+            else:
+                print(f"[{tag}] {dt:.2f}s -> {raws[0]}")
 
 
 # ---------------------------------------------------------------------------
@@ -667,7 +882,9 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--mode", choices=["infer", "aggregate", "eval", "quick"], required=True)
     ap.add_argument("--metadata", type=Path, help="metadata CSV (infer mode)")
-    ap.add_argument("--inference-results", type=Path, help="per-image results CSV (aggregate mode)")
+    ap.add_argument("--inference-results", type=Path, nargs="+",
+                    help="per-image results CSV(s) (aggregate mode); pass every shard file "
+                         "from a multi-GPU run and they are combined before voting")
     ap.add_argument("--results", type=Path, default=Path("results_sanity.csv"),
                     help="results CSV (eval mode input, or aggregate mode output)")
     ap.add_argument("--config", type=Path, default=Path("feature_prompts.yaml"),
@@ -678,6 +895,21 @@ def main() -> None:
     ap.add_argument("--model-id", default="google/medgemma-1.5-4b-it",
                     help="default 4B; pass google/medgemma-27b-it for a comparison run (see load_model)")
     ap.add_argument("--max-new-tokens", type=int, default=1024)
+    # throughput
+    ap.add_argument("--backend", choices=["hf", "vllm"], default="hf",
+                    help="hf: in-process transformers with static batching (no extra deps). "
+                         "vllm: continuous batching + paged KV cache, faster but needs vllm installed "
+                         "and a large --batch-size to pay off")
+    ap.add_argument("--batch-size", type=int, default=1,
+                    help="images per generate() call. 1 = the old row-by-row behaviour. "
+                         "8-32 is a good range for the 4B on an 80GB A100 (hf); 256+ for vllm. "
+                         "Measure first with --mode quick --batch-size N --repeat 3")
+    ap.add_argument("--shard-index", type=int, default=0,
+                    help="this process's shard (0-based); see --num-shards")
+    ap.add_argument("--num-shards", type=int, default=1,
+                    help="split the metadata across N processes (one per GPU) for data-parallel "
+                         "inference. Each shard MUST get its own --out; aggregate all shard CSVs "
+                         "afterwards with --mode aggregate --inference-results <all shards>")
     # prompt context
     ap.add_argument("--use-contour", action="store_true",
                     help="feed the radiologist red-contour '_overlay' image and tell the model about it")
@@ -696,13 +928,26 @@ def main() -> None:
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
+    if args.batch_size < 1:
+        raise SystemExit("--batch-size must be >= 1")
+    if not (0 <= args.shard_index < args.num_shards):
+        raise SystemExit(f"--shard-index must be in [0, {args.num_shards}) for --num-shards {args.num_shards}")
+
     if args.mode == "infer":
         if not args.metadata:
             raise SystemExit("--metadata is required for --mode infer")
-        generate = make_hf_generate(args.model_id, args.max_new_tokens)
-        infer(args.metadata, args.config, args.out or Path("inference_results.csv"), generate,
+        out = args.out or Path("inference_results.csv")
+        if args.num_shards > 1:
+            # Shards append concurrently; sharing one --out would interleave
+            # half-written rows. Give each its own file, aggregate afterwards.
+            out = out.with_name(f"{out.stem}.shard{args.shard_index}{out.suffix}")
+            log.info("sharded run -> writing %s", out)
+        generate = make_generate(args.backend, args.model_id, args.max_new_tokens, args.num_few_shot)
+        infer(args.metadata, args.config, out, generate,
               use_contour=args.use_contour, location_cols=args.location_cols,
-              num_few_shot=args.num_few_shot, model_id=args.model_id)
+              num_few_shot=args.num_few_shot, model_id=args.model_id,
+              batch_size=args.batch_size,
+              shard_index=args.shard_index, num_shards=args.num_shards)
     elif args.mode == "aggregate":
         if not args.inference_results:
             raise SystemExit("--inference-results is required for --mode aggregate")
@@ -710,8 +955,8 @@ def main() -> None:
     elif args.mode == "quick":
         if not args.image or not args.prompt:
             raise SystemExit("--image and --prompt are required for --mode quick")
-        generate = make_hf_generate(args.model_id, args.max_new_tokens)
-        run_quick(generate, args.image, args.prompt, repeat=args.repeat)
+        generate = make_generate(args.backend, args.model_id, args.max_new_tokens, args.num_few_shot)
+        run_quick(generate, args.image, args.prompt, repeat=args.repeat, batch_size=args.batch_size)
     else:
         evaluate(args.results, args.config)
 
