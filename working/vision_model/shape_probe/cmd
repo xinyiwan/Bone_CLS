@@ -63,7 +63,18 @@ docker run --rm -it --gpus 6  \
     python shape_probe/run_shape_probe.py --mode eval \
         --results /results/shape_probe/mri/probe_results.csv
 
-    # all conditions in one table (eval breaks down by `background`)
-    head -1 /results/shape_probe/mri/probe_results.csv  > /results/shape_probe/all.csv
-    tail -q -n +2 /results/shape_probe/*/probe_results.csv >> /results/shape_probe/all.csv
-    python shape_probe/run_shape_probe.py --mode eval --results /results/shape_probe/all.csv
+    # all conditions in one table -- just pass every CSV (eval concatenates them
+    # and breaks the accuracy down by `background`)
+    python shape_probe/run_shape_probe.py --mode eval \
+        --results /results/shape_probe/*/probe_results*.csv
+
+
+# --- 5. review in the browser (flat: no aggregation, gt is per image) ------
+    python shape_probe/review_server.py \
+        --results /results/shape_probe/mri/probe_results.csv \
+        --port 8547 --host 0.0.0.0
+
+    # all conditions / shards at once
+    python shape_probe/review_server.py \
+        --results /results/shape_probe/*/probe_results*.csv \
+        --port 8547 --host 0.0.0.0

@@ -27,7 +27,8 @@ shape_probe/
   build_shapes.py     # metadata.csv -> shape images + shape_metadata.csv
   preview.py          # contact sheet QC before burning GPU time
   run_shape_probe.py  # infer + eval  (imports medgemma_pilot/run_medgemma.py)
-  run_shape_probe.sh  # SLURM launcher: build -> shard across GPUs -> eval
+  review_server.py    # browser UI: accuracy + click through the wrong ones
+  jobs/run_shape_probe.sh   # SLURM launcher (inference only)
 ```
 
 `run_shape_probe.py` takes the same throughput flags as `run_medgemma.py`
@@ -125,6 +126,25 @@ rather than by merging the two scripts.
 Controls are just the same three commands with a different `--background` and
 `--out-root`; to score them together, concatenate the results CSVs — `eval`
 breaks accuracy down by `background`, `modality` and `plane` automatically.
+
+## Review UI
+
+```bash
+python review_server.py --results /results/shape_probe/mri/probe_results.csv --port 8547
+# several files are concatenated -- shards, or one per condition:
+python review_server.py --results /results/shape_probe/*/probe_results*.csv --port 8547
+```
+
+Flat by design, unlike `medgemma_pilot/review_server.py`. That one groups by
+subject → feature because the real experiment's unit of truth is the lesion and
+its per-image predictions have to be majority-voted. Here **every image carries
+its own ground truth**, so there is nothing to aggregate — one summary page
+(overall accuracy vs chance, breakdowns by shape / background / modality /
+plane, confusion matrix, prediction distribution) and a filterable gallery.
+
+The gallery filters are the point: `only wrong` next to the actual images is how
+you find out *why* it failed — outline too thin at 128×128, shape clipped, star
+read as a blob — rather than just that it did.
 
 ## Reading the output
 
