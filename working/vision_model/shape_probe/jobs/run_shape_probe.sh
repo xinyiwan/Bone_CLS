@@ -1,0 +1,90 @@
+#!/bin/bash
+# Shape probe (pseudo-segmentation sanity check): can MedGemma see the red
+# overlay at all? Chance = 25%. See ../README.md for what the result means.
+#
+# INFERENCE ONLY -- assumes build_shapes.py has already written $SHAPE_META and
+# you have eyeballed the preview. There is no aggregate step: the probe scores
+# per image, not per lesion, so shard CSVs are just concatenated at eval.
+#
+#SBATCH --job-name=shape_probe_mg
+#SBATCH --partition=gpu_a100
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=18
+#SBATCH --gpus-per-node=1
+#SBATCH --time=01:00:00
+#SBATCH --output=/projects/prjs1779/BONE-AI/logs/out/slurm-%x-%j.out
+#SBATCH --error=/projects/prjs1779/BONE-AI/logs/err/slurm-%x-%j.err
+
+set -euo pipefail
+
+export UV_CACHE_DIR=/projects/prjs1779/BONE-AI/.uv-cache
+export HF_HOME=/scratch-shared/$USER/hf-cache
+
+# Absolute, because sbatch COPIES this script to a node-local spool dir before
+# running it -- inside the job ${BASH_SOURCE[0]} is /var/spool/slurmd/..., not
+# the repo, so deriving the path from the script's own location lands outside
+# the uv project ("warning: --no-sync has no effect when used outside of a
+# project", then ModuleNotFoundError: No module named 'torch'). $SLURM_SUBMIT_DIR
+# would work but silently depends on where you happened to type sbatch.
+REPO=/gpfs/work2/0/prjs1779/BONE-AI/Bone_CLS
+
+MODEL=/scratch-shared/$USER/models/medgemma-1.5-4b-it
+# Output of build_shapes.py --out-root <dir>  (NOT the preprocess metadata.csv).
+SHAPE_META=/scratch-shared/$USER/BONE-AI/shape_probe/mri/shape_metadata.csv
+OUTDIR=/scratch-shared/$USER/BONE-AI/shape_probe/mri
+OUT=$OUTDIR/probe_results.csv
+NUM_SHARDS=1
+BATCH_SIZE=16
+
+cd "$REPO/working/vision_model/shape_probe"
+
+mkdir -p "$OUTDIR"
+
+# Preflight. Two seconds here beats discovering a broken environment after SLURM
+# has handed us the GPUs, and it separates the two failures that look identical
+# in the log:
+#   - no pyproject.toml found -> uv ran a bare interpreter (wrong $REPO / cwd)
+#   - half-unpacked package    -> an interactive `uv add` overlapped this job
+#     start and rewrote .venv underneath it ("No module named 'torch._utils_internal'")
+# Do not `uv add` / `uv sync` while jobs are queued or running.
+[[ -f "$REPO/pyproject.toml" ]] || {
+    echo "FATAL: no pyproject.toml under $REPO -- uv would run outside the project" >&2
+    exit 1
+}
+uv run --no-sync python -c "import torch, transformers" || {
+    echo "FATAL: the venv is not importable (mid-install, or wrong project root)" >&2
+    exit 1
+}
+
+# Each shard writes $OUT with a .shard<i> suffix (run_shape_probe.py adds it when
+# --num-shards > 1) -- they append concurrently, so they must not share a file.
+# Re-running the same command resumes from whatever is already in those files.
+pids=()
+for i in $(seq 0 $((NUM_SHARDS - 1))); do
+    CUDA_VISIBLE_DEVICES=$i uv run --no-sync python run_shape_probe.py --mode infer \
+        --model-id "$MODEL" \
+        --metadata "$SHAPE_META" \
+        --batch-size $BATCH_SIZE \
+        --num-shards $NUM_SHARDS --shard-index "$i" \
+        --out "$OUT" &
+    pids+=($!)
+done
+
+# Wait on each pid INDIVIDUALLY. A bare `wait` (no arguments) always returns 0
+# in bash -- it discards the children's exit statuses -- so `set -e` never fires
+# and a dead shard is silently skipped. That is how a job with a Python
+# traceback in its log still gets reported COMPLETED, and how a partial-data
+# accuracy gets scored as if it were the real thing.
+rc=0
+for p in "${pids[@]}"; do wait "$p" || rc=1; done
+(( rc == 0 )) || { echo "FATAL: a shard failed -- refusing to score partial results" >&2; exit 1; }
+
+SHARDS=()
+for i in $(seq 0 $((NUM_SHARDS - 1))); do
+    # run_shape_probe.py only adds the .shard<i> suffix when --num-shards > 1,
+    # so the single-shard case must use $OUT unchanged.
+    if (( NUM_SHARDS > 1 )); then SHARDS+=("${OUT%.csv}.shard${i}.csv"); else SHARDS+=("$OUT"); fi
+done
+
+uv run --no-sync python run_shape_probe.py --mode eval --results "${SHARDS[@]}"
