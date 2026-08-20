@@ -27,7 +27,14 @@ shape_probe/
   build_shapes.py     # metadata.csv -> shape images + shape_metadata.csv
   preview.py          # contact sheet QC before burning GPU time
   run_shape_probe.py  # infer + eval  (imports medgemma_pilot/run_medgemma.py)
+  run_shape_probe.sh  # SLURM launcher: build -> shard across GPUs -> eval
 ```
+
+`run_shape_probe.py` takes the same throughput flags as `run_medgemma.py`
+(`--backend`, `--batch-size`, `--num-shards`, `--shard-index`) and uses its
+`make_generate`, so the one-process-per-GPU pattern is identical. There is **no
+aggregate step**: the probe scores per image, not per lesion, so shard CSVs are
+just concatenated — `--mode eval --results a.shard0.csv a.shard1.csv ...`.
 
 ## How the shape is placed
 
@@ -93,6 +100,27 @@ python run_shape_probe.py --mode eval --results /results/shape_probe/mri/probe_r
 ```
 
 Start with `--limit 40` on steps 1 and 3 to get a read in a few minutes.
+
+## On the cluster
+
+```bash
+sbatch run_shape_probe.sh          # edit CONDITIONS / NUM_SHARDS / BATCH_SIZE at the top
+```
+
+Inference only — run steps 1 and 2 (build + preview) yourself first, then point
+`SHAPE_META` at the `shape_metadata.csv` they produced. It shards across GPUs
+and scores. Re-submitting the same script resumes from the existing shard CSVs
+rather than re-inferring.
+
+For a second condition (`blank`, `noise`, `mri_big`, …), build it and re-submit
+with `SHAPE_META`/`OUTDIR` pointed at that directory; to compare conditions in
+one table, pass every results CSV to a single `--mode eval` — it breaks accuracy
+down by `background` automatically.
+
+This is a separate launcher from the real experiment's, on purpose — the probe
+takes no feature config and has no aggregate step. Only the middle (shard,
+batch, infer) is shared, and that is shared through the identical CLI flags
+rather than by merging the two scripts.
 
 Controls are just the same three commands with a different `--background` and
 `--out-root`; to score them together, concatenate the results CSVs — `eval`
