@@ -40,6 +40,7 @@ from typing import List, Optional
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "medgemma_pilot"))
+import prompts  # noqa: E402  (only for messages_to_text -- prompt wording stays local)
 import run_medgemma as mg  # noqa: E402  (path shim above must run first)
 
 from shapes import SHAPES  # noqa: E402
@@ -48,12 +49,15 @@ log = logging.getLogger("shape_probe")
 
 # `image_path` is the shape image -- unlike the real run there is no plain/overlay
 # swap, so it is both the resume key and what the model saw. `shape` is the
-# ground truth. Run config (model_id/background) is stamped on every row so a
-# results CSV is self-describing and shard files concatenate cleanly.
+# ground truth. `input_text` is the fully rendered prompt (same column and same
+# renderer as run_medgemma.py, so both CSVs are readable the same way) -- without
+# it a surprising result can't be traced back to what was actually asked. Run
+# config (model_id/background) is stamped on every row so a results CSV is
+# self-describing and shard files concatenate cleanly.
 RESULT_FIELDS = [
     "case_id", "feature_name", "modality", "plane", "image_path",
-    "background", "radius_px", "rotation_deg", "raw_output", "thinking",
-    "parsed_label", "reason", "shape", "correct", "model_id",
+    "background", "radius_px", "rotation_deg", "input_text", "raw_output",
+    "thinking", "parsed_label", "reason", "shape", "correct", "model_id",
 ]
 
 SYSTEM_TEXT = (
@@ -166,8 +170,11 @@ def infer(
                 except Exception as e:  # noqa: BLE001 -- missing/unreadable image
                     log.warning("skip image %s: %s", row["image_path"], e)
                     continue
-                batch_messages.append(build_messages(image, row.get("modality", ""), row.get("plane", "")))
-                batch_rows.append(row)
+                messages = build_messages(image, row.get("modality", ""), row.get("plane", ""))
+                batch_messages.append(messages)
+                # Render now, while the messages exist -- the image becomes an
+                # '<image>' placeholder, so this is cheap to store per row.
+                batch_rows.append((row, prompts.messages_to_text(messages)))
             if not batch_messages:
                 continue
 
@@ -178,7 +185,7 @@ def infer(
                     "outputs must be one-per-prompt and in order"
                 )
 
-            for row, raw in zip(batch_rows, raws):
+            for (row, input_text), raw in zip(batch_rows, raws):
                 label, reason = mg.parse_answer(raw, list(SHAPES))
                 gt = str(row.get("shape", ""))
                 writer.writerow({
@@ -190,6 +197,7 @@ def infer(
                     "background": row.get("background", ""),
                     "radius_px": row.get("radius_px", ""),
                     "rotation_deg": row.get("rotation_deg", ""),
+                    "input_text": input_text,
                     "raw_output": raw,
                     "thinking": mg.extract_thinking(raw),
                     "parsed_label": label,

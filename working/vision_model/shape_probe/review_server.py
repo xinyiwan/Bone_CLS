@@ -41,7 +41,7 @@ RUN_INFO: Dict[str, object] = {}
 ROW_COLS = (
     "case_id", "feature_name", "modality", "plane", "image_path", "background",
     "radius_px", "rotation_deg", "parsed_label", "reason", "shape", "correct",
-    "model_id", "thinking", "raw_output",
+    "model_id", "input_text", "thinking", "raw_output",
 )
 
 
@@ -311,6 +311,8 @@ def images_html(rows: List[dict], page: int, query: Dict[str, str]) -> str:
     cards = []
     for r in chunk:
         reason = esc(r["reason"]) if r["reason"] else '<i style="color:#999">(no reason)</i>'
+        inp = (f"<details class='raw'><summary>input / prompt</summary><pre>{esc(r['input_text'])}</pre></details>"
+               if r.get("input_text") else "")
         think = (f"<details class='raw'><summary>thinking</summary><pre>{esc(r['thinking'])}</pre></details>"
                  if r.get("thinking") else "")
         raw = (f"<details class='raw'><summary>raw output</summary><pre>{esc(r['raw_output'])}</pre></details>"
@@ -320,7 +322,7 @@ def images_html(rows: List[dict], page: int, query: Dict[str, str]) -> str:
             f'<img src="{img_url(r["image_path"])}" loading="lazy">'
             f'<div class="meta">{esc(r["case_id"])} · {esc(r["modality"])} · {esc(r["plane"])}</div>'
             f'<div>drew: <b>{esc(r["shape"])}</b> &nbsp; said: {pred_badge(r)}</div>'
-            f'<div class="reason">{reason}</div>{think}{raw}</div>'
+            f'<div class="reason">{reason}</div>{inp}{think}{raw}</div>'
         )
 
     body = (f'<h1><a href="/">&larr; summary</a> &nbsp; {total} image(s)</h1>'
