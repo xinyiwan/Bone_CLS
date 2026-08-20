@@ -114,3 +114,17 @@ python /working/working/vision_model/medgemma_pilot/run_medgemma.py --mode quick
 
 # Run server to check results
 python review_server.py --results /results/inference/inference_results.csv --port 8547 --host 0.0.0.0
+
+
+
+======================
+uv run python3 working/vision_model/preprocess/run.py  --data-root /projects/prjs1779/BONE-AI/subdata \
+  --out-root /projects/prjs1779/BONE-AI/output/preprocess \
+  --sequence-table /projects/prjs1779/BONE-AI/subdata/case_metadata.csv \
+  --config /projects/prjs1779/BONE-AI/Bone_CLS/working/vision_model/preprocess/feature_config.yaml --index-only
+
+uv run python3 working/vision_model/preprocess/run.py  --data-root /projects/prjs1779/BONE-AI/subdata \
+  --out-root /projects/prjs1779/BONE-AI/output/preprocess \
+  --sequence-table /projects/prjs1779/BONE-AI/subdata/case_metadata.csv \
+  --config /projects/prjs1779/BONE-AI/Bone_CLS/working/vision_model/preprocess/feature_config.yaml  \ 
+  --labels-dir /projects/prjs1779/BONE-AI/output/vision_model/label_out/jsons
