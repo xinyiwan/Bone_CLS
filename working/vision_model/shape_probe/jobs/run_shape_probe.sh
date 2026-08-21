@@ -11,6 +11,13 @@
 # you have eyeballed the preview. There is no aggregate step: the probe scores
 # per image, not per lesion, so shard CSVs are just concatenated at eval.
 #
+# GPUs: keep --nodes=1 and set --gpus-per-node = NUM_SHARDS below. sbatch runs
+# this script on the FIRST allocated node only, so --nodes=2 does not give it a
+# second GPU -- the extra node just sits idle while CUDA_VISIBLE_DEVICES=1
+# selects a device that does not exist. That case does NOT crash: CUDA reports
+# no devices, device_map="auto" quietly places the model on CPU, and the shard
+# appears to hang instead of failing. Multi-node would need srun per node.
+#
 #SBATCH --job-name=shape_probe_mg
 #SBATCH --partition=gpu_a100
 #SBATCH --nodes=1
@@ -57,6 +64,19 @@ mkdir -p "$OUTDIR"
     echo "FATAL: no pyproject.toml under $REPO -- uv would run outside the project" >&2
     exit 1
 }
+# Every shard pins itself to CUDA_VISIBLE_DEVICES=$i, so there must be at least
+# NUM_SHARDS real devices ON THIS NODE. Fewer means the surplus shards land on a
+# nonexistent device and fall back to CPU -- no error, just a shard that never
+# finishes. Fail here instead.
+N_GPU=$(nvidia-smi -L 2>/dev/null | wc -l)
+if (( N_GPU < NUM_SHARDS )); then
+    echo "FATAL: NUM_SHARDS=$NUM_SHARDS but this node has $N_GPU GPU(s)." >&2
+    echo "       Set #SBATCH --gpus-per-node=$NUM_SHARDS with --nodes=1 (sbatch only" >&2
+    echo "       runs this script on the first node, so --nodes>1 adds no GPUs here)." >&2
+    exit 1
+fi
+echo "$N_GPU GPU(s) on this node, running $NUM_SHARDS shard(s)"
+
 uv run --no-sync python -c "import torch, transformers" || {
     echo "FATAL: the venv is not importable (mid-install, or wrong project root)" >&2
     exit 1
