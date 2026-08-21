@@ -291,6 +291,10 @@ def main() -> None:
     ap.add_argument("--mask-dilate-px", type=int, default=0)
     ap.add_argument("--no-foreground-norm", action="store_true")
     ap.add_argument("--overlay", action="store_true")
+    ap.add_argument("--save-mask", action="store_true",
+                    help="also write the binary mask crop next to each image and record it in\n"
+                         "metadata.csv as mask_path; required by seg_probe/ to score an\n"
+                         "automatic segmenter against the radiologist in the crop's own frame")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -330,6 +334,7 @@ def main() -> None:
         mask_dilate_px=args.mask_dilate_px,
         foreground_only=not args.no_foreground_norm,
         overlay=args.overlay,
+        save_mask=args.save_mask,
     )
     resolve = make_dataset_resolver(index, aliases)
     gt_for = make_gt_lookup(args.labels_dir, args.imaging_features_key) if args.labels_dir else None
