@@ -15,7 +15,7 @@ PROJECT_ROOT=${PROJECT_ROOT:-/projects/prjs1779/BONE-AI}
 REPO_ROOT=${REPO_ROOT:-${PROJECT_ROOT}/Bone_CLS}
 
 DATA_ROOT=${DATA_ROOT:-${PROJECT_ROOT}/subdata}
-OUT_ROOT=${OUT_ROOT:-${PROJECT_ROOT}/output/preprocess}
+OUT_ROOT=${OUT_ROOT:-${PROJECT_ROOT}/output/preprocess/shape_256_m}
 SEQUENCE_TABLE=${SEQUENCE_TABLE:-${DATA_ROOT}/case_metadata.csv}
 CONFIG=${CONFIG:-${REPO_ROOT}/working/vision_model/preprocess/feature_config.yaml}
 LABELS_DIR=${PROJECT_ROOT}/output/label_out/jsons
@@ -23,7 +23,7 @@ LABELS_DIR=${PROJECT_ROOT}/output/label_out/jsons
 # -------------------------------------------------------------- options ----
 OUT_SIZE=${OUT_SIZE:-256}
 # extra flags, override to e.g. EXTRA_ARGS="--overlay" for a real extraction run
-EXTRA_ARGS=${EXTRA_ARGS:---overlay}
+EXTRA_ARGS=${EXTRA_ARGS:---overlay --save-mask}
 
 # ---------------------------------------------------------- environment ----
 export UV_CACHE_DIR=${UV_CACHE_DIR:-${PROJECT_ROOT}/.uv-cache}

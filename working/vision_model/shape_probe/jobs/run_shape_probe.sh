@@ -22,8 +22,7 @@
 #SBATCH --partition=gpu_a100
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=18
-#SBATCH --gpus-per-node=1
+#SBATCH --gpus-per-node=2
 #SBATCH --time=01:00:00
 #SBATCH --output=/projects/prjs1779/BONE-AI/logs/out/slurm-%x-%j.out
 #SBATCH --error=/projects/prjs1779/BONE-AI/logs/err/slurm-%x-%j.err
@@ -40,14 +39,17 @@ export HF_HOME=/scratch-shared/$USER/hf-cache
 # project", then ModuleNotFoundError: No module named 'torch'). $SLURM_SUBMIT_DIR
 # would work but silently depends on where you happened to type sbatch.
 REPO=/gpfs/work2/0/prjs1779/BONE-AI/Bone_CLS
+BACKGROUND_VAR=mri
+LEVEL=s
 
-MODEL=/scratch-shared/$USER/models/medgemma-1.5-4b-it
+
+MODEL=/scratch-shared/$USER/models/medgemma-27b-it
 # Output of build_shapes.py --out-root <dir>  (NOT the preprocess metadata.csv).
-SHAPE_META=/scratch-shared/$USER/BONE-AI/shape_probe/mri/shape_metadata.csv
-OUTDIR=/scratch-shared/$USER/BONE-AI/shape_probe/mri
-OUT=$OUTDIR/probe_results.csv
-NUM_SHARDS=1
-BATCH_SIZE=16
+SHAPE_META=/scratch-shared/$USER/BONE-AI/pseudo_shape/$BACKGROUND_VAR/shape_256_cli_${LEVEL}/shape_metadata.csv
+OUTDIR=/scratch-shared/$USER/BONE-AI/results/pseudo_shape/$BACKGROUND_VAR
+OUT=$OUTDIR/probe_results_cli_${LEVEL}_27b.csv
+NUM_SHARDS=2
+BATCH_SIZE=64
 
 cd "$REPO/working/vision_model/shape_probe"
 

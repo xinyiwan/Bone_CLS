@@ -8,11 +8,10 @@
 # it across four would only add inter-GPU traffic and make each token slower.
 #
 #SBATCH --job-name=run_medgemma_mg
-#SBATCH --partition=gpu_a100
+#SBATCH --partition=gpu_h100
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=72
-#SBATCH --gpus-per-node=1
+#SBATCH --gpus-per-node=2
 #SBATCH --time=01:00:00
 #SBATCH --output=/projects/prjs1779/BONE-AI/logs/out/slurm-%x-%j.out
 #SBATCH --error=/projects/prjs1779/BONE-AI/logs/err/slurm-%x-%j.err
@@ -29,12 +28,12 @@ export HF_HOME=/scratch-shared/$USER/hf-cache
 # project", then ModuleNotFoundError: No module named 'torch').
 REPO=/gpfs/work2/0/prjs1779/BONE-AI/Bone_CLS
 
-MODEL=/scratch-shared/$USER/models/medgemma-1.5-4b-it
+MODEL=/scratch-shared/$USER/models/medgemma-27b-it
 METADATA=/projects/prjs1779/BONE-AI/output/preprocess/metadata.csv
 OUTDIR=/scratch-shared/$USER/BONE-AI
 OUT=$OUTDIR/results.csv
 NUM_SHARDS=1
-BATCH_SIZE=16
+BATCH_SIZE=32
 
 mkdir -p "$OUTDIR"
 cd "$REPO/working/vision_model/medgemma_pilot"
