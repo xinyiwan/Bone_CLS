@@ -49,6 +49,9 @@ class PipelineOptions:
     mask_dilate_px: int = 0          # only for 'masked': keep a rim of tissue
     foreground_only: bool = True
     overlay: bool = False
+    # Write the binary mask crop alongside each image (see seg_probe/): needed to
+    # score an automatic segmenter against the radiologist in the crop's own frame.
+    save_mask: bool = False
 
 
 def _safe_name(s: str) -> str:
@@ -127,7 +130,7 @@ def process_feature(
                 # 'bbox' keeps surrounding tissue; 'masked' drops everything
                 # outside the segmentation (feature-level override wins).
                 mode = spec.crop_mode or opt.crop_mode
-                need_mask = opt.overlay or mode == "masked"
+                need_mask = opt.overlay or opt.save_mask or mode == "masked"
                 crop_m = crop_with_bbox(m2d, ebox, mode=opt.pad_mode, pad_value=0) if need_mask else None
                 if mode == "masked":
                     crop_img = apply_mask(crop_img, crop_m, background=0.0, dilate_px=opt.mask_dilate_px)
@@ -137,10 +140,22 @@ def process_feature(
                 png = feat_dir / f"{req.modality}_{plane}_{idx}.png"
                 save_gray_png(out_img, png)
 
+                out_mask = resize_mask(crop_m, opt.out_size) if need_mask else None
+
                 if opt.overlay:
-                    out_mask = resize_mask(crop_m, opt.out_size)
                     save_rgb_png(draw_contour_overlay(out_img, out_mask),
                                  feat_dir / f"{req.modality}_{plane}_{idx}_overlay.png")
+
+                # The mask crop, saved as a plain binary PNG in the SAME geometry
+                # as image_path. Without it any downstream comparison against an
+                # automatic segmenter (seg_probe/) has to re-derive the crop from
+                # the NIfTI and re-do the resize, which is where off-by-one and
+                # interpolation mismatches creep in and silently deflate Dice.
+                mask_png = ""
+                if opt.save_mask:
+                    mask_png = feat_dir / f"{req.modality}_{plane}_{idx}_mask.png"
+                    save_gray_png((out_mask > 0).astype(np.float32), mask_png)
+                    mask_png = str(mask_png)
 
                 # One row per image (plane/slice).
                 rows.append({
@@ -150,6 +165,7 @@ def process_feature(
                     "plane": plane,
                     "slice_index": idx,
                     "image_path": str(png),
+                    "mask_path": mask_png,
                     "crop_bbox": f"[{ebox[0]},{ebox[1]},{ebox[2]},{ebox[3]}]",
                     "margin_used": f"{margin_desc}|{mode}",
                     "ground_truth_label": ground_truth,

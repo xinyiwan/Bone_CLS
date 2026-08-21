@@ -28,6 +28,7 @@ METADATA_FIELDS = [
     "plane",
     "slice_index",
     "image_path",
+    "mask_path",          # binary mask crop, same geometry as image_path ('' unless --save-mask)
     "crop_bbox",
     "margin_used",
     "ground_truth_label",
