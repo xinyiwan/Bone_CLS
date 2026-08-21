@@ -14,17 +14,76 @@ the probe stops being a proxy for the real task.
 
 All shapes are inscribed in a circle of radius `radius_px` around `center`, so
 the four classes cover comparable image area and cannot be told apart by size.
+
+TWO SHAPE SETS
+--------------
+`icons` (circle/square/triangle/star) is the original probe. Every class is a
+polygon with a distinct VERTEX COUNT (3, 4, inf, 10-with-spikes), so a model can
+solve it by counting corners -- a categorical cue that real tumour margins do
+not have. Near-perfect accuracy there says "the overlay is visible", nothing
+more.
+
+`clinical` is the harder set: the five values of the `shape` feature in
+medgemma_pilot/feature_prompts.yaml. All five come out of ONE radial equation
+
+    r(theta) = R * [1 + a*sin(k*theta + phi)          # lobulated: k smooth bulges
+                      - d*dent(theta)                 # geographic: one concave arc
+                      + b*noise(theta)                # irregular: high-freq jaggedness
+                      + c*bump(theta)                 # exophytic: one flat-topped stalk
+                      + eps*surface(theta)]           # tiny texture on ALL families
+
+with only the parameters differing, so corner-counting cannot separate them --
+the model has to judge the CHARACTER of the boundary. Because a/d/b/c are
+continuous, `difficulty` sweeps deformation amplitude and turns the probe from a
+pass/fail number into a psychometric curve ("lobulated separates from round once
+bulges exceed ~15% of R"), which can then be compared against the deformation
+amplitude actually present in the annotated lesions.
 """
 
 from __future__ import annotations
 
 import math
-from typing import Sequence, Tuple
+import random
+from typing import Dict, Sequence, Tuple
 
 import cv2
 import numpy as np
 
 SHAPES = ("circle", "square", "triangle", "star")
+
+# The five labels of the `shape` feature in medgemma_pilot/feature_prompts.yaml,
+# in snake_case (CSV/JSON-safe). CLINICAL_LABEL_TEXT maps back to the exact
+# ground-truth vocabulary used in the real run.
+CLINICAL_SHAPES = ("round_oval", "lobulated", "geographic", "irregular", "exophytic")
+
+CLINICAL_LABEL_TEXT = {
+    "round_oval": "Round/Oval",
+    "lobulated": "lobulated",
+    "geographic": "geographic",
+    "irregular": "irregular",
+    "exophytic": "exophytic",
+}
+
+SHAPE_SETS: Dict[str, Tuple[str, ...]] = {"icons": SHAPES, "clinical": CLINICAL_SHAPES}
+
+# Deformation amplitude at difficulty 1.0, i.e. the EASY end: each is a fraction
+# of R. `difficulty` multiplies all of them, so 0.35 means "bulges/dents/spikes
+# are ~1/3 as pronounced" -- the same five classes, closer together.
+BASE = {
+    "aspect": 0.45,   # round_oval: ellipse elongation (1 + aspect)
+    "lobe": 0.30,     # lobulated: sinusoid amplitude
+    "dent": 0.80,     # geographic: depth of the single concave arc
+    "jag": 0.28,      # irregular: high-frequency noise amplitude
+    "bump": 1.10,     # exophytic: height of the single outward stalk
+}
+
+DIFFICULTY_PRESETS = {"easy": 1.0, "medium": 0.6, "hard": 0.35}
+
+# Roughly one pixel at typical radii; present on EVERY family so that "perfectly
+# smooth rasterisation" is not itself a tell for round_oval. Keep it well below
+# BASE["lobe"] * the smallest difficulty you sweep, or the texture itself starts
+# to look lobulated and the round/lobulated boundary stops being controlled.
+SURFACE_NOISE = 0.01
 
 DEFAULT_COLOR = (255, 0, 0)  # RGB, matches preprocess.overlay.draw_contour_overlay
 DEFAULT_THICKNESS = 2
@@ -70,6 +129,137 @@ def shape_polygon(shape: str, center: Tuple[float, float], radius: float,
     raise ValueError(f"Unknown shape {shape!r} (expected one of {SHAPES})")
 
 
+# --------------------------------------------------------------------------
+# clinical set: one radial equation, five parameter regimes
+# --------------------------------------------------------------------------
+
+def _surface(theta: np.ndarray, rng: random.Random, k_lo: int, k_hi: int, n_harm: int) -> np.ndarray:
+    """Band-limited periodic noise, unit-ish amplitude: a sum of `n_harm`
+    harmonics with distinct integer wavenumbers from [k_lo, k_hi], random phases
+    and random weights. Built from harmonics rather than per-pixel noise so the
+    curve stays closed and smooth -- a jagged margin here means genuine high
+    spatial frequency, not rasterisation grit.
+
+    The weights matter: equal-amplitude harmonics produce an evenly-spaced,
+    gear-like outline that reads as *regular*, which is exactly the wrong look
+    for the `irregular` class. Random weights over distinct k give the
+    unpredictable, non-repeating margin the label describes."""
+    ks = rng.sample(range(k_lo, k_hi + 1), min(n_harm, k_hi - k_lo + 1))
+    weights = [rng.uniform(0.35, 1.0) for _ in ks]
+    norm = math.sqrt(sum(w * w for w in weights)) or 1.0
+    acc = np.zeros_like(theta)
+    for k, w in zip(ks, weights):
+        acc += w * np.sin(k * theta + rng.uniform(0, 2 * math.pi)) / norm
+    return acc
+
+
+def clinical_radii(
+    family: str,
+    n_points: int,
+    difficulty: float,
+    rng: random.Random,
+) -> Tuple[np.ndarray, np.ndarray, dict]:
+    """(theta, r/R, params) for one clinical family. Radii are returned as a
+    fraction of R so the caller controls absolute size, and `params` is written
+    into the metadata CSV so eval can break accuracy down by the deformation
+    amplitude that actually produced each image."""
+    theta = np.linspace(0.0, 2.0 * math.pi, n_points, endpoint=False)
+    p: dict = {"family": family, "difficulty": round(difficulty, 3)}
+
+    # Every family carries the same faint surface texture and the same slight
+    # ellipticity, so neither can be used as a shortcut cue for one class.
+    r = 1.0 + SURFACE_NOISE * _surface(theta, rng, 10, 20, 4)
+    base_aspect = 1.0 + 0.10 * rng.random()
+
+    if family == "round_oval":
+        base_aspect = 1.0 + BASE["aspect"] * difficulty * rng.uniform(0.4, 1.0)
+
+    elif family == "lobulated":
+        # Several rounded convex lobes side by side. k is the discriminating
+        # cue vs `irregular` (4-7 low harmonics vs 8-24 high ones).
+        k = rng.randint(4, 7)
+        a = BASE["lobe"] * difficulty * rng.uniform(0.8, 1.0)
+        r = r + a * np.sin(k * theta + rng.uniform(0, 2 * math.pi))
+        p.update(lobe_k=k, lobe_amp=round(a, 3))
+
+    elif family == "geographic":
+        # ONE broad, sharply demarcated concave arc -- a scalloped bite. Narrow
+        # enough in angle to read as a bite, wide enough not to look like noise.
+        d = BASE["dent"] * difficulty * rng.uniform(0.8, 1.0)
+        sigma = rng.uniform(0.40, 0.55)          # rad, ~45-63 deg half-width
+        dth = np.angle(np.exp(1j * (theta - rng.uniform(0, 2 * math.pi))))
+        r = r - d * np.exp(-(dth ** 2) / (2 * sigma ** 2))
+        p.update(dent_depth=round(d, 3), dent_sigma=round(sigma, 3))
+
+    elif family == "irregular":
+        # No repeatable geometry: many high harmonics, so bulges are neither
+        # countable nor evenly spaced.
+        b = BASE["jag"] * difficulty * rng.uniform(0.8, 1.0)
+        r = r + b * _surface(theta, rng, 7, 22, 7)
+        p.update(jag_amp=round(b, 3))
+
+    elif family == "exophytic":
+        # One dominant flat-topped protrusion on an otherwise smooth mass: the
+        # mushroom/polypoid stalk. Super-Gaussian (^4) gives the flat cap that a
+        # plain Gaussian would round off into a mere nipple.
+        c = BASE["bump"] * difficulty * rng.uniform(0.8, 1.0)
+        sigma = rng.uniform(0.22, 0.34)          # rad, narrow: it is a stalk
+        dth = np.angle(np.exp(1j * (theta - rng.uniform(0, 2 * math.pi))))
+        r = r + c * np.exp(-(dth ** 4) / (2 * sigma ** 4))
+        p.update(bump_height=round(c, 3), bump_sigma=round(sigma, 3))
+
+    else:
+        raise ValueError(f"Unknown clinical family {family!r} (expected one of {CLINICAL_SHAPES})")
+
+    r = np.clip(r, 0.15, None)
+    p["aspect"] = round(base_aspect, 3)
+    # Normalise so every family is inscribed in R: area/extent cannot separate
+    # classes, only boundary character can.
+    return theta, r / float(r.max()), p
+
+
+def clinical_polygon(
+    family: str,
+    center: Tuple[float, float],
+    radius: float,
+    rotation_deg: float = 0.0,
+    difficulty: float = 1.0,
+    rng: random.Random | None = None,
+    n_points: int = 512,
+) -> Tuple[np.ndarray, dict]:
+    """Closed contour vertices for one clinical family, plus its params."""
+    rng = rng or random.Random()
+    theta, r, p = clinical_radii(family, n_points, difficulty, rng)
+    cx, cy = center
+    phi = math.radians(rotation_deg)
+    # Ellipticity applied in the shape's own frame, then rotated with it, so
+    # elongation direction is not always image-vertical.
+    # Elongate by squashing the minor axis (not stretching the major one), so
+    # the contour still fits inside R and aspect cannot be read off as size.
+    x = radius * r * np.cos(theta)
+    y = radius * r * np.sin(theta) / p["aspect"]
+    xr = cx + x * math.cos(phi) - y * math.sin(phi)
+    yr = cy + x * math.sin(phi) + y * math.cos(phi)
+    return np.round(np.stack([xr, yr], axis=1)).astype(np.int32), p
+
+
+def draw_poly(
+    rgb: np.ndarray,
+    poly: np.ndarray,
+    color: Sequence[int] = DEFAULT_COLOR,
+    thickness: int = DEFAULT_THICKNESS,
+    filled: bool = False,
+) -> np.ndarray:
+    """Draw an arbitrary closed contour with the real overlay's colour/thickness."""
+    out = np.ascontiguousarray(np.asarray(rgb, dtype=np.uint8).copy())
+    col = tuple(int(c) for c in color)
+    if filled:
+        cv2.fillPoly(out, [poly], col)
+    else:
+        cv2.polylines(out, [poly], isClosed=True, color=col, thickness=int(thickness), lineType=cv2.LINE_AA)
+    return out
+
+
 def draw_shape(
     rgb: np.ndarray,
     shape: str,
@@ -88,8 +278,10 @@ def draw_shape(
     if shape == "circle":
         cv2.circle(out, (int(round(center[0])), int(round(center[1]))), int(round(radius)), col, t)
     else:
-        # generate a randon rotation degree
-        rotation_deg = np.random.uniform(0, 360)
+        # Rotation comes from the caller (build_shapes draws it from the seeded
+        # RNG and records it in the metadata) -- do NOT re-draw it here, or the
+        # recorded rotation_deg stops describing the image and the build stops
+        # being reproducible from --seed.
         poly = shape_polygon(shape, center, radius, rotation_deg)
         if filled:
             cv2.fillPoly(out, [poly], col)

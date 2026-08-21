@@ -2,9 +2,17 @@
 Run the shape-perception probe: can MedGemma see an overlay drawn on the crop?
 
 The model gets exactly the framing it gets in the real run -- an MRI crop of a
-bone lesion with a red outline drawn on it -- but the outline is a circle,
-square, triangle or star instead of the true tumour contour, and the only
-question asked is which shape it is. Chance is 25%.
+bone lesion with a red outline drawn on it -- but the outline is synthetic
+instead of the true tumour contour, and the only question asked is what shape
+it is. Two vocabularies, set at build time and read back off the metadata:
+
+    icons     circle/square/triangle/star -- perception, chance 25%
+    clinical  the 5 margin classes of feature_prompts.yaml -- discrimination,
+              chance 20%, with --difficulty sweeping deformation amplitude so
+              eval reports an accuracy CURVE rather than one number
+
+Nothing else differs between them: same messages structure, same parser, same
+sharding. See README.md for what each result means.
 
 Reads the CSV from `build_shapes.py`, writes one row per image, and scores it.
 It reuses `medgemma_pilot/run_medgemma.py` for model loading, batched
@@ -43,7 +51,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "medgemma_pilot"
 import prompts  # noqa: E402  (only for messages_to_text -- prompt wording stays local)
 import run_medgemma as mg  # noqa: E402  (path shim above must run first)
 
-from shapes import SHAPES  # noqa: E402
+from shapes import SHAPE_SETS  # noqa: E402
 
 log = logging.getLogger("shape_probe")
 
@@ -56,37 +64,93 @@ log = logging.getLogger("shape_probe")
 # self-describing and shard files concatenate cleanly.
 RESULT_FIELDS = [
     "case_id", "feature_name", "modality", "plane", "image_path",
-    "background", "radius_px", "rotation_deg", "input_text", "raw_output",
+    "background", "shape_set", "difficulty", "shape_params",
+    "radius_px", "rotation_deg", "input_text", "raw_output",
     "thinking", "parsed_label", "reason", "shape", "correct", "model_id",
 ]
 
-SYSTEM_TEXT = (
+# --------------------------------------------------------------------------
+# prompts -- one per shape set
+# --------------------------------------------------------------------------
+# The `icons` prompt asks a pure naming question. The `clinical` prompt
+# deliberately mirrors the label_definitions in medgemma_pilot/feature_prompts.yaml
+# (same discriminating axes: number of convex bulges, inward vs outward
+# curvature, smooth vs jagged, one protrusion vs many), so a gap between this
+# probe and the real run is attributable to the IMAGES, not the wording. If you
+# retune the YAML definitions, retune these to match or the comparison breaks.
+
+ICON_DEFS = "It is exactly one of: circle, square, triangle, star."
+
+CLINICAL_DEFS = (
+    "It is exactly one of these five margin descriptors:\n"
+    "- round_oval: one smooth, continuous convex curve; no separate bulges.\n"
+    "- lobulated: several (roughly 4-7) rounded convex lobes side by side, each "
+    "smooth on its own, separated by shallow notches -- a cauliflower outline.\n"
+    "- geographic: one broad, sharply demarcated CONCAVE arc, like a single bite "
+    "scooped out of an otherwise smooth boundary.\n"
+    "- irregular: many small jagged, angular projections scattered unpredictably; "
+    "no countable or repeatable geometry.\n"
+    "- exophytic: one single dominant protrusion sticking OUTWARD past an "
+    "otherwise smooth boundary (mushroom-like / polypoid)."
+)
+
+SYSTEM_TEMPLATE = (
     "You are an expert radiologist reviewing an MRI image of a bone lesion.\n"
-    "A single geometric outline has been drawn on the image in RED.\n"
-    "Your only task is to identify which geometric shape that red outline is.\n"
-    "It is exactly one of: circle, square, triangle, star.\n"
+    "A single closed outline has been drawn on the image in RED.\n"
+    "Your only task is to identify the shape of that red outline.\n"
+    "{definitions}\n"
     "Judge the shape of the RED drawn outline itself -- not the anatomy, not the "
     "lesion, not any other structure in the image.\n"
-    'Answer ONLY with a JSON object: {"prediction": "<circle|square|triangle|star>", '
-    '"reason": "<one short sentence>"}'
+    'Answer ONLY with a JSON object: {{"prediction": "<{options}>", '
+    '"reason": "<one short sentence>"}}'
 )
 
-USER_TEXT = (
+USER_TEMPLATE = (
     "This is a {modality} MRI of a bone lesion, {plane} plane. "
-    "A red geometric outline has been drawn on it. "
-    "Which shape is the red outline: circle, square, triangle, or star?"
+    "A red outline has been drawn on it. "
+    "Which of these best describes the red outline: {options}?"
 )
 
+PROMPT_DEFS = {"icons": ICON_DEFS, "clinical": CLINICAL_DEFS}
 
-def build_messages(image, modality: str, plane: str) -> List[dict]:
+
+def prompt_texts(shape_set: str) -> tuple:
+    labels = SHAPE_SETS[shape_set]
+    return (
+        SYSTEM_TEMPLATE.format(definitions=PROMPT_DEFS[shape_set], options="|".join(labels)),
+        USER_TEMPLATE.replace("{options}", ", ".join(labels)),
+    )
+
+
+def resolve_shape_set(name: str, df) -> str:
+    """'auto' reads it off the metadata: the shape_set column if build_shapes
+    wrote one, else whichever vocabulary the ground-truth labels belong to. This
+    keeps a results CSV from being scored against the wrong chance level."""
+    if name != "auto":
+        return name
+    if "shape_set" in df.columns:
+        vals = {v for v in df["shape_set"].astype(str) if v in SHAPE_SETS}
+        if len(vals) == 1:
+            return vals.pop()
+        if len(vals) > 1:
+            raise SystemExit(f"metadata mixes shape sets {sorted(vals)}; build them separately")
+    labels = set(df["shape"].astype(str))
+    for key, names in SHAPE_SETS.items():
+        if labels <= set(names):
+            return key
+    raise SystemExit(f"cannot infer --shape-set from labels {sorted(labels)}; pass it explicitly")
+
+
+def build_messages(image, modality: str, plane: str, shape_set: str = "icons") -> List[dict]:
     """Same message structure as prompts.build_medgemma_messages (system turn
     with the constant task, one user turn with image + context) -- kept local and
     tiny because the probe's prompt is deliberately not feature-config driven."""
+    system_text, user_text = prompt_texts(shape_set)
     return [
-        {"role": "system", "content": [{"type": "text", "text": SYSTEM_TEXT}]},
+        {"role": "system", "content": [{"type": "text", "text": system_text}]},
         {"role": "user", "content": [
             {"type": "image", "image": image},
-            {"type": "text", "text": USER_TEXT.format(modality=modality or "unknown-sequence",
+            {"type": "text", "text": user_text.format(modality=modality or "unknown-sequence",
                                                       plane=plane or "unknown")},
         ]},
     ]
@@ -124,6 +188,7 @@ def infer(
     out_path: Path,
     generate: "mg.Generate",
     model_id: str = "",
+    shape_set: str = "auto",
     batch_size: int = 1,
     shard_index: int = 0,
     num_shards: int = 1,
@@ -136,6 +201,9 @@ def infer(
     df = pd.read_csv(metadata, dtype=str).fillna("")
     if limit:
         df = df.head(limit)
+    shape_set = resolve_shape_set(shape_set, df)
+    labels = list(SHAPE_SETS[shape_set])
+    log.info("shape set %r -> %d label(s), chance %.3f", shape_set, len(labels), 1 / len(labels))
     n_total = len(df)
     if num_shards > 1:
         df = df.iloc[shard_index::num_shards]
@@ -170,7 +238,8 @@ def infer(
                 except Exception as e:  # noqa: BLE001 -- missing/unreadable image
                     log.warning("skip image %s: %s", row["image_path"], e)
                     continue
-                messages = build_messages(image, row.get("modality", ""), row.get("plane", ""))
+                messages = build_messages(image, row.get("modality", ""), row.get("plane", ""),
+                                          shape_set=shape_set)
                 batch_messages.append(messages)
                 # Render now, while the messages exist -- the image becomes an
                 # '<image>' placeholder, so this is cheap to store per row.
@@ -186,7 +255,7 @@ def infer(
                 )
 
             for (row, input_text), raw in zip(batch_rows, raws):
-                label, reason = mg.parse_answer(raw, list(SHAPES))
+                label, reason = mg.parse_answer(raw, labels)
                 gt = str(row.get("shape", ""))
                 writer.writerow({
                     "case_id": row.get("case_id", ""),
@@ -195,6 +264,9 @@ def infer(
                     "plane": row.get("plane", ""),
                     "image_path": row["image_path"],
                     "background": row.get("background", ""),
+                    "shape_set": shape_set,
+                    "difficulty": row.get("difficulty", ""),
+                    "shape_params": row.get("shape_params", ""),
                     "radius_px": row.get("radius_px", ""),
                     "rotation_deg": row.get("rotation_deg", ""),
                     "input_text": input_text,
@@ -233,15 +305,36 @@ def evaluate(results: List[Path] | Path) -> None:
         print("no scorable rows")
         return
 
+    shape_set = resolve_shape_set("auto", scored)
+    labels = SHAPE_SETS[shape_set]
+
     acc = scored["correct"].astype(float).mean()
-    print(f"\nShape probe: {n} images, accuracy {acc:.3f}  (chance = {1/len(SHAPES):.3f})")
+    print(f"\nShape probe [{shape_set}]: {n} images, accuracy {acc:.3f}  "
+          f"(chance = {1/len(labels):.3f})")
     n_fail = len(df) - n
     if n_fail:
         print(f"  unparseable answers (excluded): {n_fail} ({n_fail/len(df):.1%})")
 
     print("\nPer-shape recall:")
     for shape, g in scored.groupby("shape"):
-        print(f"  {shape:9s} n={len(g):4d}  acc={g['correct'].astype(float).mean():.3f}")
+        print(f"  {shape:11s} n={len(g):4d}  acc={g['correct'].astype(float).mean():.3f}")
+
+    # The point of the clinical set: accuracy as a FUNCTION of deformation
+    # amplitude. A curve that falls to chance between two levels localises the
+    # model's discrimination threshold, which can then be compared against the
+    # amplitude actually present in the annotated lesions.
+    if "difficulty" in scored and scored["difficulty"].astype(str).str.strip().any():
+        d = scored[scored["difficulty"].astype(str).str.strip() != ""].copy()
+        d["difficulty"] = d["difficulty"].astype(float)
+        if d["difficulty"].nunique() > 1:
+            print("\nAccuracy by difficulty (deformation amplitude; lower = subtler):")
+            pivot = (d.assign(correct=d["correct"].astype(float))
+                       .pivot_table(index="shape", columns="difficulty",
+                                    values="correct", aggfunc="mean"))
+            print(pivot.round(3).to_string())
+            print("\n  overall:")
+            for lv, g in d.groupby("difficulty"):
+                print(f"    d={lv:<5g} n={len(g):4d}  acc={g['correct'].astype(float).mean():.3f}")
 
     print("\nPrediction distribution (a flat-guessing model collapses onto one label):")
     for label, cnt in scored["parsed_label"].value_counts().items():
@@ -265,6 +358,9 @@ def main() -> None:
     ap.add_argument("--out", type=Path, help="output CSV (infer mode)")
     ap.add_argument("--results", type=Path, nargs="+",
                     help="results CSV(s) (eval mode); pass every shard file from a multi-GPU run")
+    ap.add_argument("--shape-set", default="auto", choices=["auto", *sorted(SHAPE_SETS)],
+                    help="which label vocabulary and prompt to use; 'auto' reads it off the "
+                         "metadata's shape_set column (or infers it from the labels)")
     # model / decoding -- kept identical to run_medgemma.py so both share a launcher
     ap.add_argument("--model-id", default="google/medgemma-1.5-4b-it")
     ap.add_argument("--max-new-tokens", type=int, default=512)
@@ -295,7 +391,8 @@ def main() -> None:
             out = out.with_name(f"{out.stem}.shard{args.shard_index}{out.suffix}")
             log.info("sharded run -> writing %s", out)
         generate = mg.make_generate(args.backend, args.model_id, args.max_new_tokens)
-        infer(args.metadata, out, generate, model_id=args.model_id, batch_size=args.batch_size,
+        infer(args.metadata, out, generate, model_id=args.model_id, shape_set=args.shape_set,
+              batch_size=args.batch_size,
               shard_index=args.shard_index, num_shards=args.num_shards, limit=args.limit)
     else:
         if not args.results:

@@ -1,6 +1,11 @@
 #!/bin/bash
-# Shape probe (pseudo-segmentation sanity check): can MedGemma see the red
-# overlay at all? Chance = 25%. See ../README.md for what the result means.
+# Shape probe (pseudo-segmentation sanity check). Two ladders, chosen when you
+# BUILD the images with build_shapes.py --shape-set:
+#   icons     can MedGemma see the red overlay at all?          chance 25%
+#   clinical  can it discriminate the 5 margin classes?         chance 20%
+# run_shape_probe.py reads which one from the metadata, so nothing here changes
+# between them -- just point SHAPE_META/OUTDIR at the right build.
+# See ../README.md for what the result means.
 #
 # INFERENCE ONLY -- assumes build_shapes.py has already written $SHAPE_META and
 # you have eyeballed the preview. There is no aggregate step: the probe scores

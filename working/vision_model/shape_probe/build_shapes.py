@@ -5,9 +5,24 @@ QUESTION THIS ANSWERS
     In the real run we hand MedGemma a crop with the radiologist's red tumour
     contour burned in (`run_medgemma.py --use-contour`) and assume it can see
     that contour. Can it? This script replaces the true contour with a
-    *geometric* shape -- circle / square / triangle / star -- drawn at the same
-    place, in the same colour and thickness. If the model cannot name the shape,
-    it almost certainly is not reading the real contour either.
+    *synthetic* one drawn at the same place, in the same colour and thickness,
+    and asks only which shape it is.
+
+    Two ladders, selected with --shape-set:
+
+    icons     circle / square / triangle / star. Tests PERCEPTION -- is the
+              overlay visible at all. Each class has a distinct vertex count,
+              so it is solvable by corner-counting; near-perfect accuracy here
+              means the overlay is legible, not that margin shape is legible.
+
+    clinical  the five margin classes of the `shape` feature in
+              medgemma_pilot/feature_prompts.yaml, all generated from ONE radial
+              equation with different parameters (see shapes.py). Tests
+              DISCRIMINATION -- can it tell 5 smooth lobes from 20 jagged spikes
+              when both are "bumpy". --difficulty sweeps deformation amplitude,
+              so the output is a psychometric curve rather than one number, and
+              it is an UPPER BOUND on the real task: same question, same
+              vocabulary, same prompt path, but perfect labels and no anatomy.
 
 DESIGN
     - Input is the metadata CSV the preprocess pipeline already wrote. We do NOT
@@ -50,7 +65,13 @@ import cv2
 import numpy as np
 import pandas as pd
 
-from shapes import SHAPES, draw_shape
+from shapes import (  # noqa: E402
+    DIFFICULTY_PRESETS,
+    SHAPE_SETS,
+    clinical_polygon,
+    draw_poly,
+    draw_shape,
+)
 
 log = logging.getLogger("shape_probe.build")
 
@@ -63,6 +84,9 @@ SHAPE_FIELDS = [
     "source_image_path",   # the plain crop this was drawn on
     "image_path",          # the shape image -- this is what the model sees
     "shape",               # GROUND TRUTH for the probe
+    "shape_set",           # icons | clinical
+    "difficulty",          # deformation amplitude multiplier (clinical set only)
+    "shape_params",        # per-image generator params, e.g. "lobe_k=5;lobe_amp=0.24"
     "background",          # mri | blank | noise
     "filled",
     "center_xy",
@@ -128,10 +152,36 @@ def make_background(src_path: Path, mode: str, size: Tuple[int, int], rng: rando
     raise ValueError(f"Unknown background {mode!r} (mri|blank|noise)")
 
 
+def resolve_difficulties(spec: str) -> list:
+    """'hard' -> [0.35]; '1.0,0.6,0.35' -> [1.0, 0.6, 0.35]. A list makes the
+    build a SWEEP: every source row is emitted once per level, so eval can plot
+    accuracy against deformation amplitude instead of reporting one number."""
+    out = []
+    for tok in str(spec).split(","):
+        tok = tok.strip()
+        if not tok:
+            continue
+        if tok in DIFFICULTY_PRESETS:
+            out.append(DIFFICULTY_PRESETS[tok])
+        else:
+            try:
+                out.append(float(tok))
+            except ValueError:
+                raise SystemExit(
+                    f"--difficulty {tok!r} is neither a float nor one of "
+                    f"{sorted(DIFFICULTY_PRESETS)}"
+                )
+    if not out:
+        raise SystemExit("--difficulty must name at least one level")
+    return out
+
+
 def build(
     metadata: Path,
     out_root: Path,
     background: str = "mri",
+    shape_set: str = "icons",
+    difficulty: str = "easy",
     all_shapes: bool = False,
     shape_scale: float = 1.0,
     filled: bool = False,
@@ -145,9 +195,12 @@ def build(
         df = df.head(limit)
     rng = random.Random(seed)
 
+    shape_names = SHAPE_SETS[shape_set]
+    levels = resolve_difficulties(difficulty) if shape_set == "clinical" else [1.0]
+
     # Balanced assignment: a shuffled round-robin, so counts are equal +-1 and
     # the order is not correlated with case/feature.
-    order = list(SHAPES)
+    order = list(shape_names)
     rng.shuffle(order)
     assigned = [order[i % len(order)] for i in range(len(df))]
 
@@ -161,9 +214,10 @@ def build(
 
         for i, (_, row) in enumerate(df.iterrows()):
             src = Path(str(row["image_path"]))
-            shapes_here = list(SHAPES) if all_shapes else [assigned[i]]
+            shapes_here = list(shape_names) if all_shapes else [assigned[i]]
+            variants = [(s, lv) for s in shapes_here for lv in levels]
             try:
-                for shape in shapes_here:
+                for shape, level in variants:
                     canvas = make_background(src, background, fallback_size, rng)
                     h, w = canvas.shape[:2]
                     fr, fc = lesion_fraction(row)
@@ -172,11 +226,19 @@ def build(
                     rot = rng.uniform(0, 360)
                     center = (w / 2.0, h / 2.0)
 
-                    img = draw_shape(canvas, shape, center, radius, rot,
-                                     thickness=thickness, filled=filled)
+                    if shape_set == "clinical":
+                        poly, params = clinical_polygon(shape, center, radius, rot,
+                                                        difficulty=level, rng=rng)
+                        img = draw_poly(canvas, poly, thickness=thickness, filled=filled)
+                        suffix = f"_shape-{shape}_d{level:g}"
+                    else:
+                        params = {}
+                        img = draw_shape(canvas, shape, center, radius, rot,
+                                         thickness=thickness, filled=filled)
+                        suffix = f"_shape-{shape}"
 
                     dst = (out_root / str(row["case_id"]).replace("/", "__")
-                           / str(row["feature_name"]) / f"{src.stem}_shape-{shape}.png")
+                           / str(row["feature_name"]) / f"{src.stem}{suffix}.png")
                     dst.parent.mkdir(parents=True, exist_ok=True)
                     cv2.imwrite(str(dst), cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
 
@@ -189,6 +251,9 @@ def build(
                         "source_image_path": str(src),
                         "image_path": str(dst),
                         "shape": shape,
+                        "shape_set": shape_set,
+                        "difficulty": f"{level:g}" if shape_set == "clinical" else "",
+                        "shape_params": ";".join(f"{k}={v}" for k, v in params.items()),
                         "background": background,
                         "filled": filled,
                         "center_xy": f"({center[0]:.1f},{center[1]:.1f})",
@@ -212,8 +277,17 @@ def main() -> None:
     ap.add_argument("--out-root", required=True, type=Path)
     ap.add_argument("--background", default="mri", choices=["mri", "blank", "noise"],
                     help="mri = real crop (main condition); blank/noise = controls")
+    ap.add_argument("--shape-set", default="icons", choices=sorted(SHAPE_SETS),
+                    help="icons = circle/square/triangle/star (vertex-countable, chance 25%%); "
+                         "clinical = the 5 feature_prompts.yaml margin classes generated from one "
+                         "radial equation (chance 20%%)")
+    ap.add_argument("--difficulty", default="easy",
+                    help="clinical set only: deformation amplitude, a preset "
+                         f"({'/'.join(DIFFICULTY_PRESETS)}) or a float. Comma-separate for a SWEEP "
+                         "(e.g. '1.0,0.6,0.35') -- each source row is emitted once per level and "
+                         "eval breaks accuracy down by level.")
     ap.add_argument("--all-shapes", action="store_true",
-                    help="emit all 4 shapes per source image (paired design) instead of 1")
+                    help="emit every shape in the set per source image (paired design) instead of 1")
     ap.add_argument("--shape-scale", type=float, default=1.0,
                     help="multiply the lesion-derived radius (e.g. 1.5 for an easier probe)")
     ap.add_argument("--filled", action="store_true", help="solid shape instead of an outline")
@@ -224,9 +298,9 @@ def main() -> None:
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-    build(args.metadata, args.out_root, background=args.background, all_shapes=args.all_shapes,
-          shape_scale=args.shape_scale, filled=args.filled, thickness=args.thickness,
-          limit=args.limit, seed=args.seed)
+    build(args.metadata, args.out_root, background=args.background, shape_set=args.shape_set,
+          difficulty=args.difficulty, all_shapes=args.all_shapes, shape_scale=args.shape_scale,
+          filled=args.filled, thickness=args.thickness, limit=args.limit, seed=args.seed)
 
 
 if __name__ == "__main__":

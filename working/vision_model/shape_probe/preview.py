@@ -30,8 +30,12 @@ def contact_sheet(metadata: Path, out: Path, n: int = 24, cols: int = 6,
         if img is None:
             continue
         img = cv2.resize(img, (cell, cell), interpolation=cv2.INTER_NEAREST)
-        cv2.putText(img, str(r["shape"]), (4, cell - 6), cv2.FONT_HERSHEY_SIMPLEX,
-                    0.45, (0, 255, 0), 1, cv2.LINE_AA)
+        # Show the difficulty level too: on a clinical sweep the same class looks
+        # very different at d=1.0 and d=0.35, and the tile is unreadable without it.
+        d = str(r.get("difficulty", "") or "").strip()
+        caption = f"{r['shape']}{f'  d={d}' if d else ''}"
+        cv2.putText(img, caption, (4, cell - 6), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.40, (0, 255, 0), 1, cv2.LINE_AA)
         y, x = (i // cols) * cell, (i % cols) * cell
         sheet[y:y + cell, x:x + cell] = img
 

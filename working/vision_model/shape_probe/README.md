@@ -1,16 +1,75 @@
-# Shape probe — can MedGemma actually see the overlay?
+# Shape probe — what can MedGemma actually see?
 
-A pseudo-segmentation sanity experiment. In the real pilot we feed MedGemma the
-lesion crop with the radiologist's **red contour** burned in
-(`run_medgemma.py --use-contour`) and *assume* the model uses it. This probe
-tests that assumption directly: keep everything the same — same crops, same
-centre, same red colour and 2 px thickness, same decoding path — but replace the
-true contour with a **circle / square / triangle / star**, and ask only *which
-shape is drawn*.
+A pseudo-segmentation experiment. In the real pilot we feed MedGemma the lesion
+crop with the radiologist's **red contour** burned in (`run_medgemma.py
+--use-contour`) and *assume* the model uses it. This probe tests that directly:
+keep everything the same — same crops, same centre, same red colour and 2 px
+thickness, same decoding path — but replace the true contour with a synthetic
+one, and ask only *what shape is drawn*.
 
-**Chance is 25%.** If accuracy sits near chance on the `mri` condition, the
-model is not reading the overlay, and any "contour helps" result in the main
-experiment needs re-interpreting.
+There are **two ladders**, selected at build time with `--shape-set`.
+
+## `icons` — perception (chance 25%)
+
+`circle / square / triangle / star`. Answers *is the overlay visible at all*.
+
+Every class here is a polygon with a distinct **vertex count** (3, 4, ∞,
+10-with-spikes), so it is solvable by corner-counting — a categorical cue real
+tumour margins do not have. Near-perfect accuracy therefore means the overlay is
+legible; it does **not** mean margin shape is legible. That is what the second
+ladder is for.
+
+## `clinical` — discrimination (chance 20%)
+
+The five values of the `shape` feature in
+`../medgemma_pilot/feature_prompts.yaml`: `round_oval / lobulated / geographic /
+irregular / exophytic`. Answers *can it tell 5 smooth lobes from 20 jagged
+spikes when both are "bumpy"*.
+
+All five come out of **one radial equation** (`shapes.py`), differing only in
+parameters:
+
+```
+r(θ) = R · [ 1 + a·sin(kθ+φ)      lobulated   k = 4-7 smooth bulges
+               − d·dent(θ)        geographic  one broad concave bite
+               + b·noise(θ)       irregular   7 random harmonics, k = 7-22
+               + c·bump(θ)        exophytic   one flat-topped stalk (mushroom)
+               + ε·surface(θ) ]   all classes tiny shared texture
+```
+
+so corner-counting cannot separate them — the model has to judge the *character*
+of the boundary. Every family is normalised to the same inscribing radius, and
+every family carries the same faint surface texture and slight ellipticity, so
+neither size nor smoothness-of-rasterisation is a shortcut cue.
+
+### Why this is the useful experiment
+
+`a`, `d`, `b`, `c` are **continuous**, and `--difficulty` scales all of them at
+once. Build a sweep and you get a psychometric curve instead of a single number:
+
+```
+Accuracy by difficulty (deformation amplitude; lower = subtler):
+difficulty   0.35   0.60   1.00
+lobulated   0.167  0.833  1.000     <- threshold sits between d=0.35 and d=0.6
+```
+
+which supports statements like *"MedGemma separates lobulated from round only
+once bulges exceed ~15% of R"*. Measure the deformation amplitude actually
+present in the annotated lesions and you learn whether the real task is even
+above the model's resolution.
+
+It is also an **upper bound** on the real `shape` feature: same question, same
+vocabulary, same prompt path, but perfect labels and no anatomy. Real-MRI
+accuracy can only be lower, and the gap isolates "real images + inter-rater
+label noise" from "the model cannot do this shape task".
+
+> The `clinical` prompt in `run_shape_probe.py` deliberately mirrors the
+> `label_definitions` in `feature_prompts.yaml`. If you retune those, retune the
+> prompt to match — otherwise the probe stops bounding the real run.
+
+**Before spending GPU time, look at `preview.py`'s contact sheet and check you
+would label the tiles correctly yourself.** If a human cannot separate the
+classes at `d=0.35`, a model failing there is not evidence about the model.
 
 ## Why it's a separate directory
 
@@ -23,7 +82,8 @@ copy-paste.
 
 ```
 shape_probe/
-  shapes.py           # shape rasterizers (red outline, thickness 2 — matches preprocess/overlay.py)
+  shapes.py           # icon rasterizers + the clinical radial generator
+                      #   (red outline, thickness 2 — matches preprocess/overlay.py)
   build_shapes.py     # metadata.csv -> shape images + shape_metadata.csv
   preview.py          # contact sheet QC before burning GPU time
   run_shape_probe.py  # infer + eval  (imports medgemma_pilot/run_medgemma.py)
@@ -51,8 +111,8 @@ radius      = 0.5 * min(H * frac_rows, W * frac_cols) * --shape-scale
 
 so the shape covers about the area the true contour would. That keeps the probe
 at the real task's difficulty instead of making it a trivially large shape.
-Rotation is randomised per image; all four shapes are inscribed in the same
-circle, so they can't be told apart by size.
+Rotation is randomised per image; all shapes — icons and clinical families
+alike — are inscribed in the same circle, so they can't be told apart by size.
 
 *Caveat:* `crop_bbox` is the **requested** box. Under the pipeline default
 `--pad-mode clip`, lesions touching the volume border yield a smaller actual
@@ -75,16 +135,24 @@ all and the probe says nothing about contours — try `--shape-scale 1.5` or
 `--filled` first.
 
 Other knobs worth a run: `--filled` (solid shape — an upper bound on
-salience), `--shape-scale`, `--all-shapes` (paired design: all four shapes on
-each background, removes background as a confound).
+salience), `--shape-scale`, `--all-shapes` (paired design: every shape in the
+set on each background, removes background as a confound).
 
 ## Run
 
 ```bash
 # 1. Build the pseudo-segmentation images (no GPU)
+#    perception ladder:
 python build_shapes.py \
     --metadata /results/preprocess/overlay_128/metadata.csv \
     --out-root /results/shape_probe/mri --background mri
+
+#    discrimination ladder + amplitude sweep
+#    (--all-shapes x 3 levels = 15 images per source row; drop --all-shapes for 3)
+python build_shapes.py \
+    --metadata /results/preprocess/overlay_128/metadata.csv \
+    --out-root /results/shape_probe/clinical --background mri \
+    --shape-set clinical --difficulty 1.0,0.6,0.35 --all-shapes
 
 # 2. QC — look at this before running inference
 python preview.py --metadata /results/shape_probe/mri/shape_metadata.csv \
