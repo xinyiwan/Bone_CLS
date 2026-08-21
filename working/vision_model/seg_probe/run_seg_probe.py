@@ -46,7 +46,7 @@ import argparse
 import csv
 import logging
 import random
-import sys
+import time
 from pathlib import Path
 from typing import List, Optional
 
@@ -124,6 +124,11 @@ def segment(
     out_path.parent.mkdir(parents=True, exist_ok=True)
     mask_dir = out_path.parent / "pred_masks"
     n_ok = n_skip = 0
+    # Throughput, so a --limit smoke test tells you what the full run will cost.
+    # This matters most on CPU, where MedSAM is seconds per image rather than
+    # tens of milliseconds and a walltime guess can be off by an order.
+    n_total = len(df)
+    t_start = time.perf_counter()
 
     with open(out_path, "w", newline="") as fh:
         writer = csv.DictWriter(fh, fieldnames=RESULT_FIELDS)
@@ -178,8 +183,12 @@ def segment(
                 rec.update({f"pred_{k}": f"{rp[k]:.4f}" for k in ROUGHNESS_KEYS})
                 writer.writerow(rec)
                 n_ok += 1
-                log.info("%s %s dice=%s", row.get("case_id", "?"), row.get("modality", ""),
-                         rec["dice"])
+                done = n_ok + n_skip
+                el = time.perf_counter() - t_start
+                rate = done / el if el > 0 else 0.0
+                log.info("[%d/%d] %s %s dice=%s  %.2f img/s, ~%.1f min left",
+                         done, n_total, row.get("case_id", "?"), row.get("modality", ""),
+                         rec["dice"], rate, (n_total - done) / rate / 60 if rate > 0 else float("nan"))
             except Exception as e:  # noqa: BLE001 -- one bad row must not kill the sweep
                 n_skip += 1
                 log.warning("skip %s: %s", row.get("image_path", "?"), e)
@@ -201,6 +210,18 @@ def evaluate(results: List[Path]) -> None:
     for c in num:
         if c in df:
             df[c] = pd.to_numeric(df[c], errors="coerce")
+
+    # Rows are grouped by backend name only, so two runs of the same backend at
+    # different jitter settings would merge into one meaningless average. That is
+    # easy to do by accident when sweeping --shift-frac into separate OUTDIRs and
+    # then globbing them all into one eval.
+    for be, g in df.groupby("backend"):
+        combos = g.groupby(["jitter_shift", "jitter_scale"]).size()
+        if len(combos) > 1:
+            print(f"\nWARNING: '{be}' mixes {len(combos)} jitter settings in one group; "
+                  f"the averages below are across all of them:")
+            for (s, sc), n in combos.items():
+                print(f"           shift={s} scale={sc}  n={n}")
 
     for backend, g in df.groupby("backend"):
         print(f"\n{'=' * 68}\n{backend}   n={len(g)}   "
