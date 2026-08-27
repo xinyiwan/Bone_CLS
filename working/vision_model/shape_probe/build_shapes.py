@@ -137,7 +137,13 @@ def lesion_fraction(row) -> Tuple[float, float]:
 def make_background(src_path: Path, mode: str, size: Tuple[int, int], rng: random.Random) -> np.ndarray:
     """RGB uint8 canvas. 'mri' = the real crop (the condition we care about);
     'blank'/'noise' are controls that isolate "can it see shapes at all" from
-    "can it see shapes over anatomy"."""
+    "can it see shapes over anatomy".
+
+    `rng` MUST be a stream dedicated to backgrounds, never the one that draws
+    shapes. Only 'noise' consumes from it, so sharing would advance the sequence
+    in the noise build and not in the others -- every rotation and clinical
+    parameter would then differ between the three arms, and a per-image
+    difference could no longer be attributed to the background alone."""
     if mode == "mri":
         img = cv2.imread(str(src_path), cv2.IMREAD_GRAYSCALE)
         if img is None:
@@ -193,7 +199,14 @@ def build(
     df = pd.read_csv(metadata)
     if limit:
         df = df.head(limit)
+    # Two independent streams. `rng` draws everything about the SHAPE (class
+    # assignment, rotation, clinical parameters); `bg_rng` draws only the noise
+    # canvas. Keeping them separate is what makes the mri / blank / noise builds
+    # paired: with one shared stream the noise arm's extra draw per image would
+    # desynchronise it from the other two, so the same source row would carry a
+    # differently-rotated shape in each arm.
     rng = random.Random(seed)
+    bg_rng = random.Random(seed + 1_000_003)
 
     shape_names = SHAPE_SETS[shape_set]
     levels = resolve_difficulties(difficulty) if shape_set == "clinical" else [1.0]
@@ -218,7 +231,7 @@ def build(
             variants = [(s, lv) for s in shapes_here for lv in levels]
             try:
                 for shape, level in variants:
-                    canvas = make_background(src, background, fallback_size, rng)
+                    canvas = make_background(src, background, fallback_size, bg_rng)
                     h, w = canvas.shape[:2]
                     fr, fc = lesion_fraction(row)
                     radius = 0.5 * min(h * fr, w * fc) * shape_scale
