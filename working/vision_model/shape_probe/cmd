@@ -59,6 +59,21 @@ docker run --rm -it --gpus 6  \
         --out /results/shape_probe/blank/probe_results.csv
 
 
+# --- 3b. few-shot (esp. the clinical set: 1 = one example per margin class) --
+    # exemplars from a separate easy build -> nothing held out, so this scores
+    # the same images as the zero-shot run above and the two are comparable
+    python shape_probe/run_shape_probe.py --mode infer --num-few-shot 1 \
+        --model-id /models/medgemma-1.5-4b-it \
+        --few-shot-metadata /results/shape_probe/clinical_easy/shape_metadata.csv \
+        --metadata /results/shape_probe/clinical/shape_metadata.csv \
+        --out /results/shape_probe/clinical/probe_results_1shot.csv
+
+    # zero-shot vs few-shot in one table (eval breaks down by num_few_shot)
+    python shape_probe/run_shape_probe.py --mode eval \
+        --results /results/shape_probe/clinical/probe_results.csv \
+                  /results/shape_probe/clinical/probe_results_1shot.csv
+
+
 # --- 4. score --------------------------------------------------------------
     python shape_probe/run_shape_probe.py --mode eval \
         --results /results/shape_probe/mri/probe_results.csv

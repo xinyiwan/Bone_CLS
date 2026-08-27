@@ -147,12 +147,14 @@ python build_shapes.py \
     --metadata /results/preprocess/overlay_128/metadata.csv \
     --out-root /results/shape_probe/mri --background mri
 
-#    discrimination ladder + amplitude sweep
-#    (--all-shapes x 3 levels = 15 images per source row; drop --all-shapes for 3)
+#    discrimination ladder + amplitude sweep. One random (balanced) class per
+#    source row per level = 3 images per row, matching how the icons build
+#    behaves. Add --all-shapes for the paired design instead (5x more images:
+#    every class on every background).
 python build_shapes.py \
     --metadata /results/preprocess/overlay_128/metadata.csv \
     --out-root /results/shape_probe/clinical --background mri \
-    --shape-set clinical --difficulty 1.0,0.6,0.35 --all-shapes
+    --shape-set clinical --difficulty 1.0,0.6,0.35
 
 # 2. QC — look at this before running inference
 python preview.py --metadata /results/shape_probe/mri/shape_metadata.csv \
@@ -169,6 +171,44 @@ python run_shape_probe.py --mode eval --results /results/shape_probe/mri/probe_r
 ```
 
 Start with `--limit 40` on steps 1 and 3 to get a read in a few minutes.
+
+## Few-shot
+
+`--num-few-shot N` prepends N labeled examples **per class** as completed
+user → assistant turns before the query image. `1` with the clinical set means
+five example turns, one per margin class, interleaved.
+
+```bash
+# zero-shot and few-shot on the SAME image set (exemplars from a separate build,
+# so nothing is held out of --metadata and the two runs are directly comparable)
+python run_shape_probe.py --mode infer --num-few-shot 1 \
+    --few-shot-metadata /results/shape_probe/clinical_easy/shape_metadata.csv \
+    --metadata /results/shape_probe/clinical/shape_metadata.csv \
+    --out /results/shape_probe/clinical/probe_results_1shot.csv
+
+# or draw exemplars from the build itself -- those images are then held out of
+# scoring (a model must not be graded on an image it was just shown the answer to)
+python run_shape_probe.py --mode infer --num-few-shot 1 \
+    --metadata /results/shape_probe/clinical/shape_metadata.csv \
+    --out /results/shape_probe/clinical/probe_results_1shot.csv
+```
+
+Exemplars are picked from the **easiest difficulty present** — the point of an
+example is to show the prototype, so on a sweep you want a pronounced lobulated
+margin teaching the class, then to ask about `d=0.35`. Selection is seeded
+(`--seed`) and happens before sharding, so every shard shows the model the same
+examples and the shard CSVs remain concatenable.
+
+This matters far more for `clinical` than for `icons`. Nobody needs an example
+to know what a triangle is; "lobulated vs irregular" is a wording judgement, and
+a worked example pins it down in a way the prose definitions cannot. The
+`num_few_shot` column is stamped on every row, so `--mode eval` and the review
+server both break accuracy down by it — concatenate a 0-shot and a 1-shot
+results CSV to read the contrast off one table.
+
+> Prefer `--few-shot-metadata` when you plan to compare against a zero-shot run.
+> Drawing exemplars from the scored build removes 5 images from the denominator,
+> so the two runs are no longer scoring quite the same set.
 
 ## On the cluster
 

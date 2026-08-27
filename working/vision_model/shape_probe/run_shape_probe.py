@@ -40,10 +40,11 @@ from __future__ import annotations
 import argparse
 import csv
 import logging
+import random
 import sys
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import pandas as pd
 
@@ -67,6 +68,7 @@ RESULT_FIELDS = [
     "background", "shape_set", "difficulty", "shape_params",
     "radius_px", "rotation_deg", "input_text", "raw_output",
     "thinking", "parsed_label", "reason", "shape", "correct", "model_id",
+    "num_few_shot",
 ]
 
 # --------------------------------------------------------------------------
@@ -141,19 +143,75 @@ def resolve_shape_set(name: str, df) -> str:
     raise SystemExit(f"cannot infer --shape-set from labels {sorted(labels)}; pass it explicitly")
 
 
-def build_messages(image, modality: str, plane: str, shape_set: str = "icons") -> List[dict]:
+def build_messages(image, modality: str, plane: str, shape_set: str = "icons",
+                   few_shot: Optional[List[tuple]] = None) -> List[dict]:
     """Same message structure as prompts.build_medgemma_messages (system turn
-    with the constant task, one user turn with image + context) -- kept local and
-    tiny because the probe's prompt is deliberately not feature-config driven."""
+    with the constant task, then optional prior example turns, then one user turn
+    with the query image) -- kept local and tiny because the probe's prompt is
+    deliberately not feature-config driven.
+
+    `few_shot` is [(PIL image, label), ...]. Each becomes a completed user ->
+    assistant exchange before the query, with the assistant's reply in exactly
+    the JSON format we ask for, so the examples demonstrate the output shape as
+    well as the visual class."""
     system_text, user_text = prompt_texts(shape_set)
-    return [
-        {"role": "system", "content": [{"type": "text", "text": system_text}]},
-        {"role": "user", "content": [
-            {"type": "image", "image": image},
-            {"type": "text", "text": user_text.format(modality=modality or "unknown-sequence",
-                                                      plane=plane or "unknown")},
-        ]},
-    ]
+    query_text = user_text.format(modality=modality or "unknown-sequence",
+                                  plane=plane or "unknown")
+
+    messages: List[dict] = [{"role": "system", "content": [{"type": "text", "text": system_text}]}]
+    for ex_image, ex_label in few_shot or []:
+        messages.append({"role": "user", "content": [
+            {"type": "image", "image": ex_image},
+            {"type": "text", "text": query_text},
+        ]})
+        messages.append({"role": "assistant", "content": [
+            {"type": "text",
+             "text": f'{{"prediction": "{ex_label}", "reason": "reference example."}}'},
+        ]})
+    messages.append({"role": "user", "content": [
+        {"type": "image", "image": image},
+        {"type": "text", "text": query_text},
+    ]})
+    return messages
+
+
+def select_examples(df, labels: List[str], n_per_class: int, rng) -> List[dict]:
+    """Pick n_per_class exemplar rows for every label, interleaved by class so the
+    example turns cycle through the vocabulary rather than showing all of one
+    class first.
+
+    Exemplars are taken from the EASIEST difficulty available (largest value),
+    because the point of an example is to show the prototype: on a sweep you want
+    to ask "does seeing a pronounced lobulated margin help at d=0.35", not to
+    spend the example on an ambiguous one. The caller must exclude the returned
+    rows from inference -- scoring a model on an image it was just shown the
+    answer to is not a measurement."""
+    if n_per_class <= 0:
+        return []
+    pool = df
+    if "difficulty" in df.columns:
+        vals = pd.to_numeric(df["difficulty"], errors="coerce")
+        if vals.notna().any():
+            pool = df[vals == vals.max()]
+
+    per_class: Dict[str, List[dict]] = {}
+    for label in labels:
+        rows = [r for _, r in pool.iterrows() if str(r.get("shape", "")) == label]
+        if len(rows) < n_per_class:
+            raise SystemExit(
+                f"--num-few-shot {n_per_class} needs {n_per_class} example(s) of {label!r}, "
+                f"but the metadata has only {len(rows)} at the easiest difficulty. "
+                "Build more images, or lower --num-few-shot."
+            )
+        rng.shuffle(rows)
+        per_class[label] = rows[:n_per_class]
+
+    # Interleave: one of each class, then the next of each class.
+    out: List[dict] = []
+    for i in range(n_per_class):
+        for label in labels:
+            out.append(per_class[label][i])
+    return out
 
 
 def _done_keys(out_path: Path) -> set:
@@ -193,6 +251,9 @@ def infer(
     shard_index: int = 0,
     num_shards: int = 1,
     limit: Optional[int] = None,
+    num_few_shot: int = 0,
+    few_shot_metadata: Optional[Path] = None,
+    seed: int = 0,
 ) -> None:
     """One row per shape image. Rows are independent, so sharding is a plain
     strided split (every num_shards-th row) -- unlike run_medgemma there is no
@@ -204,6 +265,27 @@ def infer(
     shape_set = resolve_shape_set(shape_set, df)
     labels = list(SHAPE_SETS[shape_set])
     log.info("shape set %r -> %d label(s), chance %.3f", shape_set, len(labels), 1 / len(labels))
+
+    # Few-shot. Exemplars are chosen BEFORE sharding, from the unsharded frame,
+    # so every shard shows the model the same examples -- otherwise the shards
+    # would be running subtly different experiments and their CSVs could not be
+    # concatenated. Loaded once here and reused for every query image.
+    few_shot: List[tuple] = []
+    if num_few_shot > 0:
+        ex_df = pd.read_csv(few_shot_metadata, dtype=str).fillna("") if few_shot_metadata else df
+        ex_rows = select_examples(ex_df, labels, num_few_shot, random.Random(seed))
+        few_shot = [(mg.to_jpeg_rgb(r["image_path"]), str(r["shape"])) for r in ex_rows]
+        if few_shot_metadata is None:
+            # Same build: an exemplar image must not also be scored.
+            ex_paths = {str(r["image_path"]) for r in ex_rows}
+            before = len(df)
+            df = df[~df["image_path"].astype(str).isin(ex_paths)]
+            log.info("%d-shot per class (%d example turns); held %d exemplar image(s) out of inference",
+                     num_few_shot, len(few_shot), before - len(df))
+        else:
+            log.info("%d-shot per class (%d example turns) from %s",
+                     num_few_shot, len(few_shot), few_shot_metadata)
+
     n_total = len(df)
     if num_shards > 1:
         df = df.iloc[shard_index::num_shards]
@@ -239,7 +321,7 @@ def infer(
                     log.warning("skip image %s: %s", row["image_path"], e)
                     continue
                 messages = build_messages(image, row.get("modality", ""), row.get("plane", ""),
-                                          shape_set=shape_set)
+                                          shape_set=shape_set, few_shot=few_shot)
                 batch_messages.append(messages)
                 # Render now, while the messages exist -- the image becomes an
                 # '<image>' placeholder, so this is cheap to store per row.
@@ -277,6 +359,7 @@ def infer(
                     "shape": gt,
                     "correct": int(label == gt) if label != "PARSE_FAILED" else "",
                     "model_id": model_id,
+                    "num_few_shot": num_few_shot,
                 })
                 log.info("%s [%s] -> %s (true=%s)", row.get("case_id", "?"),
                          row.get("background", "?"), label, gt)
@@ -343,7 +426,7 @@ def evaluate(results: List[Path] | Path) -> None:
     print("\nConfusion matrix (rows = true, cols = predicted):")
     print(pd.crosstab(scored["shape"], scored["parsed_label"]).to_string())
 
-    for col in ("background", "modality", "plane", "model_id"):
+    for col in ("num_few_shot", "background", "modality", "plane", "model_id"):
         if col in scored and scored[col].nunique() > 1:
             print(f"\nAccuracy by {col}:")
             for key, g in scored.groupby(col):
@@ -372,6 +455,19 @@ def main() -> None:
                     help="split the metadata across N processes (one per GPU); each shard gets its "
                          "own --out (.shard<i> suffix), pass them all to --mode eval afterwards")
     ap.add_argument("--limit", type=int, default=None, help="only the first N metadata rows (smoke test)")
+    # few-shot
+    ap.add_argument("--num-few-shot", type=int, default=0,
+                    help="N labeled example turns PER CLASS before the query image "
+                         "(0 = zero-shot). 1 with the clinical set = 5 examples, which is where "
+                         "few-shot pays off: the 5 margin classes are far easier to pin down by "
+                         "example than by prose. Exemplars are taken from the easiest difficulty "
+                         "and held out of scoring.")
+    ap.add_argument("--few-shot-metadata", type=Path, default=None,
+                    help="take exemplars from a DIFFERENT build (e.g. the blank-background or "
+                         "easy-difficulty one) instead of the images being scored. Nothing is then "
+                         "held out of --metadata, so zero-shot and few-shot runs score the exact "
+                         "same image set and are directly comparable.")
+    ap.add_argument("--seed", type=int, default=0, help="exemplar selection seed")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -393,7 +489,9 @@ def main() -> None:
         generate = mg.make_generate(args.backend, args.model_id, args.max_new_tokens)
         infer(args.metadata, out, generate, model_id=args.model_id, shape_set=args.shape_set,
               batch_size=args.batch_size,
-              shard_index=args.shard_index, num_shards=args.num_shards, limit=args.limit)
+              shard_index=args.shard_index, num_shards=args.num_shards, limit=args.limit,
+              num_few_shot=args.num_few_shot, few_shot_metadata=args.few_shot_metadata,
+              seed=args.seed)
     else:
         if not args.results:
             raise SystemExit("--results is required for --mode eval")

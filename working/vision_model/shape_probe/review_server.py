@@ -40,6 +40,7 @@ RUN_INFO: Dict[str, object] = {}
 
 ROW_COLS = (
     "case_id", "feature_name", "modality", "plane", "image_path", "background",
+    "shape_set", "difficulty", "num_few_shot",
     "radius_px", "rotation_deg", "parsed_label", "reason", "shape", "correct",
     "model_id", "input_text", "thinking", "raw_output",
 )
@@ -257,6 +258,11 @@ def summary_html() -> str:
             + unscored + run_info_html()
             + '<div class="statgrid">'
             + _stat_table("shape", breakdown("shape"))
+            # difficulty is the psychometric curve and num_few_shot the
+            # zero- vs few-shot contrast -- the two comparisons the probe exists
+            # to make, so they sit next to the class breakdown, not below it.
+            + _stat_table("difficulty", breakdown("difficulty"))
+            + _stat_table("num_few_shot", breakdown("num_few_shot"))
             + _stat_table("background", breakdown("background"))
             + _stat_table("modality", breakdown("modality"))
             + _stat_table("plane", breakdown("plane"))
@@ -273,7 +279,13 @@ def index_html() -> str:
     return PAGE.format(title="Shape probe review", body=body)
 
 
-def filter_rows(result: str, shape: str, background: str, modality: str, plane: str) -> List[dict]:
+# Facets that both get an accuracy table on the summary page and can filter the
+# gallery. One list, so a table's link can never point at a facet the filter
+# ignores -- add a column here and both sides pick it up.
+FACETS = ("shape", "difficulty", "num_few_shot", "background", "modality", "plane")
+
+
+def filter_rows(result: str, facets: Dict[str, str]) -> List[dict]:
     out = ROWS
     if result == "wrong":
         out = [r for r in out if is_scored(r) and not is_correct(r)]
@@ -281,8 +293,7 @@ def filter_rows(result: str, shape: str, background: str, modality: str, plane: 
         out = [r for r in out if is_correct(r)]
     elif result == "unparsed":
         out = [r for r in out if not is_scored(r)]
-    for key, val in (("shape", shape), ("background", background),
-                     ("modality", modality), ("plane", plane)):
+    for key, val in facets.items():
         if val:
             out = [r for r in out if (r.get(key) or "?") == val]
     return out
@@ -354,12 +365,12 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/":
             self._send(index_html().encode(), "text/html; charset=utf-8")
         elif parsed.path == "/images":
-            rows = filter_rows(q("result"), q("shape"), q("background"), q("modality"), q("plane"))
+            rows = filter_rows(q("result"), {k: q(k) for k in FACETS})
             try:
                 page = int(q("page") or 1)
             except ValueError:
                 page = 1
-            query = {k: q(k) for k in ("result", "shape", "background", "modality", "plane")}
+            query = {k: q(k) for k in ("result", *FACETS)}
             self._send(images_html(rows, page, query).encode(), "text/html; charset=utf-8")
         elif parsed.path == "/img":
             path = q("path")
