@@ -31,7 +31,6 @@ from typing import Dict, List, Optional
 
 import pandas as pd
 
-SHAPES = ("circle", "square", "triangle", "star")
 PAGE_SIZE = 60  # images per gallery page; a full run is thousands of tiny PNGs
 
 ROWS: List[dict] = []
@@ -86,6 +85,22 @@ def load(results_csvs: List[Path]) -> None:
         # instead of hardcoding one shape set's labels.
         "shape_sets": distinct("shape_set"),
     })
+
+
+def classes() -> List[str]:
+    """The classes this run actually used, read off the ground truth.
+
+    NOT a hardcoded list: `build_shapes.py --skip-shapes` can leave classes out,
+    so the number of alternatives -- and therefore the chance level -- is a
+    property of the loaded rows. Hardcoding 4 shapes made every clinical run
+    display the wrong baseline."""
+    return sorted({str(r["shape"]).strip() for r in ROWS if str(r["shape"]).strip()})
+
+
+def chance_pct() -> Optional[float]:
+    """Chance accuracy in percent, or None when there is nothing to infer it from."""
+    n = len(classes())
+    return 100.0 / n if n else None
 
 
 def is_scored(r: dict) -> bool:
@@ -229,7 +244,8 @@ def confusion_html() -> str:
 
 def distribution_html() -> str:
     """Prediction distribution. A model that just always says one label lands at
-    ~25% too, so this is what separates 'chance' from 'partial ability'."""
+    the chance level too, so this is what separates 'chance' from 'partial
+    ability'."""
     scored = [r for r in ROWS if is_scored(r)]
     if not scored:
         return ""
@@ -240,8 +256,10 @@ def distribution_html() -> str:
         pct = c / n * 100
         rows += (f"<tr><td>{esc(label)}</td><td>{c}</td><td>{pct:.1f}%</td>"
                  f'<td><span class="bar" style="width:{pct * 2:.0f}px"></span></td></tr>')
+    ch = chance_pct()
+    baseline = f"the {ch:.0f}%" if ch is not None else "the accuracy above"
     return ("<h2>Prediction distribution</h2>"
-            '<div class="meta">if this collapses onto one label, the 25% is guessing, '
+            f'<div class="meta">if this collapses onto one label, {baseline} is guessing, '
             "not partial perception</div>"
             f"<table><tr><th>predicted</th><th>n</th><th>share</th><th></th></tr>{rows}</table>")
 
@@ -249,17 +267,21 @@ def distribution_html() -> str:
 def summary_html() -> str:
     c, n = overall()
     n_unscored = len(ROWS) - n
-    chance = 1 / len(SHAPES) * 100
+    labels = classes()
+    chance = chance_pct()
     verdict = ""
-    if n:
+    if n and chance is not None:
         pct = c / n * 100
         verdict = (' <span class="badge ok">above chance</span>' if pct > chance + 5
                    else ' <span class="badge bad">at chance — no evidence the overlay is seen</span>')
     unscored = (f'<div class="meta">{n_unscored} row(s) excluded: no parseable answer</div>'
                 if n_unscored else "")
+    chance_txt = (f"chance = {chance:.0f}% ({len(labels)} classes: {esc(', '.join(labels))})"
+                  " · correct / scored images"
+                  if chance is not None else "correct / scored images")
     return ('<div class="summary">'
             f"<h1>Overall accuracy: {acc_str(c, n)}{verdict}</h1>"
-            f'<span class="chance">chance = {chance:.0f}% (4 shapes) · correct / scored images</span>'
+            f'<span class="chance">{chance_txt}</span>'
             + unscored + run_info_html()
             + '<div class="statgrid">'
             + _stat_table("shape", breakdown("shape"))
@@ -404,7 +426,9 @@ def main() -> None:
     load(args.results)
     c, n = overall()
     print(f"loaded {len(ROWS)} image row(s) from {len(args.results)} file(s)")
-    print(f"overall accuracy: {acc_str(c, n)}  (chance = {100/len(SHAPES):.0f}%)")
+    ch = chance_pct()
+    print(f"overall accuracy: {acc_str(c, n)}"
+          + (f"  (chance = {ch:.0f}%, {len(classes())} classes)" if ch is not None else ""))
     print(f"serving at http://{args.host}:{args.port}  (Ctrl-C to stop)")
     ThreadingHTTPServer((args.host, args.port), Handler).serve_forever()
 
