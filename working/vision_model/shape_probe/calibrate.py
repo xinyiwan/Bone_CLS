@@ -81,25 +81,71 @@ def report(name: str, y_true: np.ndarray, y_pred: np.ndarray, labels: List[str])
     return bal
 
 
-def pairwise_auc(logp: np.ndarray, y: np.ndarray, labels: List[str]) -> None:
+def pairwise_auc(logp: np.ndarray, y: np.ndarray, labels: List[str],
+                 groups: Optional[np.ndarray] = None,
+                 difficulty: Optional[np.ndarray] = None) -> None:
     """AUC of the (a vs b) margin on the subset truly in {a, b}, for every pair.
 
     Threshold-free, so it is unaffected by the label-prior problem entirely: it
     measures only whether the model's score ORDERS the two classes correctly.
     This is the number that decides whether recalibration or fine-tuning can
     help, so it is reported before and independently of any calibration.
+
+    Two things are reported alongside the point estimate because the headline
+    number alone has misled us here before:
+
+    `eff n` -- the number of distinct case_id groups, not images. Several
+    difficulty levels are built from one source crop, so images are NOT
+    independent and the naive CI on n images is too narrow. The rough CI printed
+    uses the group count, which is the honest denominator.
+
+    the difficulty split -- the sharp test of "saturated threshold" vs "cannot
+    see it". `--difficulty` scales the deformation amplitude, so if the model
+    perceives the cue at all, AUC must RISE with difficulty even when recall
+    cannot move because the prior pins it. A flat AUC across difficulty while
+    the amplitude doubles is strong evidence the cue is not being perceived.
     """
     from sklearn.metrics import roc_auc_score
 
+    def one(mask: np.ndarray, i: int, j: int) -> Optional[tuple]:
+        if mask.sum() < 4 or len(set(y[mask])) < 2:
+            return None
+        auc = roc_auc_score((y[mask] == j).astype(int), logp[mask, j] - logp[mask, i])
+        n_eff = len(np.unique(groups[mask])) if groups is not None else int(mask.sum())
+        # Hanley-McNeil SE, with the GROUP count as the per-class denominator.
+        n1 = max(n_eff // 2, 2)
+        q1, q2 = auc / (2 - auc), 2 * auc ** 2 / (1 + auc)
+        se = float(np.sqrt(max(auc * (1 - auc) + (n1 - 1) * (q1 + q2 - 2 * auc ** 2), 0)
+                           / (n1 * n1)))
+        return auc, int(mask.sum()), n_eff, se
+
     print("\n=== pairwise ranking AUC (threshold-free; 0.5 = no signal) ===")
+    print("    CI uses the case_id GROUP count, not the image count: several")
+    print("    difficulty levels share a source crop, so images are not independent.")
     for i in range(len(labels)):
         for j in range(i + 1, len(labels)):
-            m = (y == i) | (y == j)
-            if m.sum() < 4 or len(set(y[m])) < 2:
+            r = one((y == i) | (y == j), i, j)
+            if r is None:
                 continue
-            margin = logp[m, j] - logp[m, i]  # higher => favours class j
-            auc = roc_auc_score((y[m] == j).astype(int), margin)
-            print(f"  {labels[i]:>11} vs {labels[j]:<11} n={int(m.sum()):>4}  AUC {auc:.3f}")
+            auc, n, n_eff, se = r
+            lo, hi = max(auc - 1.96 * se, 0.0), min(auc + 1.96 * se, 1.0)
+            flag = "" if lo > 0.5 else "   <- CI includes 0.5: no reliable signal"
+            print(f"  {labels[i]:>11} vs {labels[j]:<11} n={n:>4} (eff {n_eff:>3})  "
+                  f"AUC {auc:.3f}  95% CI [{lo:.3f}, {hi:.3f}]{flag}")
+
+    if difficulty is None or len(np.unique(difficulty)) < 2:
+        return
+    levels = sorted(np.unique(difficulty), key=lambda v: float(v))
+    print("\n=== the same AUC, split by difficulty (deformation amplitude) ===")
+    print("    RISING with difficulty = the cue is perceived, the threshold is just wrong.")
+    print("    FLAT across difficulty  = doubling the cue changes nothing; not perceived.")
+    for i in range(len(labels)):
+        for j in range(i + 1, len(labels)):
+            cells = []
+            for d in levels:
+                r = one(((y == i) | (y == j)) & (difficulty == d), i, j)
+                cells.append(f"d={d}: {r[0]:.3f}" if r else f"d={d}:   -- ")
+            print(f"  {labels[i]:>11} vs {labels[j]:<11}  " + "   ".join(cells))
 
 
 # --------------------------------------------------------------------------
@@ -268,7 +314,8 @@ def run_logprobs(paths: List[Path], do_geometry: bool) -> None:
         print("scored AFTER a replayed thinking block (same path as --mode infer)")
 
     # AUC first: it is the only number here that a bad threshold cannot spoil.
-    pairwise_auc(logp, y, labels)
+    diff = df["difficulty"].astype(str).to_numpy() if "difficulty" in df.columns else None
+    pairwise_auc(logp, y, labels, groups=groups, difficulty=diff)
 
     report("raw argmax (no calibration)", y, logp.argmax(1), labels)
     report("prior correction (label-free)", y, prior_correction(logp).argmax(1), labels)
