@@ -19,23 +19,54 @@ tumour margins do not have. Near-perfect accuracy therefore means the overlay is
 legible; it does **not** mean margin shape is legible. That is what the second
 ladder is for.
 
-## `clinical` — discrimination (chance 20%)
+## `clinical` — discrimination (chance 33%)
 
-The five values of the `shape` feature in
-`../medgemma_pilot/feature_prompts.yaml`: `round_oval / lobulated / geographic /
-irregular / exophytic`. Answers *can it tell 5 smooth lobes from 20 jagged
+Drawn from the `shape` feature in `../medgemma_pilot/feature_prompts.yaml`.
+`build_shapes.py` builds **three** of the five by default —
+`round_oval / lobulated / irregular` — because `--skip-shapes` defaults to
+`geographic,exophytic`. Answers *can it tell a few shallow lobes from jagged
 spikes when both are "bumpy"*.
 
-All five come out of **one radial equation** (`shapes.py`), differing only in
+> **Why those two are skipped.** Their synthetic geometry does not mean what the
+> words mean. *Geographic* describes how sharply demarcated a border is (a
+> map-like lytic edge), not concavity — a scooped bite is a different thing.
+> *Exophytic* describes growth out of the host bone, a relationship a
+> free-floating outline cannot express at all; it is not even at the same
+> semantic level as the other four. Both generators are still in `shapes.py`, so
+> `--skip-shapes ''` builds all five.
+>
+> These were also the two worst classes in both the zero-shot and few-shot runs,
+> which is consistent with the model applying the real clinical meaning of the
+> words to images built from a different definition.
+
+Every class comes out of **one radial equation** (`shapes.py`), differing only in
 parameters:
 
 ```
-r(θ) = R · [ 1 + a·sin(kθ+φ)      lobulated   k = 4-7 smooth bulges
-               − d·dent(θ)        geographic  one broad concave bite
-               + b·noise(θ)       irregular   7 random harmonics, k = 7-22
-               + c·bump(θ)        exophytic   one flat-topped stalk (mushroom)
+r(θ) = R · [ 1 + a·sin(kθ+φ)      lobulated   k = 4-7 shallow bulges (a ≈ 0.15)
+               + b·env(θ)·noise(θ) irregular  5 random harmonics, k = 8-16,
+                                              gated into 2-4 jagged patches
                + ε·surface(θ) ]   all classes tiny shared texture
+
+               − d·dent(θ)        geographic  one broad concave bite   } built only
+               + c·bump(θ)        exophytic   one flat-topped stalk    } with --skip-shapes ''
 ```
+
+The `lobulated` amplitude is deliberately **shallow**: the intended look is an
+oval you can still read as an oval, with a gentle wave riding on it, which is how
+a real lobulated margin presents — not a cauliflower of deep-cut lobes. That
+makes `lobulated` vs `round_oval` the hardest pair by design; read those two
+together in the confusion matrix.
+
+`irregular` jaggedness is **patchy**, not all-over: the noise band is low (k =
+8-16, i.e. fewer and wider-spaced spikes) and it is multiplied by a sparse
+angular envelope, so spikes cluster in 2-4 unpredictable places with smoother
+stretches between. Continuous high-frequency grit around the whole contour reads
+as a uniform *texture* — a regular appearance, and the opposite of what the label
+means. The per-image `jag_cover` in `shape_params` records what fraction of the
+perimeter is actually jagged (~0.4-0.5), so eval can check whether the sparser
+examples are the ones being missed. The band stays strictly above `lobulated`'s
+k = 4-7 on purpose: wavenumber is the stated cue separating the two classes.
 
 so corner-counting cannot separate them — the model has to judge the *character*
 of the boundary. Every family is normalised to the same inscribing radius, and
@@ -149,8 +180,9 @@ python build_shapes.py \
 
 #    discrimination ladder + amplitude sweep. One random (balanced) class per
 #    source row per level = 3 images per row, matching how the icons build
-#    behaves. Add --all-shapes for the paired design instead (5x more images:
-#    every class on every background).
+#    behaves. Add --all-shapes for the paired design instead (one image per class
+#    per level per row). Classes = the set minus --skip-shapes, which defaults to
+#    geographic,exophytic -> 3 classes, chance 33%.
 python build_shapes.py \
     --metadata /results/preprocess/overlay_128/metadata.csv \
     --out-root /results/shape_probe/clinical --background mri \
@@ -175,8 +207,15 @@ Start with `--limit 40` on steps 1 and 3 to get a read in a few minutes.
 ## Few-shot
 
 `--num-few-shot N` prepends N labeled examples **per class** as completed
-user → assistant turns before the query image. `1` with the clinical set means
-five example turns, one per margin class, interleaved.
+user → assistant turns before the query image. Classes are read off the
+metadata's `shape` column, so `1` on a default clinical build means three example
+turns, one per margin class, interleaved.
+
+The prompt's option list is derived the same way: a build that skipped a class
+never offers that class as an answer, and `--mode eval` computes chance from the
+classes actually present. Parsing still accepts the full vocabulary, so if the
+model volunteers a skipped label anyway it lands in the confusion matrix as a
+wrong answer rather than disappearing into `PARSE_FAILED`.
 
 ```bash
 # zero-shot and few-shot on the SAME image set (exemplars from a separate build,

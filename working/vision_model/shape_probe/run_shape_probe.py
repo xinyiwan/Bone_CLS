@@ -7,9 +7,11 @@ instead of the true tumour contour, and the only question asked is what shape
 it is. Two vocabularies, set at build time and read back off the metadata:
 
     icons     circle/square/triangle/star -- perception, chance 25%
-    clinical  the 5 margin classes of feature_prompts.yaml -- discrimination,
-              chance 20%, with --difficulty sweeping deformation amplitude so
-              eval reports an accuracy CURVE rather than one number
+    clinical  the margin classes of feature_prompts.yaml -- discrimination, with
+              --difficulty sweeping deformation amplitude so eval reports an
+              accuracy CURVE rather than one number. Which classes, and hence the
+              chance level, is read off the images: build_shapes.py --skip-shapes
+              drops geographic/exophytic by default, giving 3 classes at 33%
 
 Nothing else differs between them: same messages structure, same parser, same
 sharding. See README.md for what each result means.
@@ -81,20 +83,36 @@ RESULT_FIELDS = [
 # probe and the real run is attributable to the IMAGES, not the wording. If you
 # retune the YAML definitions, retune these to match or the comparison breaks.
 
-ICON_DEFS = "It is exactly one of: circle, square, triangle, star."
+# One definition line per label, keyed so a build that omits a class also omits
+# its definition. Offering a label the images never contain is not a harmless
+# extra option: it is a wrong answer the prompt itself invites, and it inflates
+# the apparent number of alternatives the chance level is computed against.
+CLINICAL_DEF_LINES = {
+    "round_oval": "- round_oval: one smooth, continuous convex curve; no separate bulges.",
+    "lobulated": "- lobulated: an overall smooth, oval-ish outline that gently waves in and out "
+                 "-- a few (roughly 4-7) broad, shallow rounded lobes riding on the curve, each "
+                 "smooth on its own, separated by soft shallow notches.",
+    "geographic": "- geographic: one broad, sharply demarcated CONCAVE arc, like a single bite "
+                  "scooped out of an otherwise smooth boundary.",
+    "irregular": "- irregular: a few patches of sharp, jagged, angular projections at "
+                 "unpredictable places on the boundary, with smoother stretches between them; "
+                 "no countable or repeatable geometry.",
+    "exophytic": "- exophytic: one single dominant protrusion sticking OUTWARD past an "
+                 "otherwise smooth boundary (mushroom-like / polypoid).",
+}
 
-CLINICAL_DEFS = (
-    "It is exactly one of these five margin descriptors:\n"
-    "- round_oval: one smooth, continuous convex curve; no separate bulges.\n"
-    "- lobulated: several (roughly 4-7) rounded convex lobes side by side, each "
-    "smooth on its own, separated by shallow notches -- a cauliflower outline.\n"
-    "- geographic: one broad, sharply demarcated CONCAVE arc, like a single bite "
-    "scooped out of an otherwise smooth boundary.\n"
-    "- irregular: many small jagged, angular projections scattered unpredictably; "
-    "no countable or repeatable geometry.\n"
-    "- exophytic: one single dominant protrusion sticking OUTWARD past an "
-    "otherwise smooth boundary (mushroom-like / polypoid)."
-)
+
+def definitions_text(shape_set: str, labels: List[str]) -> str:
+    """The definitions block for exactly `labels`, in the set's canonical order."""
+    if shape_set == "icons":
+        return f"It is exactly one of: {', '.join(labels)}."
+    missing = [l for l in labels if l not in CLINICAL_DEF_LINES]
+    if missing:
+        raise SystemExit(f"no definition line for clinical shape(s) {missing}; add one to "
+                         "CLINICAL_DEF_LINES before probing them")
+    head = f"It is exactly one of these {len(labels)} margin descriptors:"
+    return "\n".join([head, *(CLINICAL_DEF_LINES[l] for l in labels)])
+
 
 SYSTEM_TEMPLATE = (
     "You are an expert radiologist reviewing an MRI image of a bone lesion.\n"
@@ -113,8 +131,6 @@ USER_TEMPLATE = (
     "Which of these best describes the red outline: {options}?"
 )
 
-PROMPT_DEFS = {"icons": ICON_DEFS, "clinical": CLINICAL_DEFS}
-
 # One reason per label, used as the assistant reply in few-shot example turns.
 # A constant string ("reference example.") teaches the model that the `reason`
 # field is filler, which is worse than useless here: the reason is the only place
@@ -132,9 +148,9 @@ REFERENCE_REASONS = {
     "star": "The outline alternates sharp outward points with deep inward notches.",
     # clinical
     "round_oval": "The outline is one smooth continuous convex curve with no separate bulges.",
-    "lobulated": "The outline shows several rounded convex lobes side by side separated by shallow notches.",
+    "lobulated": "The outline is broadly oval but waves gently in and out over a few broad shallow lobes.",
     "geographic": "The outline is smooth except for one broad, sharply demarcated concave arc scooped inward.",
-    "irregular": "The outline has many small jagged angular projections with no countable or repeating geometry.",
+    "irregular": "The outline has jagged angular projections in a few unpredictable places with smoother stretches between.",
     "exophytic": "The outline is smooth except for one dominant protrusion sticking outward from the boundary.",
 }
 
@@ -152,10 +168,13 @@ def reference_reason(label: str) -> str:
         ) from None
 
 
-def prompt_texts(shape_set: str) -> tuple:
-    labels = SHAPE_SETS[shape_set]
+def prompt_texts(shape_set: str, labels: Optional[List[str]] = None) -> tuple:
+    """(system_text, user_template) offering exactly `labels` (default: the whole
+    set). Pass the classes the build actually contains -- see active_labels."""
+    labels = list(labels or SHAPE_SETS[shape_set])
     return (
-        SYSTEM_TEMPLATE.format(definitions=PROMPT_DEFS[shape_set], options="|".join(labels)),
+        SYSTEM_TEMPLATE.format(definitions=definitions_text(shape_set, labels),
+                               options="|".join(labels)),
         USER_TEMPLATE.replace("{options}", ", ".join(labels)),
     )
 
@@ -179,8 +198,28 @@ def resolve_shape_set(name: str, df) -> str:
     raise SystemExit(f"cannot infer --shape-set from labels {sorted(labels)}; pass it explicitly")
 
 
+def active_labels(shape_set: str, df) -> List[str]:
+    """The classes the data actually contains, in the set's canonical order.
+
+    `build_shapes.py --skip-shapes` can leave a class out of a build, so the
+    vocabulary of a run is a property of its IMAGES, not of SHAPE_SETS. Reading it
+    off the ground truth here means the prompt offers only answerable options and
+    the chance level matches the real number of alternatives -- and it needs no
+    flag, so a build and its probe cannot drift apart."""
+    present = {str(v) for v in df["shape"]}
+    labels = [n for n in SHAPE_SETS[shape_set] if n in present]
+    if not labels:
+        raise SystemExit(f"no {shape_set!r} labels in the metadata's `shape` column "
+                         f"(found {sorted(present)})")
+    dropped = [n for n in SHAPE_SETS[shape_set] if n not in present]
+    if dropped:
+        log.info("classes absent from this build and therefore NOT offered: %s", dropped)
+    return labels
+
+
 def build_messages(image, modality: str, plane: str, shape_set: str = "icons",
-                   few_shot: Optional[List[tuple]] = None) -> List[dict]:
+                   few_shot: Optional[List[tuple]] = None,
+                   labels: Optional[List[str]] = None) -> List[dict]:
     """Same message structure as prompts.build_medgemma_messages (system turn
     with the constant task, then optional prior example turns, then one user turn
     with the query image) -- kept local and tiny because the probe's prompt is
@@ -193,7 +232,7 @@ def build_messages(image, modality: str, plane: str, shape_set: str = "icons",
     discriminating cue (REFERENCE_REASONS), not a constant: a filler reason
     teaches the model the field is decorative, which is exactly the wrong lesson
     when `reason` is the only trace of what cue it used."""
-    system_text, user_text = prompt_texts(shape_set)
+    system_text, user_text = prompt_texts(shape_set, labels)
     query_text = user_text.format(modality=modality or "unknown-sequence",
                                   plane=plane or "unknown")
 
@@ -265,7 +304,7 @@ def show_exemplars(metadata: Path, shape_set: str, n_per_class: int, seed: int,
     call, same seeded RNG, so the listing IS what inference will use."""
     df = pd.read_csv(metadata, dtype=str).fillna("")
     shape_set = resolve_shape_set(shape_set, df)
-    labels = list(SHAPE_SETS[shape_set])
+    labels = active_labels(shape_set, df)
     rows = select_examples(df, labels, n_per_class, random.Random(seed))
 
     print(f"\n{len(rows)} exemplar turn(s) [{shape_set}], seed {seed}, from {metadata}")
@@ -335,8 +374,16 @@ def infer(
     if limit:
         df = df.head(limit)
     shape_set = resolve_shape_set(shape_set, df)
-    labels = list(SHAPE_SETS[shape_set])
-    log.info("shape set %r -> %d label(s), chance %.3f", shape_set, len(labels), 1 / len(labels))
+    # Two label lists, deliberately different:
+    #   `labels`  -- what the prompt OFFERS: only the classes this build contains.
+    #   `vocab`   -- what the parser ACCEPTS: the whole set. An answer naming an
+    #               unoffered class is then recorded as a wrong prediction, not as
+    #               PARSE_FAILED, so the failure stays visible in the confusion
+    #               matrix instead of vanishing from the denominator.
+    labels = active_labels(shape_set, df)
+    vocab = list(SHAPE_SETS[shape_set])
+    log.info("shape set %r -> %d label(s) %s, chance %.3f",
+             shape_set, len(labels), labels, 1 / len(labels))
 
     # Few-shot. Exemplars are chosen BEFORE sharding, from the unsharded frame,
     # so every shard shows the model the same examples -- otherwise the shards
@@ -393,7 +440,7 @@ def infer(
                     log.warning("skip image %s: %s", row["image_path"], e)
                     continue
                 messages = build_messages(image, row.get("modality", ""), row.get("plane", ""),
-                                          shape_set=shape_set, few_shot=few_shot)
+                                          shape_set=shape_set, few_shot=few_shot, labels=labels)
                 batch_messages.append(messages)
                 # Render now, while the messages exist -- the image becomes an
                 # '<image>' placeholder, so this is cheap to store per row.
@@ -409,7 +456,7 @@ def infer(
                 )
 
             for (row, input_text), raw in zip(batch_rows, raws):
-                label, reason = mg.parse_answer(raw, labels)
+                label, reason = mg.parse_answer(raw, vocab)
                 gt = str(row.get("shape", ""))
                 writer.writerow({
                     "case_id": row.get("case_id", ""),
@@ -461,7 +508,10 @@ def evaluate(results: List[Path] | Path) -> None:
         return
 
     shape_set = resolve_shape_set("auto", scored)
-    labels = SHAPE_SETS[shape_set]
+    # Chance is 1/(classes the run actually offered), not 1/(size of the
+    # vocabulary): a --skip-shapes build of 3 classes has chance 0.333, and
+    # scoring it against 0.200 would read as a real effect.
+    labels = active_labels(shape_set, scored)
 
     acc = scored["correct"].astype(float).mean()
     print(f"\nShape probe [{shape_set}]: {n} images, accuracy {acc:.3f}  "

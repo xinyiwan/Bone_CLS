@@ -34,10 +34,36 @@ docker run --rm -it --gpus 6  \
         --out-root /results/shape_probe/mri_filled --background mri --filled
 
 
+# --- 1b. clinical set: 3 margin classes ------------------------------------
+    # --skip-shapes defaults to geographic,exophytic (see build_shapes.py --help),
+    # so this builds round_oval / lobulated / irregular -- chance 33%.
+    python shape_probe/build_shapes.py \
+        --metadata /results/preprocess/overlay_128/metadata.csv \
+        --out-root /results/shape_probe/clinical --background mri \
+        --shape-set clinical --difficulty 1.0,0.6,0.35
+
+    # the easy build the few-shot exemplars come from
+    python shape_probe/build_shapes.py \
+        --metadata /results/preprocess/overlay_128/metadata.csv \
+        --out-root /results/shape_probe/clinical_easy --background mri \
+        --shape-set clinical --difficulty easy
+
+    # all five, if you want the old behaviour back
+    python shape_probe/build_shapes.py \
+        --metadata /results/preprocess/overlay_128/metadata.csv \
+        --out-root /results/shape_probe/clinical_all5 --background mri \
+        --shape-set clinical --skip-shapes ''
+
+
 # --- 2. QC the images BEFORE spending GPU time ----------------------------
     python shape_probe/preview.py \
         --metadata /results/shape_probe/mri/shape_metadata.csv \
         --out /results/shape_probe/mri/preview.png --n 24
+
+    # and the few-shot exemplars specifically (no GPU)
+    python shape_probe/run_shape_probe.py --mode exemplars --num-few-shot 1 \
+        --few-shot-metadata /results/shape_probe/clinical_easy/shape_metadata.csv \
+        --exemplar-sheet /results/shape_probe/clinical_easy/exemplars.png
 
 
 # --- 3. infer (resume-safe; re-run the same line to continue) -------------

@@ -23,8 +23,14 @@ solve it by counting corners -- a categorical cue that real tumour margins do
 not have. Near-perfect accuracy there says "the overlay is visible", nothing
 more.
 
-`clinical` is the harder set: the five values of the `shape` feature in
-medgemma_pilot/feature_prompts.yaml. All five come out of ONE radial equation
+`clinical` is the harder set: values of the `shape` feature in
+medgemma_pilot/feature_prompts.yaml. All five generators live here, but
+`build_shapes.py --skip-shapes` decides which are actually built -- by default
+`geographic` and `exophytic` are left out, because their geometry here does not
+carry the clinical meaning of the words (geographic is about how sharply
+demarcated a border is, not concavity; exophytic is about growth out of the host
+bone, which a free-floating outline cannot express). All five come out of ONE
+radial equation
 
     r(theta) = R * [1 + a*sin(k*theta + phi)          # lobulated: k smooth bulges
                       - d*dent(theta)                 # geographic: one concave arc
@@ -71,11 +77,40 @@ SHAPE_SETS: Dict[str, Tuple[str, ...]] = {"icons": SHAPES, "clinical": CLINICAL_
 # are ~1/3 as pronounced" -- the same five classes, closer together.
 BASE = {
     "aspect": 0.45,   # round_oval: ellipse elongation (1 + aspect)
-    "lobe": 0.30,     # lobulated: sinusoid amplitude
+    "lobe": 0.15,     # lobulated: sinusoid amplitude
     "dent": 0.80,     # geographic: depth of the single concave arc
     "jag": 0.28,      # irregular: high-frequency noise amplitude
     "bump": 1.10,     # exophytic: height of the single outward stalk
 }
+
+# `irregular` shape of the jaggedness, tuned separately from its amplitude.
+#
+# The band sets how many spikes fit around the perimeter: k harmonics means k
+# oscillations, so a LOW band gives fewer, wider, further-apart projections. The
+# envelope then switches the jaggedness off over part of the contour, so spikes
+# occur in a few unpredictable patches with smoother stretches between them
+# rather than running continuously all the way round.
+#
+# Both exist because "spikes everywhere at high frequency" reads as a uniform
+# texture -- a *regular* look, which is the wrong appearance for a label whose
+# whole content is "no countable or repeatable geometry". Sparser patches keep
+# the spikes individually visible and their placement unpredictable.
+#
+# These values put ~40-45% of the perimeter under active jaggedness (recorded per
+# image as `jag_cover`). Raising IRREGULAR_PATCHES towards ~6 or
+# IRREGULAR_PATCH_SIGMA towards ~1.5 returns to the old all-over look; dropping to
+# 1 patch starts to resemble `exophytic` (one localised disturbance), so keep the
+# lower bound >= 2.
+# The band stays strictly ABOVE lobulated's k=4-7: wavenumber is the stated
+# discriminating cue between the two classes, so overlapping the bands would make
+# some irregular images legitimately lobulated-looking and cap achievable
+# accuracy for reasons that have nothing to do with the model.
+IRREGULAR_K = (8, 16)          # harmonic band: 8-16 oscillations round the perimeter
+IRREGULAR_N_HARM = 5           # distinct wavenumbers drawn from that band
+IRREGULAR_PATCHES = (2, 4)     # inclusive range for the number of jagged patches
+IRREGULAR_PATCH_SIGMA = 0.35   # rad, angular half-width of one patch
+IRREGULAR_FLOOR = 0.10         # min envelope value: keeps the "smooth" stretches
+                               # slightly unsettled rather than perfectly round
 
 DIFFICULTY_PRESETS = {"easy": 1.0, "medium": 0.6, "hard": 0.35}
 
@@ -83,6 +118,9 @@ DIFFICULTY_PRESETS = {"easy": 1.0, "medium": 0.6, "hard": 0.35}
 # smooth rasterisation" is not itself a tell for round_oval. Keep it well below
 # BASE["lobe"] * the smallest difficulty you sweep, or the texture itself starts
 # to look lobulated and the round/lobulated boundary stops being controlled.
+# With BASE["lobe"]=0.15 the margin at difficulty 0.35 is 0.15*0.35 = 0.05, i.e.
+# ~5x this value -- still safe, but this is now the binding constraint on how low
+# you can push either the lobe amplitude or the difficulty floor.
 SURFACE_NOISE = 0.01
 
 DEFAULT_COLOR = (255, 0, 0)  # RGB, matches preprocess.overlay.draw_contour_overlay
@@ -153,6 +191,26 @@ def _surface(theta: np.ndarray, rng: random.Random, k_lo: int, k_hi: int, n_harm
     return acc
 
 
+def _sparse_envelope(theta: np.ndarray, rng: random.Random) -> np.ndarray:
+    """Angular mask in [IRREGULAR_FLOOR, 1] with a few randomly-placed maxima.
+
+    A sum of wrapped Gaussians at random angles, normalised to peak at 1 and
+    lifted off zero by IRREGULAR_FLOOR. Multiplying the high-frequency noise by
+    this concentrates the jaggedness into a handful of patches, leaving the rest
+    of the boundary comparatively smooth.
+
+    Wrapping via np.angle(exp(i*dtheta)) rather than plain subtraction is what
+    keeps a patch continuous across theta=0 -- without it a patch centred near
+    the seam would be cut in half and read as two."""
+    n = rng.randint(*IRREGULAR_PATCHES)
+    env = np.zeros_like(theta)
+    for _ in range(n):
+        dth = np.angle(np.exp(1j * (theta - rng.uniform(0, 2 * math.pi))))
+        env = np.maximum(env, np.exp(-(dth ** 2) / (2 * IRREGULAR_PATCH_SIGMA ** 2)))
+    peak = float(env.max()) or 1.0
+    return IRREGULAR_FLOOR + (1.0 - IRREGULAR_FLOOR) * env / peak
+
+
 def clinical_radii(
     family: str,
     n_points: int,
@@ -175,8 +233,14 @@ def clinical_radii(
         base_aspect = 1.0 + BASE["aspect"] * difficulty * rng.uniform(0.4, 1.0)
 
     elif family == "lobulated":
-        # Several rounded convex lobes side by side. k is the discriminating
-        # cue vs `irregular` (4-7 low harmonics vs 8-24 high ones).
+        # Several rounded convex lobes side by side. k is the discriminating cue
+        # vs `irregular` (4-7 low harmonics vs IRREGULAR_K's high ones).
+        #
+        # BASE["lobe"] is deliberately SHALLOW (0.15R): the intended look is an
+        # oval you can still see as an oval, with a gentle wave riding on it --
+        # the way a real lobulated margin presents -- not a cauliflower of
+        # deep-cut lobes. This makes lobulated vs round_oval the probe's hardest
+        # pair by design, so read those two together in the confusion matrix.
         k = rng.randint(4, 7)
         a = BASE["lobe"] * difficulty * rng.uniform(0.8, 1.0)
         r = r + a * np.sin(k * theta + rng.uniform(0, 2 * math.pi))
@@ -192,11 +256,20 @@ def clinical_radii(
         p.update(dent_depth=round(d, 3), dent_sigma=round(sigma, 3))
 
     elif family == "irregular":
-        # No repeatable geometry: many high harmonics, so bulges are neither
-        # countable nor evenly spaced.
+        # No repeatable geometry: unevenly-weighted harmonics, so bulges are
+        # neither countable nor evenly spaced. The band is deliberately LOW
+        # (IRREGULAR_K) and the noise is gated by a sparse angular envelope, so
+        # spikes are few, wide apart and clustered in unpredictable patches
+        # instead of running continuously round the whole contour -- continuous
+        # high-frequency grit reads as a uniform texture, which is a *regular*
+        # appearance and the opposite of what this label means.
         b = BASE["jag"] * difficulty * rng.uniform(0.8, 1.0)
-        r = r + b * _surface(theta, rng, 7, 22, 7)
-        p.update(jag_amp=round(b, 3))
+        env = _sparse_envelope(theta, rng)
+        r = r + b * env * _surface(theta, rng, *IRREGULAR_K, IRREGULAR_N_HARM)
+        # jag_cover = mean envelope, i.e. roughly what fraction of the perimeter
+        # is actually jagged -- recorded so eval can check whether sparser
+        # examples are the ones being missed.
+        p.update(jag_amp=round(b, 3), jag_cover=round(float(env.mean()), 3))
 
     elif family == "exophytic":
         # One dominant flat-topped protrusion on an otherwise smooth mass: the

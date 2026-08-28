@@ -15,11 +15,14 @@ QUESTION THIS ANSWERS
               so it is solvable by corner-counting; near-perfect accuracy here
               means the overlay is legible, not that margin shape is legible.
 
-    clinical  the five margin classes of the `shape` feature in
+    clinical  margin classes of the `shape` feature in
               medgemma_pilot/feature_prompts.yaml, all generated from ONE radial
               equation with different parameters (see shapes.py). Tests
-              DISCRIMINATION -- can it tell 5 smooth lobes from 20 jagged spikes
-              when both are "bumpy". --difficulty sweeps deformation amplitude,
+              DISCRIMINATION -- can it tell a few shallow lobes from jagged
+              spikes when both are "bumpy". --skip-shapes drops classes whose
+              synthetic geometry does not match their clinical meaning (default:
+              geographic, exophytic), so the default build has 3 classes and
+              chance 33%. --difficulty sweeps deformation amplitude,
               so the output is a psychometric curve rather than one number, and
               it is an UPPER BOUND on the real task: same question, same
               vocabulary, same prompt path, but perfect labels and no anatomy.
@@ -158,6 +161,42 @@ def make_background(src_path: Path, mode: str, size: Tuple[int, int], rng: rando
     raise ValueError(f"Unknown background {mode!r} (mri|blank|noise)")
 
 
+def resolve_shapes(shape_set: str, skip: str) -> list:
+    """The classes to actually emit: the set's labels minus `skip`, order preserved.
+
+    Excluding a class at BUILD time rather than deleting it from shapes.py keeps
+    the generator for it intact and the metadata self-describing -- the label list
+    of a build is recoverable from its own `shape` column, so `run_shape_probe.py`
+    derives the prompt's options from the images rather than from the vocabulary,
+    and an old results CSV still scores against the classes it was actually built
+    with.
+
+    Default skips are declared here, not baked into SHAPE_SETS, so a build that
+    wants everything only has to pass --skip-shapes ''."""
+    names = list(SHAPE_SETS[shape_set])
+    drop = {t.strip() for t in str(skip).split(",") if t.strip()}
+    # A name is a typo only if NO shape set has it. Names belonging to another set
+    # are silently inert, because --skip-shapes carries a clinical default and an
+    # `icons` build must not have to override it to run.
+    known = {n for labels in SHAPE_SETS.values() for n in labels}
+    unknown = drop - known
+    if unknown:
+        raise SystemExit(
+            f"--skip-shapes {sorted(unknown)} name no shape in any set "
+            f"({sorted(known)}); check the spelling"
+        )
+    kept = [n for n in names if n not in drop]
+    if len(kept) < 2:
+        raise SystemExit(
+            f"--skip-shapes leaves {len(kept)} class(es) ({kept}); a probe needs at least 2"
+        )
+    applied = drop & set(names)
+    if applied:
+        log.info("skipping %s -> %d class(es) %s, chance %.3f",
+                 sorted(applied), len(kept), kept, 1 / len(kept))
+    return kept
+
+
 def resolve_difficulties(spec: str) -> list:
     """'hard' -> [0.35]; '1.0,0.6,0.35' -> [1.0, 0.6, 0.35]. A list makes the
     build a SWEEP: every source row is emitted once per level, so eval can plot
@@ -188,6 +227,7 @@ def build(
     background: str = "mri",
     shape_set: str = "icons",
     difficulty: str = "easy",
+    skip_shapes: str = "",
     all_shapes: bool = False,
     shape_scale: float = 1.0,
     filled: bool = False,
@@ -208,7 +248,7 @@ def build(
     rng = random.Random(seed)
     bg_rng = random.Random(seed + 1_000_003)
 
-    shape_names = SHAPE_SETS[shape_set]
+    shape_names = resolve_shapes(shape_set, skip_shapes)
     levels = resolve_difficulties(difficulty) if shape_set == "clinical" else [1.0]
 
     # Balanced assignment: a shuffled round-robin, so counts are equal +-1 and
@@ -299,6 +339,14 @@ def main() -> None:
                          f"({'/'.join(DIFFICULTY_PRESETS)}) or a float. Comma-separate for a SWEEP "
                          "(e.g. '1.0,0.6,0.35') -- each source row is emitted once per level and "
                          "eval breaks accuracy down by level.")
+    ap.add_argument("--skip-shapes", default="geographic,exophytic",
+                    help="comma-separated classes to leave OUT of the build (order of the rest is "
+                         "preserved). Default drops the two clinical classes whose synthetic "
+                         "geometry does not match their clinical meaning: `geographic` really "
+                         "describes how sharply demarcated a border is, not concavity, and "
+                         "`exophytic` describes growth out of the host bone, which a free-floating "
+                         "outline cannot express. Ignored classes still exist in shapes.py. Pass "
+                         "'' to build all of them.")
     ap.add_argument("--all-shapes", action="store_true",
                     help="emit every shape in the set per source image (paired design) instead of 1")
     ap.add_argument("--shape-scale", type=float, default=1.0,
@@ -312,7 +360,8 @@ def main() -> None:
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     build(args.metadata, args.out_root, background=args.background, shape_set=args.shape_set,
-          difficulty=args.difficulty, all_shapes=args.all_shapes, shape_scale=args.shape_scale,
+          difficulty=args.difficulty, skip_shapes=args.skip_shapes,
+          all_shapes=args.all_shapes, shape_scale=args.shape_scale,
           filled=args.filled, thickness=args.thickness, limit=args.limit, seed=args.seed)
 
 
