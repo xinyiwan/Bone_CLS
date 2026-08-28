@@ -83,7 +83,7 @@ BATCH_EMBED=4
 
 # Hidden-state layers to pool. 'mid' is resolved against the loaded model's
 # depth, not hardcoded, so this is correct for both the 4B and the 27B.
-LAYERS=-1,mid
+LAYERS=last,mid
 
 cd "$REPO/working/vision_model/shape_probe"
 
@@ -197,8 +197,12 @@ if (( RUN_EMBED )); then
     # Zero-shot only, and the script enforces it: few-shot puts several images in
     # context, so pooling "the image tokens" would mix exemplars into the query
     # vector. The probe measures the representation, not the prompt.
+    # --layers=... and NOT --layers ...: the value starts with '-' (as in
+    # "-1,mid"), and argparse treats a leading dash as an option name unless the
+    # token parses as a negative number, which "-1,mid" does not. The = form is
+    # the only one that survives. 'last' is accepted as a dash-free alias.
     fan_out "embed (hidden states)" --mode embed --batch-size $BATCH_EMBED \
-        --layers "$LAYERS" --out "$EMB"
+        "--layers=$LAYERS" --out "$EMB"
 fi
 
 # --- CPU scoring --------------------------------------------------------

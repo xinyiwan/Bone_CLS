@@ -281,7 +281,21 @@ def resolve_layers(specs: List[str], n_layers: int) -> List[int]:
     """
     out: List[int] = []
     for spec in specs:
-        out.append(n_layers // 2 if spec == "mid" else int(spec))
+        if spec == "mid":
+            out.append(n_layers // 2)
+        elif spec == "last":
+            # Dash-free alias for -1. Worth having: a value beginning with '-'
+            # can only be passed as --layers=-1,mid, never as --layers -1,mid,
+            # because argparse reads a leading dash as an option name unless the
+            # token parses as a negative number ("-1,mid" does not).
+            out.append(-1)
+        else:
+            try:
+                out.append(int(spec))
+            except ValueError:
+                raise SystemExit(
+                    f"bad --layers entry {spec!r}: expected an integer, 'mid' or 'last'"
+                ) from None
     log.info("pooling hidden states at layer index %s (model has %d layers)", out, n_layers)
     return out
 
@@ -481,8 +495,11 @@ def main() -> None:
     p.add_argument("--thinking-from", type=Path, default=None,
                    help="generative results CSV whose `thinking` column is replayed as the "
                         "scored context, so the label is scored on the same path --mode infer used")
-    p.add_argument("--layers", default="-1,mid",
-                   help="embed mode: comma-separated hidden-state layers; 'mid' = n_layers//2")
+    p.add_argument("--layers", default="last,mid",
+                   help="embed mode: comma-separated hidden-state layers. Integers, 'mid' "
+                        "(= n_layers//2) or 'last' (= -1). Prefer 'last' over '-1': a value "
+                        "starting with a dash must be passed as --layers=-1,mid, never as "
+                        "--layers -1,mid")
     args = p.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
