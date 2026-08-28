@@ -115,6 +115,42 @@ USER_TEMPLATE = (
 
 PROMPT_DEFS = {"icons": ICON_DEFS, "clinical": CLINICAL_DEFS}
 
+# One reason per label, used as the assistant reply in few-shot example turns.
+# A constant string ("reference example.") teaches the model that the `reason`
+# field is filler, which is worse than useless here: the reason is the only place
+# the model states WHICH cue it used, so a filler exemplar both wastes the
+# demonstration and makes the free-text column unusable for error analysis. Each
+# string below names the single discriminating cue for its class in the same
+# vocabulary as the definitions above, so the examples reinforce the rubric
+# instead of fighting it. Keep them one short sentence, cue-only, and never
+# mention difficulty or anatomy -- an exemplar reason is a template to copy.
+REFERENCE_REASONS = {
+    # icons
+    "circle": "The outline is a single smooth closed curve with no corners.",
+    "square": "The outline has four straight sides meeting at four corners.",
+    "triangle": "The outline has three straight sides meeting at three corners.",
+    "star": "The outline alternates sharp outward points with deep inward notches.",
+    # clinical
+    "round_oval": "The outline is one smooth continuous convex curve with no separate bulges.",
+    "lobulated": "The outline shows several rounded convex lobes side by side separated by shallow notches.",
+    "geographic": "The outline is smooth except for one broad, sharply demarcated concave arc scooped inward.",
+    "irregular": "The outline has many small jagged angular projections with no countable or repeating geometry.",
+    "exophytic": "The outline is smooth except for one dominant protrusion sticking outward from the boundary.",
+}
+
+
+def reference_reason(label: str) -> str:
+    """Exemplar `reason` text for `label`. Missing entries fail loudly rather
+    than silently reintroducing a filler reason: a new shape class must get its
+    own cue sentence or its few-shot turn teaches nothing."""
+    try:
+        return REFERENCE_REASONS[label]
+    except KeyError:
+        raise SystemExit(
+            f"no REFERENCE_REASONS entry for shape {label!r}; add a one-sentence cue "
+            "for it in run_shape_probe.py before using it as a few-shot exemplar"
+        ) from None
+
 
 def prompt_texts(shape_set: str) -> tuple:
     labels = SHAPE_SETS[shape_set]
@@ -153,7 +189,10 @@ def build_messages(image, modality: str, plane: str, shape_set: str = "icons",
     `few_shot` is [(PIL image, label), ...]. Each becomes a completed user ->
     assistant exchange before the query, with the assistant's reply in exactly
     the JSON format we ask for, so the examples demonstrate the output shape as
-    well as the visual class."""
+    well as the visual class. The example's reason is that class's own
+    discriminating cue (REFERENCE_REASONS), not a constant: a filler reason
+    teaches the model the field is decorative, which is exactly the wrong lesson
+    when `reason` is the only trace of what cue it used."""
     system_text, user_text = prompt_texts(shape_set)
     query_text = user_text.format(modality=modality or "unknown-sequence",
                                   plane=plane or "unknown")
@@ -166,7 +205,8 @@ def build_messages(image, modality: str, plane: str, shape_set: str = "icons",
         ]})
         messages.append({"role": "assistant", "content": [
             {"type": "text",
-             "text": f'{{"prediction": "{ex_label}", "reason": "reference example."}}'},
+             "text": f'{{"prediction": "{ex_label}", '
+                     f'"reason": "{reference_reason(ex_label)}"}}'},
         ]})
     messages.append({"role": "user", "content": [
         {"type": "image", "image": image},
@@ -212,6 +252,38 @@ def select_examples(df, labels: List[str], n_per_class: int, rng) -> List[dict]:
         for label in labels:
             out.append(per_class[label][i])
     return out
+
+
+def show_exemplars(metadata: Path, shape_set: str, n_per_class: int, seed: int,
+                   sheet: Optional[Path] = None) -> None:
+    """Print (and optionally tile) the exact exemplars a --mode infer run with the
+    same --few-shot-metadata/--num-few-shot/--seed would show the model.
+
+    Few-shot exemplars are the one part of the prompt nobody sees in the results
+    CSV as an image, so a mislabeled or atypical example silently degrades every
+    row. This makes them inspectable without spending a GPU: same select_examples
+    call, same seeded RNG, so the listing IS what inference will use."""
+    df = pd.read_csv(metadata, dtype=str).fillna("")
+    shape_set = resolve_shape_set(shape_set, df)
+    labels = list(SHAPE_SETS[shape_set])
+    rows = select_examples(df, labels, n_per_class, random.Random(seed))
+
+    print(f"\n{len(rows)} exemplar turn(s) [{shape_set}], seed {seed}, from {metadata}")
+    for i, r in enumerate(rows, 1):
+        print(f"\n  {i}. {r['shape']}  (difficulty={r.get('difficulty', '') or '-'}, "
+              f"params={r.get('shape_params', '') or '-'})")
+        print(f"     image:  {r['image_path']}")
+        print(f"     reason: {reference_reason(str(r['shape']))}")
+
+    if sheet:
+        # Reuse preview.py's contact sheet on just these rows, so the captions and
+        # sizing match the QC sheet for the build itself.
+        import preview  # local, optional: only this branch needs cv2
+
+        tmp = sheet.with_suffix(".exemplars.csv")
+        tmp.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(rows).to_csv(tmp, index=False)
+        preview.contact_sheet(tmp, sheet, n=len(rows), cols=min(len(labels), 6))
 
 
 def _done_keys(out_path: Path) -> set:
@@ -436,7 +508,9 @@ def evaluate(results: List[Path] | Path) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--mode", required=True, choices=["infer", "eval"])
+    ap.add_argument("--mode", required=True, choices=["infer", "eval", "exemplars"],
+                    help="'exemplars' is a no-GPU dry run: print (and optionally tile) the "
+                         "few-shot examples the same flags would send to the model")
     ap.add_argument("--metadata", type=Path, help="shape_metadata.csv from build_shapes.py (infer mode)")
     ap.add_argument("--out", type=Path, help="output CSV (infer mode)")
     ap.add_argument("--results", type=Path, nargs="+",
@@ -468,6 +542,8 @@ def main() -> None:
                          "held out of --metadata, so zero-shot and few-shot runs score the exact "
                          "same image set and are directly comparable.")
     ap.add_argument("--seed", type=int, default=0, help="exemplar selection seed")
+    ap.add_argument("--exemplar-sheet", type=Path, default=None,
+                    help="(--mode exemplars) also write a contact sheet PNG of the chosen examples")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -477,7 +553,14 @@ def main() -> None:
     if not (0 <= args.shard_index < args.num_shards):
         raise SystemExit(f"--shard-index must be in [0, {args.num_shards}) for --num-shards {args.num_shards}")
 
-    if args.mode == "infer":
+    if args.mode == "exemplars":
+        meta = args.few_shot_metadata or args.metadata
+        if not meta:
+            raise SystemExit("--mode exemplars needs --few-shot-metadata (or --metadata)")
+        if args.num_few_shot <= 0:
+            raise SystemExit("--mode exemplars needs --num-few-shot >= 1")
+        show_exemplars(meta, args.shape_set, args.num_few_shot, args.seed, args.exemplar_sheet)
+    elif args.mode == "infer":
         if not args.metadata or not args.out:
             raise SystemExit("--metadata and --out are required for --mode infer")
         out = args.out

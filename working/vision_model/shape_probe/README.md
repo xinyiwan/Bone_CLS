@@ -210,6 +210,24 @@ results CSV to read the contrast off one table.
 > Drawing exemplars from the scored build removes 5 images from the denominator,
 > so the two runs are no longer scoring quite the same set.
 
+Each example's assistant reply carries that class's own discriminating cue as its
+`reason` (`REFERENCE_REASONS` in `run_shape_probe.py`) — not a constant filler
+string. A filler reason teaches the model that `reason` is decorative, which
+poisons the only column that records *which* cue it used.
+
+Inspect the exact exemplars a run will use, without a GPU:
+
+```bash
+python run_shape_probe.py --mode exemplars --num-few-shot 1 \
+    --few-shot-metadata /results/shape_probe/clinical_easy/shape_metadata.csv \
+    --exemplar-sheet /results/shape_probe/clinical_easy/exemplars.png
+```
+
+Same `select_examples` call and same seeded RNG as inference, so the listed
+images, labels and reasons are literally what the model will be shown. Look at
+that sheet before trusting a few-shot number: one atypical exemplar degrades
+every row in the run.
+
 ## On the cluster
 
 ```bash
