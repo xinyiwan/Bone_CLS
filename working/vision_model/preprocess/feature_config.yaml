@@ -37,29 +37,29 @@ features:
       - modality: T2W_FS
         planes: [axial, coronal, sagittal]
 
-  - name: enhancement
-    assessment_key: mri_contrast_enhancement
-    crop_margin_mm: 8
-    top_k: 1
-    crop_mode: bbox            # enhancement is read relative to nearby tissue
-    requirements:
-      - modality: T1W_FS_C # also provide a reference img
-        planes: [axial]
+  # - name: enhancement
+  #   assessment_key: mri_contrast_enhancement
+  #   crop_margin_mm: 8
+  #   top_k: 1
+  #   crop_mode: bbox            # enhancement is read relative to nearby tissue
+  #   requirements:
+  #     - modality: T1W_FS_C # also provide a reference img
+  #       planes: [axial]
 
-  - name: fluid_fluid_level
-    assessment_key: fluid_without_fluid_fluid_level
-    crop_margin_mm: 8
-    top_k: 3
-    crop_mode: bbox
-    requirements:
-      - modality: T2W_FS
-        planes: [axial, sagittal]
+  # - name: fluid_fluid_level
+  #   assessment_key: fluid_without_fluid_fluid_level
+  #   crop_margin_mm: 8
+  #   top_k: 3
+  #   crop_mode: bbox
+  #   requirements:
+  #     - modality: T2W_FS
+  #       planes: [axial, sagittal]
 
-  - name: soft_tissue_invasion
-    assessment_key: soft_tissue_invasion
-    crop_margin_mm: 15
-    top_k: 1
-    crop_mode: bbox
-    requirements:
-      - modality: T2W_FS
-        planes: [axial, coronal, sagittal]
+  # - name: soft_tissue_invasion
+  #   assessment_key: soft_tissue_invasion
+  #   crop_margin_mm: 15
+  #   top_k: 1
+  #   crop_mode: bbox
+  #   requirements:
+  #     - modality: T2W_FS
+  #       planes: [axial, coronal, sagittal]
