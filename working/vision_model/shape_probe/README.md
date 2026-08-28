@@ -281,6 +281,7 @@ Inspect the exact exemplars a run will use, without a GPU:
 
 ```bash
 python run_shape_probe.py --mode exemplars --num-few-shot 1 \
+    --metadata /results/shape_probe/clinical/shape_metadata.csv \
     --few-shot-metadata /results/shape_probe/clinical_easy/shape_metadata.csv \
     --exemplar-sheet /results/shape_probe/clinical_easy/exemplars.png
 ```
