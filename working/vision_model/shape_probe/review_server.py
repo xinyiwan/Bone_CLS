@@ -138,7 +138,11 @@ def overall() -> tuple:
 
 
 def confusion() -> Dict[str, Counter]:
-    m: Dict[str, Counter] = {s: Counter() for s in SHAPES}
+    # Seeded from classes(), not a hardcoded list: --skip-shapes and the
+    # icons/clinical split both change which classes exist, so a fixed tuple
+    # either crashes (it was `SHAPES`, never imported here) or prints rows for
+    # classes this run never drew.
+    m: Dict[str, Counter] = {s: Counter() for s in classes()}
     for r in ROWS:
         if not is_scored(r):
             continue
