@@ -82,6 +82,9 @@ def load(results_csvs: List[Path]) -> None:
         "backgrounds": distinct("background"),
         "n_rows": len(df),
         "n_files": len(results_csvs),
+        # Which vocabulary this run used, so the header describes the actual task
+        # instead of hardcoding one shape set's labels.
+        "shape_sets": distinct("shape_set"),
     })
 
 
@@ -198,11 +201,13 @@ def run_info_html() -> str:
     bgs = ", ".join(RUN_INFO.get("backgrounds") or []) or "unknown"
     n_files = int(RUN_INFO.get("n_files", 1))
     files = f' &nbsp;·&nbsp; <b>files:</b> {n_files} combined' if n_files > 1 else ""
+    sets = ", ".join(RUN_INFO.get("shape_sets") or [])
+    shape_set = f' &nbsp;·&nbsp; <b>shape set:</b> {esc(sets)}' if sets else ""
     return ('<div class="runinfo">'
             f'<b>model:</b> <code>{esc(models)}</code>'
             f' &nbsp;·&nbsp; <b>background:</b> {esc(bgs)}'
-            f' &nbsp;·&nbsp; <b>task:</b> name the red outline (circle/square/triangle/star)'
-            f"{files}</div>")
+            f' &nbsp;·&nbsp; <b>task:</b> name the red outline'
+            f"{shape_set}{files}</div>")
 
 
 def confusion_html() -> str:
