@@ -79,37 +79,74 @@ BASE = {
     "aspect": 0.45,   # round_oval: ellipse elongation (1 + aspect)
     "lobe": 0.15,     # lobulated: sinusoid amplitude
     "dent": 0.80,     # geographic: depth of the single concave arc
-    "jag": 0.28,      # irregular: high-frequency noise amplitude
+    "jag": 0.34,      # irregular: spike amplitude (see IRREGULAR_* below)
     "bump": 1.10,     # exophytic: height of the single outward stalk
 }
 
-# `irregular` shape of the jaggedness, tuned separately from its amplitude.
+# SEPARATING `irregular` FROM `lobulated`
+# --------------------------------------
+# These are the knobs, in descending order of how much they actually move the two
+# classes apart. Two measurable descriptors track the effect (both computable from
+# r(theta) alone -- see the FFT snippet at the bottom of this comment):
 #
-# The band sets how many spikes fit around the perimeter: k harmonics means k
-# oscillations, so a LOW band gives fewer, wider, further-apart projections. The
-# envelope then switches the jaggedness off over part of the contour, so spikes
-# occur in a few unpredictable patches with smoother stretches between them
-# rather than running continuously all the way round.
+#   dom_k    dominant wavenumber = how many bulges go round the outline
+#   kurt     kurtosis of (r - mean r) = 1.5 for an even wave, >6 for isolated
+#            spikes. THIS is "jagged vs wavy", and it is the descriptor that
+#            wavenumber alone does not touch.
 #
-# Both exist because "spikes everywhere at high frequency" reads as a uniform
-# texture -- a *regular* look, which is the wrong appearance for a label whose
-# whole content is "no countable or repeatable geometry". Sparser patches keep
-# the spikes individually visible and their placement unpredictable.
+# Reference values at difficulty 1.0:  lobulated dom_k 5.6, kurt 1.5, p2p 0.25
+#                                      irregular dom_k 15,  kurt  7,  p2p 0.60
 #
-# These values put ~40-45% of the perimeter under active jaggedness (recorded per
-# image as `jag_cover`). Raising IRREGULAR_PATCHES towards ~6 or
-# IRREGULAR_PATCH_SIGMA towards ~1.5 returns to the old all-over look; dropping to
-# 1 patch starts to resemble `exophytic` (one localised disturbance), so keep the
-# lower bound >= 2.
-# The band stays strictly ABOVE lobulated's k=4-7: wavenumber is the stated
-# discriminating cue between the two classes, so overlapping the bands would make
-# some irregular images legitimately lobulated-looking and cap achievable
-# accuracy for reasons that have nothing to do with the model.
-IRREGULAR_K = (8, 16)          # harmonic band: 8-16 oscillations round the perimeter
-IRREGULAR_N_HARM = 5           # distinct wavenumbers drawn from that band
-IRREGULAR_PATCHES = (2, 4)     # inclusive range for the number of jagged patches
-IRREGULAR_PATCH_SIGMA = 0.35   # rad, angular half-width of one patch
-IRREGULAR_FLOOR = 0.10         # min envelope value: keeps the "smooth" stretches
+# 1. IRREGULAR_SHARPNESS (biggest effect, and the least obvious)
+#    A sum of sinusoids is infinitely smooth, so raising the wavenumber only
+#    converts a slow wave into a fast wave -- still a wave, still confusable with
+#    lobulated. This exponent (see _sharpen) is what makes the margin ANGULAR.
+#    1.0 = old pure-sine behaviour (kurt ~6); 2.0 -> kurt ~7 with visible cusps;
+#    3.5 -> kurt ~19, spiky to the point of looking like rasterisation grit.
+#    Costs nothing in amplitude: peak deviation is preserved by construction.
+#
+# 2. IRREGULAR_K / IRREGULAR_N_HARM
+#    The band sets how many spikes fit round the perimeter. It stays strictly
+#    ABOVE lobulated's k = 4-7 on purpose: wavenumber is the stated discriminating
+#    cue, so overlapping bands would make some irregular images legitimately
+#    lobulated-looking and cap achievable accuracy for reasons that have nothing
+#    to do with the model. (10, 20) puts dom_k at ~15, a 3x gap. Going higher
+#    stops helping once a period is only a few pixels -- see the resolution note.
+#
+# 3. BASE["jag"] vs BASE["lobe"]  (use with care)
+#    The bluntest separator, currently 0.34 vs 0.15, so irregular deviates ~2.4x
+#    further than lobulated. It works, but it is a *size* cue rather than a
+#    character cue: a model can then pass by measuring how far the boundary wanders
+#    without ever judging jaggedness. If you want the honest experiment -- "can it
+#    see cusped vs smooth at matched amplitude" -- set jag to ~0.20 and rely on
+#    SHARPNESS plus the band instead.
+#
+# 4. IRREGULAR_PATCHES / _PATCH_SIGMA / _FLOOR
+#    The sparse envelope: where jaggedness is switched on. These control
+#    appearance more than separability -- spikes everywhere at high frequency read
+#    as a uniform texture, i.e. a *regular* look, which is wrong for a label whose
+#    whole content is "no countable or repeatable geometry". Current values leave
+#    ~70% of the perimeter actively jagged (recorded per image as `jag_cover`).
+#    Note this interacts with SHARPNESS: both sparsify, and a low FLOOR together
+#    with a high exponent leaves jaggedness in only one place, which reads as a
+#    single localised disturbance rather than an irregular margin. If you raise
+#    SHARPNESS, raise FLOOR with it. Keep the patch-count lower bound >= 2.
+#
+# 5. NOT a shape parameter, but often the real limit: RESOLUTION. At a 128px crop
+#    the shape radius is ~30px, so a k=15 spike is ~2px wide -- no parameter value
+#    makes that read as jagged. If the classes still look alike in the contact
+#    sheet, try build_shapes.py --shape-scale 1.5 or a larger crop before
+#    retuning anything here.
+#
+# To re-measure after a change:
+#     u = r - r.mean(); F = abs(np.fft.rfft(u))**2; F[:2] = 0
+#     dom_k = F.argmax(); kurt = ((u / u.std())**4).mean()
+IRREGULAR_K = (10, 20)         # harmonic band: 10-20 oscillations round the perimeter
+IRREGULAR_N_HARM = 6           # distinct wavenumbers drawn from that band
+IRREGULAR_PATCHES = (3, 5)     # inclusive range for the number of jagged patches
+IRREGULAR_PATCH_SIGMA = 0.50   # rad, angular half-width of one patch
+IRREGULAR_SHARPNESS = 2.0      # cusp exponent; 1.0 = plain sine sum (see _sharpen)
+IRREGULAR_FLOOR = 0.40         # min envelope value: keeps the "smooth" stretches
                                # slightly unsettled rather than perfectly round
 
 DIFFICULTY_PRESETS = {"easy": 1.0, "medium": 0.6, "hard": 0.35}
@@ -191,6 +228,30 @@ def _surface(theta: np.ndarray, rng: random.Random, k_lo: int, k_hi: int, n_harm
     return acc
 
 
+def _sharpen(u: np.ndarray, p: float) -> np.ndarray:
+    """sign(u)*|u|^p, rescaled to keep the original peak amplitude.
+
+    This is what makes `irregular` look ANGULAR rather than merely fast. A sum of
+    sinusoids is infinitely smooth no matter how high the wavenumber, so raising
+    the frequency alone turns a slow wave into a fast wave -- still a wave, and
+    still easily confused with `lobulated`. Raising the deviation to a power > 1
+    flattens everything near zero and leaves the extremes almost untouched, so
+    the boundary sits quiet and then departs steeply: cusped spikes separated by
+    calm stretches, which is the shape of the word.
+
+    Peak amplitude is preserved deliberately: `p` must change the CHARACTER of the
+    margin without changing how far it deviates, or it stops being independent of
+    the amplitude knobs (BASE["jag"], difficulty) and the sweep confounds the two.
+
+    p = 1 is the identity, i.e. the old pure-sine behaviour."""
+    if p == 1.0:
+        return u
+    peak = float(np.abs(u).max())
+    if peak <= 0:
+        return u
+    return np.sign(u) * (np.abs(u) / peak) ** p * peak
+
+
 def _sparse_envelope(theta: np.ndarray, rng: random.Random) -> np.ndarray:
     """Angular mask in [IRREGULAR_FLOOR, 1] with a few randomly-placed maxima.
 
@@ -226,7 +287,11 @@ def clinical_radii(
 
     # Every family carries the same faint surface texture and the same slight
     # ellipticity, so neither can be used as a shortcut cue for one class.
-    r = 1.0 + SURFACE_NOISE * _surface(theta, rng, 10, 20, 4)
+    # The texture band sits ABOVE IRREGULAR_K deliberately. When the two coincide,
+    # the texture every class carries is a scaled-down copy of the irregular cue,
+    # so round_oval and lobulated differ from irregular in amplitude at the same
+    # wavenumber -- exactly the confound the shared texture exists to avoid.
+    r = 1.0 + SURFACE_NOISE * _surface(theta, rng, 24, 40, 4)
     base_aspect = 1.0 + 0.10 * rng.random()
 
     if family == "round_oval":
@@ -265,7 +330,9 @@ def clinical_radii(
         # appearance and the opposite of what this label means.
         b = BASE["jag"] * difficulty * rng.uniform(0.8, 1.0)
         env = _sparse_envelope(theta, rng)
-        r = r + b * env * _surface(theta, rng, *IRREGULAR_K, IRREGULAR_N_HARM)
+        jag = _sharpen(_surface(theta, rng, *IRREGULAR_K, IRREGULAR_N_HARM),
+                       IRREGULAR_SHARPNESS)
+        r = r + b * env * jag
         # jag_cover = mean envelope, i.e. roughly what fraction of the perimeter
         # is actually jagged -- recorded so eval can check whether sparser
         # examples are the ones being missed.

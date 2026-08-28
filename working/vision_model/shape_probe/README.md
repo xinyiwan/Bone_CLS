@@ -44,8 +44,9 @@ parameters:
 
 ```
 r(θ) = R · [ 1 + a·sin(kθ+φ)      lobulated   k = 4-7 shallow bulges (a ≈ 0.15)
-               + b·env(θ)·noise(θ) irregular  5 random harmonics, k = 8-16,
-                                              gated into 2-4 jagged patches
+               + b·env(θ)·cusp(noise(θ))      irregular  6 random harmonics,
+                                              k = 10-20, sharpened to cusps,
+                                              gated into 3-5 jagged patches
                + ε·surface(θ) ]   all classes tiny shared texture
 
                − d·dent(θ)        geographic  one broad concave bite   } built only
@@ -58,15 +59,37 @@ a real lobulated margin presents — not a cauliflower of deep-cut lobes. That
 makes `lobulated` vs `round_oval` the hardest pair by design; read those two
 together in the confusion matrix.
 
-`irregular` jaggedness is **patchy**, not all-over: the noise band is low (k =
-8-16, i.e. fewer and wider-spaced spikes) and it is multiplied by a sparse
-angular envelope, so spikes cluster in 2-4 unpredictable places with smoother
-stretches between. Continuous high-frequency grit around the whole contour reads
-as a uniform *texture* — a regular appearance, and the opposite of what the label
-means. The per-image `jag_cover` in `shape_params` records what fraction of the
-perimeter is actually jagged (~0.4-0.5), so eval can check whether the sparser
-examples are the ones being missed. The band stays strictly above `lobulated`'s
-k = 4-7 on purpose: wavenumber is the stated cue separating the two classes.
+`irregular` is **cusped and patchy**, not all-over grit. Its jaggedness is gated
+by a sparse angular envelope (3-5 patches, so spikes cluster unpredictably with
+smoother stretches between; `jag_cover` in `shape_params` records the fraction of
+perimeter actually jagged, ~0.7), and the noise is raised to a **cusp exponent**
+before being applied.
+
+That exponent is the part worth knowing about. A sum of sinusoids is infinitely
+smooth, so raising the wavenumber alone only turns a slow wave into a *fast wave*
+— which is why `irregular` kept looking like `lobulated`. `_sharpen` flattens the
+boundary near zero and leaves the extremes, so it sits quiet and then departs
+steeply: angular spikes rather than ripples.
+
+Two descriptors track the separation, both computable from `r(θ)` alone:
+
+| class      | `dom_k` (bulges round the outline) | `kurt` (1.5 = even wave, >6 = isolated spikes) | peak-to-peak |
+|------------|-----|------|-------|
+| round_oval | —   | 2.5  | 0.03  |
+| lobulated  | 5.5 | 1.5  | 0.26  |
+| irregular  | 15  | 7.9  | 0.58  |
+
+`shapes.py` has a knob-by-knob comment (ordered by how much each one actually
+moves the classes apart) plus the snippet to re-measure after a change. The
+harmonic band stays strictly above `lobulated`'s k = 4-7 on purpose: wavenumber is
+the stated cue separating them.
+
+> **Caveat on the peak-to-peak column.** `irregular` now deviates ~2.3× further
+> than `lobulated` (`BASE["jag"]` 0.34 vs `BASE["lobe"]` 0.15), so a model could
+> separate them by *how far the boundary wanders* without ever judging
+> jaggedness. If you want the stricter experiment — "can it see cusped vs smooth
+> at matched amplitude" — set `BASE["jag"]` to ~0.20 and let `IRREGULAR_SHARPNESS`
+> and the band carry the distinction.
 
 so corner-counting cannot separate them — the model has to judge the *character*
 of the boundary. Every family is normalised to the same inscribing radius, and
