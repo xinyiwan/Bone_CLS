@@ -198,24 +198,63 @@ def score_batch(model, processor, batch_messages: List[List[dict]], labels: List
     if tti is not None:
         kwargs["token_type_ids"] = tti_full.to(model.device)
     for key in ("pixel_values", "pixel_attention_mask"):
-        if key in inputs:
-            val = inputs[key]
-            # One image entry per prompt row -> repeat along the leading axis so
-            # each of a prompt's L rows sees the same image(s).
-            kwargs[key] = val.repeat_interleave(L, dim=0).to(model.device, dtype=model.dtype)
+        if key not in inputs:
+            continue
+        val = inputs[key]
+        # Gemma-3 FLATTENS images across the batch: pixel_values is
+        # (total_images, C, H, W), not (prompts, images, C, H, W). Few-shot puts
+        # several images in one prompt, so repeat_interleave on the leading axis
+        # would duplicate individual IMAGES rather than each prompt's GROUP of
+        # them -- the row count still matches input_ids, so nothing raises, and
+        # every row silently gets the wrong pictures. Group first, then repeat.
+        if val.shape[0] % B:
+            raise RuntimeError(
+                f"{key} has {val.shape[0]} entries for {B} prompt(s); expected a whole "
+                "number of images per prompt. All prompts in a batch must carry the same "
+                "number of images (they do here: same few-shot count for every row).")
+        ipp = val.shape[0] // B  # images per prompt
+        grouped = val.reshape(B, ipp, *val.shape[1:]).repeat_interleave(L, dim=0)
+        kwargs[key] = grouped.reshape(B * L * ipp, *val.shape[1:]).to(
+            model.device, dtype=model.dtype if val.dtype.is_floating_point else val.dtype)
 
+    # Ask for only the tail of the logits if this transformers version supports
+    # it. We score positions P-1 .. P+max_cont-2, i.e. the last max_cont+1
+    # positions, so everything earlier is dead weight -- and on Gemma-3 the
+    # vocabulary is ~262k, which makes the full (rows, seq, vocab) tensor tens of
+    # GB the moment a replayed thinking block lengthens the sequence.
+    n_keep = max_cont + 1
     with torch.inference_mode():
-        logits = model(**kwargs).logits.float()
-    logprobs = torch.log_softmax(logits, dim=-1)
+        try:
+            logits = model(**kwargs, logits_to_keep=n_keep).logits
+        except TypeError:
+            logits = model(**kwargs).logits
+    # Absolute position a maps to index a - (T_total - T_kept) in what came back.
+    shift = (P + max_cont) - logits.shape[1]
 
-    out = np.zeros((B, L), dtype=np.float64)
+    # Gather ONLY the scored positions before widening to float32 or normalising.
+    # log_softmax over the whole sequence allocates a second full-size copy; with
+    # 48 rows x ~900 tokens x 262k vocab that is ~46 GB per copy, which is what
+    # OOMed the thinking-replay pass. Gathered, it is a few hundred KB.
+    S = max(len(scored) for _, _, scored in spans)
+    R = B * L
+    pos = torch.zeros((R, S), dtype=torch.long)
+    tgt = torch.zeros((R, S), dtype=torch.long)
+    valid = torch.zeros((R, S), dtype=torch.bool)
     for row, start, scored in spans:
-        total = 0.0
         for k, tok in enumerate(scored):
             # logits at index t predict the token AT index t+1.
-            total += logprobs[row, P + start + k - 1, tok].item()
-        out[row // L, row % L] = total
-    return out
+            pos[row, k] = P + start + k - 1 - shift
+            tgt[row, k] = tok
+            valid[row, k] = True
+    if int(pos.min()) < 0 or int(pos.max()) >= logits.shape[1]:
+        raise RuntimeError(f"scored position out of range for logits of width {logits.shape[1]}")
+
+    rows_ix = torch.arange(R).unsqueeze(1).expand(R, S)
+    sel = logits[rows_ix.to(logits.device), pos.to(logits.device)].float()  # (R, S, V)
+    lp = torch.log_softmax(sel, dim=-1)
+    got = lp.gather(-1, tgt.to(lp.device).unsqueeze(-1)).squeeze(-1)        # (R, S)
+    got = (got * valid.to(got.device)).sum(dim=1)                           # sum over label tokens
+    return got.double().cpu().numpy().reshape(B, L)
 
 
 def _prefix_map(path: Optional[Path]) -> Dict[str, str]:
@@ -327,6 +366,20 @@ def run(mode: str, metadata: Path, out_path: Path, model_id: str, shape_set: str
         log.info("%d-shot per class (%d example turns)", num_few_shot, len(few_shot))
 
     prefixes_by_path = _prefix_map(thinking_from)
+    if prefixes_by_path:
+        # A path with no entry would be scored WITHOUT a thinking prefix while its
+        # neighbours were scored with one, silently mixing two conditions in one
+        # CSV. Report the coverage rather than letting that pass unnoticed.
+        paths = df["image_path"].astype(str)
+        missing = int((~paths.isin(prefixes_by_path.keys())).sum())
+        blank = int(sum(1 for p in paths if not prefixes_by_path.get(p, "").strip()))
+        if missing or blank:
+            log.warning("thinking prefix missing for %d and empty for %d of %d image(s); "
+                        "those rows are scored WITHOUT a thinking block, so the CSV mixes "
+                        "two conditions -- check that --thinking-from covers this build",
+                        missing, blank, len(paths))
+        else:
+            log.info("thinking prefix covers all %d image(s)", len(paths))
 
     if num_shards > 1:
         df = df.iloc[shard_index::num_shards]
