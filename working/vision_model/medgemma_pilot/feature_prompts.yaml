@@ -39,37 +39,52 @@ features:
     # JSON (tumor_shape), so a prediction is scored correct by a direct
     # case-insensitive match -- no mapping layer needed. Keep these strings
     # identical to the assessment values.
-    label_options: ["Round/Oval", lobulated, geographic, irregular, exophytic]
+    label_options: ["Round/Oval", lobulated, irregular]
     description: "The overall shape of the lesion's outer margin/contour as seen on this MRI slice."
+    # Used INSTEAD of `description` when the stack arm is selected; the wording
+    # above asserts a single slice, which is false there.
+    description_stack: >-
+      The overall three-dimensional shape of the lesion's outer margin/contour,
+      as seen across the stack of slices.
+    # Used INSTEAD of `task` under free text. `task` tells the model to choose a
+    # label, which is exactly what the free-text arm withholds.
+    # Worded to hold for BOTH arms (one slice or a stack), since output_mode and
+    # input_mode are set independently -- hence "in what you are shown" rather
+    # than "in the image"/"across the slices".
+    free_text_task: >-
+      Describe the shape of this lesion's outer margin in your own words: how the
+      boundary runs, and whether it is smooth, lobed, jagged, or something else.
+      Explain what in what you are shown leads you to that description. Do not
+      assess internal composition or anything outside the margin.
     # Each definition says how the label DIFFERS from the others, so the model
     # can pick exactly one. Discriminating axes: number of convex bulges,
     # inward (concave) vs outward (convex) curvature, smooth/organised vs jagged,
     # and whether a focal protrusion sticks out past the main mass.
     label_definitions:
       "Round/Oval": >-
-        Round/Oval — the outer boundary is one smooth, continuous convex curve; 
+        Round/Oval — the outer boundary is one smooth, continuous curve; 
         the internal nodular foci sit inside that envelope without pushing out to 
         create separate bulges reaching the margin.
 
       lobulated: >-
-        Lobulated — the mass is made of several rounded convex lobes packed side by side, 
+        Lobulated — the mass is made of several rounded lobes packed side by side, 
         each bulge smooth on its own but separated by shallow notches where adjacent 
         lobes meet, giving the cauliflower-like outline rather than one single curve.
 
-      geographic: >-
-        Geographic — the margin sweeps as one broad, sharply demarcated concave arc, 
-        like a scalloped bite taken out of the bone, rather than bulging outward or 
-        breaking into jagged segments.
+      # geographic: >-
+      #   Geographic — the margin sweeps as one broad, sharply demarcated concave arc, 
+      #   like a scalloped bite taken out of the bone, rather than bulging outward or 
+      #   breaking into jagged segments.
 
       irregular: >-
         Irregular — the margin has no repeatable geometry: 
         jagged, angular, ill-defined projections scattered unpredictably, 
         fitting none of the smooth-curve, lobed, or single-concave-arc patterns.
 
-      exophytic: >-
-        One dominant focal protrusion projecting OUTWARD past the main boundary
-        (mushroom-like / polypoid). Defined by that single sticking-out
-        projection, not the shape of the main mass.
+      # exophytic: >-
+      #   One dominant focal protrusion projecting OUTWARD past the main boundary
+      #   (mushroom-like / polypoid). Defined by that single sticking-out
+      #   projection, not the shape of the main mass.
         
     task: >-
       Pick the single descriptor best matching the lesion's OUTER margin
@@ -80,17 +95,16 @@ features:
     # shown as the exemplar's JSON answer, so keep it consistent with the
     # label_definitions above.
     examples:
-      - image_path: /output/test/BONE_AI_100/shape/T1W_coronal_10.png
+      - image_path: /output/test/BONE_AI_113/shape/T2W_FS_coronal_11.png
         label: "Round/Oval"
         reason: >-
           Round/Oval: the outer edge is one smooth, continuous convex curve. The
           internal nodules stay inside that single boundary instead of bulging
           out to break the contour, so the outline stays uniform -- not the
-          several side-by-side bulges of lobulated, and not the inward concave
-          arc of geographic.
-        modality: T1W
+          several side-by-side bulges of lobulated.
+        modality: T2W_FS
         plane: coronal
-        location: "humerus_right"
+        location: "femur_left"
       - image_path: /output/test/BONE_AI_134/shape/T1W_sagittal_6.png
         label: lobulated
         reason: >-
@@ -103,18 +117,18 @@ features:
         modality: T1W
         plane: sagittal
         location: "humerus_left"
-      - image_path: /output/test/BONE_AI_174/shape/T1W_coronal_13.png
-        label: geographic
-        reason: >-
-          Geographic: the margin is sharply defined and well-demarcated, sweeping
-          as a single broad concave arc (a bite out of the mass). The
-          distinguishing cue is the crisp border curving inward -- not the
-          outward convex bulges of lobulated, and not the jagged, ill-defined
-          edge of irregular.
-        modality: T1W
-        plane: coronal
-        location: "humerus_left"
-      - image_path: /output/test/BONE_AI_462/shape/T1W_C_sagittal_14.png
+      # - image_path: /output/test/BONE_AI_174/shape/T1W_coronal_13.png
+      #   label: geographic
+      #   reason: >-
+      #     Geographic: the margin is sharply defined and well-demarcated, sweeping
+      #     as a single broad concave arc (a bite out of the mass). The
+      #     distinguishing cue is the crisp border curving inward -- not the
+      #     outward convex bulges of lobulated, and not the jagged, ill-defined
+      #     edge of irregular.
+      #   modality: T1W
+      #   plane: coronal
+      #   location: "humerus_left"
+      - image_path: /output/test/BONE_AI_12/shape/T2W_FS_coronal_6.png
         label: irregular
         reason: >-
           Irregular: the border has no consistent geometry -- it zigzags with
@@ -122,9 +136,9 @@ features:
           intervals. This disordered, unpredictable edge is unlike the single
           smooth curve of Round/Oval, the repeating organised bulges of
           lobulated, or the sharply-defined concave arc of geographic.
-        modality: T1W_C
-        plane: sagittal
-        location: "vertebrae"
+        modality: T2W_FS
+        plane: coronal
+        location: "tibia_right"
 
   # enhancement:
   #   label_options: [homogeneous, heterogeneous, none]
