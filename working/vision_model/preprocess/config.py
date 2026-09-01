@@ -36,6 +36,13 @@ class FeatureSpec:
     margin_mm: Optional[float] = None
     margin_px: Optional[int] = None
     top_k: int = 1  # slices per plane, ranked by tumour cross-sectional area
+    # 'top_k'  -> the `top_k` largest-area slices, each cropped to its OWN bbox.
+    #             One row per slice; the slices are independent samples.
+    # 'stack'  -> every tumour-bearing slice, in anatomical order, all cropped to
+    #             the SAME (union) bbox so they share a frame and can be read as a
+    #             volume. `top_k` is ignored; `max_slices` caps the count.
+    slice_mode: str = "top_k"
+    max_slices: int = 85  # stack mode only; MedGemma 1.5's per-query ceiling
     # How the rectangle's pixels are treated:
     #   'bbox'   -> keep everything in the box (lesion + surrounding tissue)
     #   'masked' -> zero out pixels outside the segmentation (lesion only)
@@ -76,10 +83,16 @@ def _load_yaml(path: Path) -> List[FeatureSpec]:
                 margin_mm=feat.get("crop_margin_mm"),
                 margin_px=feat.get("crop_margin_px"),
                 top_k=int(feat.get("top_k", 1)),
+                slice_mode=str(feat.get("slice_mode", "top_k")).strip(),
+                max_slices=int(feat.get("max_slices", 85)),
                 crop_mode=feat.get("crop_mode"),
                 assessment_key=feat.get("assessment_key"),
             )
         )
+    for s in specs:
+        if s.slice_mode not in ("top_k", "stack"):
+            raise ValueError(f"feature {s.name!r}: slice_mode must be 'top_k' or 'stack', "
+                             f"got {s.slice_mode!r}")
     return specs
 
 

@@ -1,0 +1,73 @@
+# STACK variant of feature_config.yaml -- see slice_mode below.
+# Run with a SEPARATE --out-root: the filenames are the same, so writing
+# into the existing tree would interleave stack and top-k crops in one
+# directory with nothing but the metadata to tell them apart.
+# Feature config for run.py (real BONE data + classified-sequence table).
+#
+# `modality` here is matched against your classifier's FINAL sequence label
+# (the label column of --sequence-table), case-insensitively. `plane` is matched
+# against each scan's ACQUISITION plane (inferred from the affine).
+#
+# Two ways to name modalities:
+#   (a) put the exact classifier labels in `modality:` directly, or
+#   (b) use short names below and map them in `sequence_aliases:`.
+# Run `--index-only` first: it prints the available (sequence, plane) combos and,
+# with this config, a coverage report -- use those exact label strings here.
+
+# Optional: short-name -> exact-classifier-label. EDIT to match your labels.
+sequence_aliases:
+  T1W:   T1W_nFS_nCE      # plain T1
+  T1W_C:  T1W_nFS_CE       # T1 post-contrast (not fat-sat)
+  T1W_FS_C: T1W_FS_CE       # T1 fat-sat post-contrast
+  T2W:   T2W_nFS_nCE      # plain T2
+  T2W_FS: T2W_FS           # T2 fat-sat
+
+# `assessment_key` maps a feature to its key under the assessment JSON's
+# "imaging_features" block (ground-truth source), when the names differ.
+# Omit it when the feature name already matches the JSON key.
+features:
+  - name: shape
+    assessment_key: tumor_shape
+    crop_margin_mm: 15
+    # Every tumour-bearing slice, in anatomical order, all cropped to one shared
+    # (union) bbox so the slices share a frame and can be read as a volume.
+    # top_k is ignored in this mode.
+    slice_mode: stack
+    max_slices: 85            # MedGemma 1.5's documented per-query ceiling
+    crop_mode: bbox            # keep surrounding tissue for shape/margins
+    requirements:
+      # NOTE: axial and coronal come from two DIFFERENT acquired scans of the
+      # same study -- the resolver picks each by its native acquisition plane.
+      - modality: T1W
+        planes: [axial, coronal, sagittal]
+      - modality: T1W_C
+        planes: [axial, coronal, sagittal]
+      - modality: T2W_FS
+        planes: [axial, coronal, sagittal]
+
+  # - name: enhancement
+  #   assessment_key: mri_contrast_enhancement
+  #   crop_margin_mm: 8
+  #   top_k: 1
+  #   crop_mode: bbox            # enhancement is read relative to nearby tissue
+  #   requirements:
+  #     - modality: T1W_FS_C # also provide a reference img
+  #       planes: [axial]
+
+  # - name: fluid_fluid_level
+  #   assessment_key: fluid_without_fluid_fluid_level
+  #   crop_margin_mm: 8
+  #   top_k: 3
+  #   crop_mode: bbox
+  #   requirements:
+  #     - modality: T2W_FS
+  #       planes: [axial, sagittal]
+
+  # - name: soft_tissue_invasion
+  #   assessment_key: soft_tissue_invasion
+  #   crop_margin_mm: 15
+  #   top_k: 1
+  #   crop_mode: bbox
+  #   requirements:
+  #     - modality: T2W_FS
+  #       planes: [axial, coronal, sagittal]

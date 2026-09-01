@@ -26,12 +26,14 @@ from typing import Callable, Dict, List, Optional, Tuple
 import numpy as np
 
 from config import FeatureSpec
-from cropping import apply_mask, crop_with_bbox, expand_bbox, margin_px_from_mm, mask_bbox_2d
+from cropping import (apply_mask, crop_with_bbox, expand_bbox, margin_px_from_mm,
+                      mask_bbox_2d, union_bbox)
 from normalize import normalize_intensity
 from outputs import join_field, save_gray_png, save_rgb_png
 from overlay import draw_contour_overlay
 from resize import resize_image, resize_mask
-from slicing import PLANE_AXES, extract_slice, find_top_k_area_slices, inplane_spacing
+from slicing import (PLANE_AXES, extract_slice, find_top_k_area_slices,
+                     find_tumor_slices, inplane_spacing)
 from volume_io import load_volume_and_mask
 
 log = logging.getLogger("preprocess")
@@ -103,18 +105,38 @@ def process_feature(
                 vol_cache[key] = (vol_norm, mask, spacing)
             vol_norm, mask, spacing = vol_cache[key]
 
-            top = find_top_k_area_slices(mask, plane, spec.top_k)
+            stacked = spec.slice_mode == "stack"
+            if stacked:
+                top = find_tumor_slices(mask, plane, max_slices=spec.max_slices)
+            else:
+                top = find_top_k_area_slices(mask, plane, spec.top_k)
             if not top:
                 log.warning("%s/%s: empty mask in %s plane for %s", case_id, spec.name, plane, req.modality)
                 continue
 
+            # STACK: one box for the whole run of slices, computed BEFORE the
+            # loop and reused for every one of them. Cropping each slice to its
+            # own box and resizing them all to out_size would rescale each slice
+            # independently, so the lesion would occupy a similar fraction of
+            # every frame regardless of its true extent -- erasing the taper and
+            # the drift that are the only reasons to look at a stack at all.
+            shared_bbox = None
+            if stacked:
+                shared_bbox = union_bbox(mask_bbox_2d(extract_slice(mask, plane, i)) for i in top)
+                log.info("%s/%s: stack of %d %s slice(s) %d-%d, shared bbox %s",
+                         case_id, spec.name, len(top), plane, top[0], top[-1], shared_bbox)
+
             row_sp, col_sp = inplane_spacing(spacing, plane)
-            for idx in top:
+            for stack_pos, idx in enumerate(top):
                 img2d = extract_slice(vol_norm, plane, idx)
                 m2d = extract_slice(mask, plane, idx)
 
-                bbox = mask_bbox_2d(m2d)
-                if bbox is None:  # shouldn't happen (top-k filters empty), but be safe
+                bbox = shared_bbox if stacked else mask_bbox_2d(m2d)
+                # Empty is impossible for top-k (it filters them) but NOT for a
+                # stack: fill_gaps keeps interior slices whose mask is empty, and
+                # those must still be cropped to the shared box, not to the whole
+                # image -- otherwise a gap slice silently breaks the registration.
+                if bbox is None:
                     bbox = (0, img2d.shape[0] - 1, 0, img2d.shape[1] - 1)
 
                 if spec.margin_mm is not None:
@@ -168,6 +190,15 @@ def process_feature(
                     "mask_path": mask_png,
                     "crop_bbox": f"[{ebox[0]},{ebox[1]},{ebox[2]},{ebox[3]}]",
                     "margin_used": f"{margin_desc}|{mode}",
+                    # Stack bookkeeping. slice_index alone is NOT enough to
+                    # reassemble a stack: a loader sorting on it cannot tell a
+                    # complete run from one missing its middle, and cannot know
+                    # when to stop. stack_pos/stack_size make the run explicit
+                    # and self-checking. Blank in top_k mode, where the slices
+                    # are independent samples and there is no run to rebuild.
+                    "slice_mode": spec.slice_mode,
+                    "stack_pos": stack_pos if stacked else "",
+                    "stack_size": len(top) if stacked else "",
                     "ground_truth_label": ground_truth,
                 })
 
