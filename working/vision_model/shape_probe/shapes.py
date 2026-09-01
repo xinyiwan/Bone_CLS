@@ -51,7 +51,7 @@ with only the parameters differing, so corner-counting cannot separate them --
 the model has to judge the CHARACTER of the boundary. Because a/d/b/c are
 continuous, `difficulty` sweeps deformation amplitude and turns the probe from a
 pass/fail number into a psychometric curve ("lobulated separates from round once
-bulges exceed ~15% of R"), which can then be compared against the deformation
+bulges exceed ~24% of R"), which can then be compared against the deformation
 amplitude actually present in the annotated lesions.
 """
 
@@ -90,16 +90,18 @@ BASE = {
     # by `difficulty` (a class-independent nuisance should not track the axis the
     # psychometric curve is measured along). See the note in clinical_radii.
     "aspect": 0.45,
-    "lobe": 0.15,     # lobulated: sinusoid amplitude
+    "lobe": 0.24,     # lobulated: sinusoid amplitude
     "dent": 0.80,     # geographic: depth of the single concave arc
     # Deliberately close to "lobe" above. At the old 0.34 an irregular boundary
     # wandered ~2.3x further from the mean than a lobulated one, so the two were
     # separable by AMPLITUDE alone -- a model could score well without ever
     # judging cusped-vs-wavy, which is the distinction this probe exists to test.
-    # At 0.20 the peak-to-peak ranges largely overlap and the discriminating cues
-    # are dom_k and kurt, as intended. This is the "stricter experiment" the
-    # README caveat describes.
-    "jag": 0.20,      # irregular: spike amplitude (see IRREGULAR_* below)
+    # At 0.30 against lobe's 0.24 the peak-to-peak ranges still overlap
+    # (0.20-0.74 vs 0.25-0.31 at d=1.0) and the discriminating cues are dom_k and
+    # kurt, as intended. This is the "stricter experiment" the README describes.
+    # Keep the two within ~1.3x of each other; widening the gap re-opens the
+    # shortcut, and preview_local.py --stats will say so.
+    "jag": 0.30,      # irregular: spike amplitude (see IRREGULAR_* below)
     "bump": 1.10,     # exophytic: height of the single outward stalk
 }
 
@@ -114,16 +116,20 @@ BASE = {
 #            spikes. THIS is "jagged vs wavy", and it is the descriptor that
 #            wavenumber alone does not touch.
 #
-# Reference values at difficulty 1.0 (measured, n=300, via preview_local.py):
-#   lobulated  dom_k 5.4  kurt 1.5  p2p 0.20 [0.17, 0.22]
-#   irregular  dom_k 15   kurt 7.9  p2p 0.34 [0.15, 0.52]
-# The p2p RANGES now overlap -- that is deliberate. See point 3 below.
+# Reference values at difficulty 1.0 (measured, n=400, via preview_local.py):
+#   round_oval dom_k 32   kurt 2.6  p2p 0.02
+#   lobulated  dom_k 5.6  kurt 1.5  p2p 0.28 [0.25, 0.31]
+#   irregular  dom_k 15   kurt 14   p2p 0.42 [0.20, 0.74]
+# The p2p RANGES overlap -- deliberate, see point 3. dom_k and kurt are what
+# separate the classes, which is the question the probe asks. round_oval's dom_k
+# of 32 is the shared surface texture, not a deformation.
 #
 # 1. IRREGULAR_SHARPNESS (biggest effect, and the least obvious)
 #    A sum of sinusoids is infinitely smooth, so raising the wavenumber only
 #    converts a slow wave into a fast wave -- still a wave, still confusable with
 #    lobulated. This exponent (see _sharpen) is what makes the margin ANGULAR.
-#    1.0 = old pure-sine behaviour (kurt ~6); 2.0 -> kurt ~7 with visible cusps;
+#    1.0 = pure-sine behaviour (kurt ~6); 2.0 -> kurt ~8, visible cusps;
+#    3.0 (current) -> kurt ~14, unmistakably angular on a contact sheet;
 #    3.5 -> kurt ~19, spiky to the point of looking like rasterisation grit.
 #    Costs nothing in amplitude: peak deviation is preserved by construction.
 #
@@ -135,12 +141,12 @@ BASE = {
 #    to do with the model. (10, 20) puts dom_k at ~15, a 3x gap. Going higher
 #    stops helping once a period is only a few pixels -- see the resolution note.
 #
-# 3. BASE["jag"] vs BASE["lobe"]  -- now 0.20 vs 0.15, deliberately close
+# 3. BASE["jag"] vs BASE["lobe"]  -- now 0.30 vs 0.24, deliberately close
 #    The bluntest separator, and the one to leave alone. At the previous 0.34 an
 #    irregular boundary deviated ~2.4x further than a lobulated one, which is an
 #    AMPLITUDE cue rather than a character cue: a model could pass by measuring
-#    how far the boundary wanders without ever judging jaggedness. At 0.20 the
-#    peak-to-peak ranges overlap (see the reference values above) and SHARPNESS
+#    how far the boundary wanders without ever judging jaggedness. At 0.30 vs
+#    0.24 the ranges overlap (see the reference values above) and SHARPNESS
 #    plus the harmonic band carry the distinction, which is the question the
 #    probe is actually asking. Raising it again would re-open the shortcut.
 #
@@ -168,7 +174,7 @@ IRREGULAR_K = (10, 20)         # harmonic band: 10-20 oscillations round the per
 IRREGULAR_N_HARM = 6           # distinct wavenumbers drawn from that band
 IRREGULAR_PATCHES = (3, 5)     # inclusive range for the number of jagged patches
 IRREGULAR_PATCH_SIGMA = 0.50   # rad, angular half-width of one patch
-IRREGULAR_SHARPNESS = 2.0      # cusp exponent; 1.0 = plain sine sum (see _sharpen)
+IRREGULAR_SHARPNESS = 3.0      # cusp exponent; 1.0 = plain sine sum (see _sharpen)
 IRREGULAR_FLOOR = 0.40         # min envelope value: keeps the "smooth" stretches
                                # slightly unsettled rather than perfectly round
 
@@ -188,7 +194,7 @@ SURFACE_NOISE = 0.01
 # headroom for `irregular`'s spikes, which overshoot the RMS radius by up to ~1.2x
 # at difficulty 1.0. Raise it and the longest spikes clip at the crop edge; lower
 # it and every shape occupies less of the image for no benefit.
-NORM_TARGET_RMS = 0.68
+NORM_TARGET_RMS = 0.62
 
 DEFAULT_COLOR = (255, 0, 0)  # RGB, matches preprocess.overlay.draw_contour_overlay
 DEFAULT_THICKNESS = 2
@@ -344,11 +350,19 @@ def clinical_radii(
         # Several rounded convex lobes side by side. k is the discriminating cue
         # vs `irregular` (4-7 low harmonics vs IRREGULAR_K's high ones).
         #
-        # BASE["lobe"] is deliberately SHALLOW (0.15R): the intended look is an
-        # oval you can still see as an oval, with a gentle wave riding on it --
-        # the way a real lobulated margin presents -- not a cauliflower of
-        # deep-cut lobes. This makes lobulated vs round_oval the probe's hardest
-        # pair by design, so read those two together in the confusion matrix.
+        # BASE["lobe"] was 0.15R -- "an oval you can still see as an oval, with a
+        # gentle wave riding on it", the way a real lobulated margin presents. It
+        # is now 0.24R, which reads as distinctly scalloped rather than gently
+        # wavy. That was a DELIBERATE trade of clinical realism for legibility:
+        # at 0.15 a human reviewer could not reliably separate lobulated from
+        # irregular on the contact sheet, and a difficulty level a human fails is
+        # not evidence about the model.
+        #
+        # Know what it costs. This probe is an UPPER BOUND on the real `shape`
+        # feature, and the bound is only tight if the synthetic classes are no
+        # easier to tell apart than real margins. Deepening the lobes loosens it.
+        # Real lobulated margins are closer to 0.15; if the model clears 0.24
+        # comfortably, that does not yet mean it can read a real one.
         k = rng.randint(4, 7)
         a = BASE["lobe"] * difficulty * rng.uniform(0.8, 1.0)
         r = r + a * np.sin(k * theta + rng.uniform(0, 2 * math.pi))

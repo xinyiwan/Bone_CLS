@@ -158,14 +158,21 @@ def stats_table(levels: List[float], n: int, seed: int) -> None:
                       + " (intended or definitional)")
         print()
 
-    worst = max(x["max_r"] for v in draws.values() for x in v)
-    if worst > 1.0:
-        print(f"!! longest spike reaches {worst:.2f}R -- it will CLIP at the crop edge, "
-              f"truncating the very feature that defines `irregular`.\n"
-              f"   Lower shapes.NORM_TARGET_RMS (currently {S.NORM_TARGET_RMS}).")
-    else:
-        print(f"ok: longest spike reaches {worst:.2f}R, inside the inscribing circle "
-              f"(NORM_TARGET_RMS={S.NORM_TARGET_RMS})")
+    # Spike extent, as a fraction of the nominal radius R. R is NOT the image
+    # half-width: build_shapes.py sets it from the lesion extent inside a crop
+    # that carries a margin, so a shape may exceed R by a little and still sit
+    # comfortably inside the image. What actually clips is
+    #     max_r * R > half the crop,  with R = 0.5 * min_dim * lesion_frac * shape_scale
+    # so the binding constraint is --shape-scale, not this number alone. Report
+    # the distribution and let the caller do that arithmetic.
+    allm = sorted(x["max_r"] for v in draws.values() for x in v)
+    p50, p99, mx = (allm[len(allm) // 2], allm[int(0.99 * (len(allm) - 1))], allm[-1])
+    print(f"spike extent (fraction of R, NORM_TARGET_RMS={S.NORM_TARGET_RMS}): "
+          f"median {p50:.2f}  p99 {p99:.2f}  max {mx:.2f}")
+    print(f"   keep --shape-scale <= {1.0 / (p99 * 0.7):.2f} for a crop with the usual "
+          f"~0.7 lesion fraction, or the p99 spike lands outside the image")
+    if p99 > 1.05:
+        print("!! p99 is well past R -- lower shapes.NORM_TARGET_RMS")
 
 
 def contact_sheet(levels: List[float], n: int, seed: int, size: int, out: Path) -> None:
