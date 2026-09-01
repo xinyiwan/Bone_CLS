@@ -31,6 +31,9 @@ METADATA_FIELDS = [
     "mask_path",          # binary mask crop, same geometry as image_path ('' unless --save-mask)
     "crop_bbox",
     "margin_used",
+    "slice_mode",         # 'top_k' (independent slices) or 'stack' (ordered run, shared bbox)
+    "stack_pos",          # 0-based position within the run; '' unless slice_mode == 'stack'
+    "stack_size",         # length of the run, for detecting an incomplete stack
     "ground_truth_label",
 ]
 

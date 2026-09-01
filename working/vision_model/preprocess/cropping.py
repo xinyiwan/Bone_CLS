@@ -29,6 +29,28 @@ def mask_bbox_2d(mask2d: np.ndarray) -> Optional[BBox]:
     return int(ys.min()), int(ys.max()), int(xs.min()), int(xs.max())
 
 
+def union_bbox(bboxes) -> Optional[BBox]:
+    """The smallest box containing all of `bboxes` (Nones ignored), or None if
+    none are given.
+
+    For a STACK, every slice must be cropped to this one box rather than to its
+    own. Per-slice boxes are each resized to the same output size, so the lesion
+    ends up occupying a similar fraction of every frame whatever its true extent:
+    a 12 mm pole is magnified ~5x more than a 60 mm equator and arrives looking
+    the same size. That erases exactly the through-plane variation in size and
+    position -- taper, eccentric growth -- that a stack exists to show. One
+    shared box costs resolution on the small slices and keeps the geometry.
+    """
+    boxes = [b for b in bboxes if b is not None]
+    if not boxes:
+        return None
+    r0 = min(b[0] for b in boxes)
+    r1 = max(b[1] for b in boxes)
+    c0 = min(b[2] for b in boxes)
+    c1 = max(b[3] for b in boxes)
+    return r0, r1, c0, c1
+
+
 def margin_px_from_mm(margin_mm: float, row_spacing: float, col_spacing: float) -> Tuple[int, int]:
     """Convert a mm margin to per-axis pixel margins (rounded)."""
     return int(round(margin_mm / row_spacing)), int(round(margin_mm / col_spacing))
