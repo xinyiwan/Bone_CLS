@@ -179,7 +179,18 @@ SYSTEM_ROLE_STACK = (
 # headings are fixed only so a 40-case manual read stays skimmable; they impose
 # no answer set. The last line asks the model to ground each claim in a slice,
 # which is what makes a wrong answer diagnosable rather than merely wrong.
-def free_text_format(input_mode: str = "slice") -> str:
+def free_text_format(input_mode: str = "slice", rank_options: Optional[List[str]] = None) -> str:
+    """The OUTPUT FORMAT block for the prose arms.
+
+    rank_options turns ASSESSMENT from open prose into a RANKING over exactly
+    those labels, written `best > next > worst`. That chain is the whole point:
+    the free-text runs kept concluding "irregular and somewhat lobulated", three
+    terms with no ordering, which is unscoreable and indistinguishable from a
+    hedge. A total order is parseable by split('>'), and yields top-1 accuracy
+    and mean reciprocal rank without anyone having to interpret prose. Every
+    label must appear exactly once -- a partial list would silently conflate
+    "ranked last" with "forgot to mention".
+    """
     stack = input_mode == "stack"
     noun = "the images" if stack else "the image"
     # Only the stack arm can be asked to cite slices; saying it to a single-image
@@ -211,7 +222,20 @@ def free_text_format(input_mode: str = "slice") -> str:
         "REASONING: how you weigh those observations -- what the alternatives are, "
         "why you favour one over another, and what leaves you uncertain. Think it "
         "through here, before committing to a conclusion.\n"
-        "ASSESSMENT: your conclusion about the feature, in your own words.\n"        + cite
+        + (
+            "ASSESSMENT: your conclusion about the feature, in your own words.\n"
+            "Do not pick from a list of terms -- none is given. Describe what is there."
+            if not rank_options else
+            "ASSESSMENT: rank ALL of the descriptors below from best fit to worst fit "
+            "for this lesion, separated by '>', with nothing else on that line.\n"
+            f"  the descriptors, to be written exactly as given: {', '.join(rank_options)}\n"
+            f"  the required form: ASSESSMENT: {' > '.join(rank_options)}\n"
+            "Every descriptor must appear exactly once, even the ones that fit badly. "
+            "Rank them even when the call is close -- put the closer one first and say "
+            "in REASONING why it was close. Do not add words of your own to that line; "
+            "if a better word exists, use it in REASONING instead."
+        )
+        + cite
     )
 
 
@@ -253,15 +277,21 @@ def build_system_text(feature_cfg: dict, has_examples: bool = False,
     """
     if input_mode not in ("slice", "stack"):
         raise ValueError(f"input_mode must be 'slice' or 'stack', got {input_mode!r}")
-    if output_mode not in ("label", "free_text"):
-        raise ValueError(f"output_mode must be 'label' or 'free_text', got {output_mode!r}")
-    free = output_mode == "free_text"
+    if output_mode not in ("label", "free_text", "ranked"):
+        raise ValueError(f"output_mode must be 'label', 'free_text' or 'ranked', "
+                         f"got {output_mode!r}")
+    # 'ranked' shares free text's PROSE sections (it reasons the same way) but,
+    # unlike free text, it IS given the vocabulary -- it just orders it instead
+    # of picking one. So it is "free" for the role/task, not for the definitions.
+    prose = output_mode in ("free_text", "ranked")
 
     role = {
         ("slice", "label"): SYSTEM_ROLE,
         ("slice", "free_text"): SYSTEM_ROLE_FREE,
+        ("slice", "ranked"): SYSTEM_ROLE_FREE,
         ("stack", "label"): SYSTEM_ROLE_STACK,
         ("stack", "free_text"): SYSTEM_ROLE_STACK_FREE,
+        ("stack", "ranked"): SYSTEM_ROLE_STACK_FREE,
     }[(input_mode, output_mode)]
     sections: List[str] = [role]
 
@@ -277,14 +307,16 @@ def build_system_text(feature_cfg: dict, has_examples: bool = False,
     # the model the answer set the arm is designed to withhold, so it is dropped
     # there -- along with the label-valued OUTPUT FORMAT.
     defs = feature_cfg.get("label_definitions")
-    if defs and not free:
+    if defs and output_mode != "free_text":
         sections.append("# LABEL DEFINITIONS\n" + "\n".join(f"- {k}: {v}" for k, v in defs.items()))
 
-    task = free_text_task(feature_cfg) if free else (feature_cfg.get("task") or "").strip()
+    task = free_text_task(feature_cfg) if prose else (feature_cfg.get("task") or "").strip()
     if task:
         sections.append("# TASK\n" + task)
 
-    if free:
+    if output_mode == "ranked":
+        sections.append(free_text_format(input_mode, feature_cfg["label_options"]))
+    elif output_mode == "free_text":
         sections.append(free_text_format(input_mode))
     else:
         # Strict structured-output constraint (constant across features; only the

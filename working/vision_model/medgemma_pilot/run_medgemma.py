@@ -89,6 +89,10 @@ INFERENCE_FIELDS = [
     "case_id", "feature_name", "plane", "modality", "image_path",
     "fed_image_path", "has_contour", "model_id", "num_few_shot", "use_contour",
     "input_text", "raw_output", "thinking", "parsed_label", "reason",
+    # Full ranking from --output-mode ranked, e.g. "irregular > lobulated > Round/Oval".
+    # parsed_label holds only its head; the tail is what lets a near-miss be told
+    # from a wild miss (mean reciprocal rank), so it must not be thrown away.
+    "ranking",
     "ground_truth_label", "correct",
 ]
 
@@ -363,9 +367,15 @@ def _answer_region(raw: str) -> str:
     whole string when the model didn't emit a thinking block."""
     s = raw
     for marker in THINK_END_MARKERS:
+        # <end_of_turn> TERMINATES the answer; it does not precede it. Splitting
+        # on it and keeping the tail returned "" for every reply that ended with
+        # it -- i.e. all of them -- which is why the free-text `reason` column
+        # came back empty. Thought-end markers still split; this one truncates.
+        if marker == "<end_of_turn>":
+            continue
         if marker in s:
             s = s.rsplit(marker, 1)[-1]
-    return s
+    return s.split("<end_of_turn>", 1)[0]
 
 
 def extract_thinking(raw: str) -> str:
@@ -462,6 +472,35 @@ def parse_answer(raw: str, options: List[str]) -> tuple[str, str]:
         if o_low in words:
             return o, reason
     return "PARSE_FAILED", reason
+
+
+def parse_ranking(raw: str, options: List[str]) -> tuple[str, str]:
+    """Parse the ranked arm's ASSESSMENT line -> (top_label, "a > b > c").
+
+    Returns ("PARSE_FAILED", "") when the line is missing or does not name every
+    option exactly once. That strictness is deliberate: a partial ranking cannot
+    be scored (is a missing label ranked last, or overlooked?), and silently
+    keeping the first token would turn a malformed answer into a confident one.
+
+    Tolerant of the heading variants the model actually emits -- '# ASSESSMENT:',
+    '**ASSESSMENT:**', '## ASSESSMENT' -- and of it echoing the prompt's own
+    format lines earlier in the reply, by taking the LAST ASSESSMENT block.
+    """
+    import re
+
+    region = _answer_region(raw)
+    blocks = re.split(r"(?im)^[#*\s]*ASSESSMENT[:*\s]*", region)
+    if len(blocks) < 2:
+        return "PARSE_FAILED", ""
+    # The last block is the real answer; earlier ones are echoed instructions.
+    line = next((l for l in blocks[-1].splitlines() if l.strip()), "")
+    line = line.replace("*", "").strip()
+
+    by_lower = {o.lower(): o for o in options}
+    ranked = [by_lower.get(part.strip().strip(".").lower()) for part in line.split(">")]
+    if len(ranked) != len(options) or any(r is None for r in ranked) or len(set(ranked)) != len(options):
+        return "PARSE_FAILED", ""
+    return ranked[0], " > ".join(ranked)  # type: ignore[arg-type]
 
 
 def has_gt(gt: str) -> bool:
@@ -582,9 +621,10 @@ def infer(
     so the CSV says which run produced it -- generation itself goes through the
     `generate` callable, which already has the model bound.
     """
-    if output_mode == "free_text" and num_few_shot > 0:
-        raise SystemExit("--output-mode free_text is zero-shot only (label exemplars would teach "
-                         "the forced-choice format back); drop --num-few-shot")
+    if output_mode in ("free_text", "ranked") and num_few_shot > 0:
+        raise SystemExit(f"--output-mode {output_mode} is zero-shot only (label exemplars answer "
+                         "with a bare label, teaching back a format neither arm uses); "
+                         "drop --num-few-shot")
     location_cols = location_cols or ["skeletal_location", "location_within_bone"]
     features = load_feature_config(config_path)
     config_dir = Path(config_path).resolve().parent
@@ -739,7 +779,11 @@ def infer(
             for t, raw in zip(batch_tasks, raws):
                 fcfg = features[t["feature"]]
                 thinking = extract_thinking(raw)  # full chain-of-thought (richer than `reason`)
-                if output_mode == "free_text":
+                ranking = ""
+                if output_mode == "ranked":
+                    label, ranking = parse_ranking(raw, fcfg["label_options"])
+                    reason = _answer_region(raw).strip()  # keep the prose for review
+                elif output_mode == "free_text":
                     # No vocabulary was offered, so there is nothing to parse and
                     # nothing to score: the answer IS the prose, and it lands in
                     # `reason` because that is the field review_server renders.
@@ -777,6 +821,7 @@ def infer(
                     "thinking": thinking,
                     "parsed_label": label,
                     "reason": reason,
+                    "ranking": ranking,
                     "ground_truth_label": gt,
                     "correct": correct,
                 })
@@ -1021,11 +1066,14 @@ def main() -> None:
     ap.add_argument("--num-few-shot", type=int, default=0,
                     help="prepend up to N labeled example turns per feature from the YAML 'examples:' block "
                          "(0 = zero-shot; example images are auto-excluded from inference)")
-    ap.add_argument("--output-mode", choices=["label", "free_text"], default="label",
+    ap.add_argument("--output-mode", choices=["label", "free_text", "ranked"], default="label",
                     help="'label' = forced choice from the YAML label_options (default, scored). "
                          "'free_text' = no vocabulary offered; the model describes the feature in "
                          "prose, which lands in the `reason` column with parsed_label/correct left "
-                         "blank because there is nothing to score. Zero-shot only")
+                         "blank because there is nothing to score. "
+                         "'ranked' = same prose reasoning, but ASSESSMENT orders ALL the "
+                         "label_options best-first ('a > b > c'); parsed_label is the head and "
+                         "`ranking` the whole chain. free_text/ranked are zero-shot only")
     # quick mode
     ap.add_argument("--image", type=Path, nargs="+",
                     help="one or more image paths (quick mode); each is sent in its own call")
