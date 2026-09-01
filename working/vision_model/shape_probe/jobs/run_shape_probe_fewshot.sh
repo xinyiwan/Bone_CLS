@@ -71,6 +71,19 @@ NUM_SHARDS=2
 # attempt -- cheaper to start low and raise it after reading the img/s line.
 BATCH_SIZE=8
 
+# Token budget for the whole generation, THINKING BLOCK INCLUDED. The script
+# default is 512, which was not enough: MedGemma 1.5 reasons at length on the
+# clinical set, ran past the cap mid-thought, and never emitted its JSON answer.
+# Before the parser was fixed those rows silently resolved to the FIRST option in
+# the vocabulary -- `round_oval` -- so truncation showed up as inflated
+# round_oval recall rather than as an error. Set it explicitly here so the budget
+# is a visible part of the run config, and check the "generations cut off
+# mid-thought" line that --mode eval now prints: it should be 0.
+#
+# Costs throughput: static batching returns only when the SLOWEST member of a
+# batch stops, so a bigger cap lets one long thought hold up its whole batch.
+MAX_NEW_TOKENS=1536
+
 cd "$REPO/working/vision_model/shape_probe"
 
 mkdir -p "$OUTDIR"
@@ -116,6 +129,7 @@ for i in $(seq 0 $((NUM_SHARDS - 1))); do
         --model-id "$MODEL" \
         --metadata "$SHAPE_META" \
         --batch-size $BATCH_SIZE \
+        --max-new-tokens $MAX_NEW_TOKENS \
         --num-shards $NUM_SHARDS --shard-index "$i" \
         "${FS_ARGS[@]}" \
         --out "$OUT" &

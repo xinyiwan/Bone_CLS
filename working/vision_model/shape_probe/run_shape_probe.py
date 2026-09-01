@@ -71,6 +71,12 @@ RESULT_FIELDS = [
     "radius_px", "rotation_deg", "input_text", "raw_output",
     "thinking", "parsed_label", "reason", "shape", "correct", "model_id",
     "num_few_shot",
+    # 1 when generation hit --max-new-tokens mid-thought, so no answer was ever
+    # emitted. Recorded per row because the truncation RATE is a property of the
+    # token budget, not of the model's ability: a run with 30% truncation is
+    # measuring the budget. Older CSVs predate this column; `--mode reparse`
+    # backfills it from raw_output.
+    "truncated",
 ]
 
 # --------------------------------------------------------------------------
@@ -479,6 +485,7 @@ def infer(
                     "correct": int(label == gt) if label != "PARSE_FAILED" else "",
                     "model_id": model_id,
                     "num_few_shot": num_few_shot,
+                    "truncated": int(mg.was_truncated(raw)),
                 })
                 log.info("%s [%s] -> %s (true=%s)", row.get("case_id", "?"),
                          row.get("background", "?"), label, gt)
@@ -491,6 +498,57 @@ def infer(
                      (len(tasks) - n_done) / rate / 60 if rate > 0 else float("nan"))
 
     log.info("done -> %s", out_path)
+
+
+def reparse(results: List[Path] | Path, shape_set: str = "auto", write: bool = False) -> None:
+    """Re-derive `parsed_label` / `correct` / `truncated` from the stored
+    `raw_output`, without a GPU.
+
+    Every run keeps the model's full raw text, so parsing is a pure function of
+    data already on disk. When the parser is fixed, the fix can be applied
+    retroactively to every result ever produced -- no re-inference, no new
+    GPU-hours, and the before/after diff quantifies exactly how much the old
+    parse distorted the numbers.
+
+    Prints the change breakdown and only rewrites the CSVs with --write, so the
+    default is a dry run you can read before committing to it.
+    """
+    paths = [results] if isinstance(results, Path) else list(results)
+    total = changed = 0
+    moved: Dict[str, int] = {}
+    for path in paths:
+        df = pd.read_csv(path).fillna("")
+        if "raw_output" not in df.columns:
+            raise SystemExit(f"{path} has no raw_output column; nothing to reparse")
+        vocab = list(SHAPE_SETS[resolve_shape_set(shape_set, df)])
+        new_label, new_reason, new_trunc = [], [], []
+        for _, row in df.iterrows():
+            raw = str(row["raw_output"])
+            lab, rsn = mg.parse_answer(raw, vocab)
+            new_label.append(lab)
+            new_reason.append(rsn)
+            new_trunc.append(int(mg.was_truncated(raw)))
+        old = df["parsed_label"].astype(str).tolist()
+        for o, n in zip(old, new_label):
+            total += 1
+            if o != n:
+                changed += 1
+                moved[f"{o} -> {n}"] = moved.get(f"{o} -> {n}", 0) + 1
+        gt = df["shape"].astype(str)
+        df["parsed_label"] = new_label
+        df["reason"] = new_reason
+        df["truncated"] = new_trunc
+        df["correct"] = [int(l == g) if l != "PARSE_FAILED" else ""
+                         for l, g in zip(new_label, gt)]
+        if write:
+            df.to_csv(path, index=False)
+
+    print(f"\nreparsed {total} row(s) across {len(paths)} file(s); "
+          f"{changed} label(s) changed ({changed/max(total,1):.1%})")
+    for k, v in sorted(moved.items(), key=lambda kv: -kv[1]):
+        print(f"  {v:>5}  {k}")
+    print("\n(dry run -- pass --write to update the CSVs)" if not write
+          else "\nCSVs updated in place.")
 
 
 def evaluate(results: List[Path] | Path) -> None:
@@ -519,6 +577,16 @@ def evaluate(results: List[Path] | Path) -> None:
     n_fail = len(df) - n
     if n_fail:
         print(f"  unparseable answers (excluded): {n_fail} ({n_fail/len(df):.1%})")
+    # Truncation is a property of --max-new-tokens, not of the model's ability to
+    # see shapes, so it belongs next to the accuracy rather than buried. A high
+    # rate means the headline number is measuring the token budget: raise
+    # --max-new-tokens and re-run before reading anything into the classes.
+    if "truncated" in df.columns:
+        n_trunc = int(pd.to_numeric(df["truncated"], errors="coerce").fillna(0).sum())
+        if n_trunc:
+            print(f"  generations cut off mid-thought: {n_trunc} ({n_trunc/len(df):.1%})"
+                  f" -- raise --max-new-tokens (currently the answer is never emitted"
+                  f" for these)")
 
     print("\nPer-shape recall:")
     for shape, g in scored.groupby("shape"):
@@ -558,10 +626,17 @@ def evaluate(results: List[Path] | Path) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--mode", required=True, choices=["infer", "eval", "exemplars"],
+    ap.add_argument("--mode", required=True,
+                    choices=["infer", "eval", "exemplars", "reparse"],
                     help="'exemplars' is a no-GPU dry run: print (and optionally tile) the "
-                         "few-shot examples the same flags would send to the model")
+                         "few-shot examples the same flags would send to the model. "
+                         "'reparse' re-derives parsed_label/correct/truncated from the "
+                         "stored raw_output of an existing --results CSV, also without a "
+                         "GPU -- use it to apply a parser fix retroactively")
     ap.add_argument("--metadata", type=Path, help="shape_metadata.csv from build_shapes.py (infer mode)")
+    ap.add_argument("--write", action="store_true",
+                    help="reparse mode: actually rewrite the CSVs (default is a dry run "
+                         "that only reports what would change)")
     ap.add_argument("--out", type=Path, help="output CSV (infer mode)")
     ap.add_argument("--results", type=Path, nargs="+",
                     help="results CSV(s) (eval mode); pass every shard file from a multi-GPU run")
@@ -625,6 +700,10 @@ def main() -> None:
               shard_index=args.shard_index, num_shards=args.num_shards, limit=args.limit,
               num_few_shot=args.num_few_shot, few_shot_metadata=args.few_shot_metadata,
               seed=args.seed)
+    elif args.mode == "reparse":
+        if not args.results:
+            raise SystemExit("--results is required for --mode reparse")
+        reparse(args.results, args.shape_set, write=args.write)
     else:
         if not args.results:
             raise SystemExit("--results is required for --mode eval")

@@ -366,9 +366,32 @@ THINK_START_MARKERS = ("<unused94>", "<start_of_thought>")
 THINK_END_MARKERS = ("<unused95>", "</thought>", "<end_of_turn>")
 
 
+def was_truncated(raw: str) -> bool:
+    """True when the model opened a thinking block and never closed it.
+
+    That means generation hit --max-new-tokens mid-thought, so the final answer
+    was never emitted and there is nothing to parse. Worth detecting explicitly
+    rather than letting the parser guess: see the note in _answer_region for the
+    systematic error that guessing produced."""
+    if not any(m in raw for m in THINK_START_MARKERS):
+        return False
+    return not any(m in raw for m in THINK_END_MARKERS if m != "<end_of_turn>")
+
+
 def _answer_region(raw: str) -> str:
     """Everything after the last end-of-thought marker (the final answer), or the
-    whole string when the model didn't emit a thinking block."""
+    whole string when the model didn't emit a thinking block.
+
+    A thought that STARTED but never ENDED is truncation, not an answer. Returning
+    the raw string in that case (which is what falling through this loop does) is
+    not a harmless fallback -- it hands the entire chain-of-thought to the word
+    scan in parse_answer, and every thought enumerates all the option words while
+    reasoning about them. That scan returns the first match in `options` order, so
+    EVERY truncated generation resolved to the first option, `round_oval`,
+    including ones whose last line was "the outline is not round_oval". The result
+    was a large, silent, one-directional inflation of that class."""
+    if was_truncated(raw):
+        return ""
     s = raw
     for marker in THINK_END_MARKERS:
         # <end_of_turn> TERMINATES the answer; it does not precede it. Splitting
@@ -471,10 +494,15 @@ def parse_answer(raw: str, options: List[str]) -> tuple[str, str]:
         return lowered[mp.group(1).strip().lower()], reason
 
     # 3. Last resort: a standalone option word in the answer region.
+    #
+    # Must be UNAMBIGUOUS. Returning the first match in `options` order silently
+    # turns "is it A or B?" into "A", and because the option list is in a fixed
+    # canonical order that bias always points at the same class. An answer region
+    # naming several options is not a weak answer, it is not an answer at all.
     words = set(region.lower().replace(".", " ").replace(",", " ").replace('"', " ").split())
-    for o_low, o in lowered.items():
-        if o_low in words:
-            return o, reason
+    hits = [o for o_low, o in lowered.items() if o_low in words]
+    if len(hits) == 1:
+        return hits[0], reason
     return "PARSE_FAILED", reason
 
 
