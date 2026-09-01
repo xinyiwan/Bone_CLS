@@ -130,8 +130,7 @@ SYSTEM_ROLE = (
     "You are an expert musculoskeletal radiologist. For each case, you are shown "
     "a single MRI slice of a bone lesion and asked to assess ONE specific imaging "
     "feature, choosing from a fixed set of labels defined below. Base your "
-    "judgment only on what is visible in the image provided, not on other slices, "
-    "planes, or assumptions about the case. If the feature is not clearly "
+    "judgment only on what is visible in the image provided. If the feature is not clearly "
     "assessable from the image, choose the closest label and note the "
     "uncertainty in the reason."
 )
@@ -145,8 +144,7 @@ SYSTEM_ROLE_FREE = (
     "You are an expert musculoskeletal radiologist. For each case, you are shown "
     "a single MRI slice of a bone lesion and asked to describe ONE specific "
     "imaging feature in your own words. Base your judgment only on what is "
-    "visible in the image provided, not on other slices, planes, or assumptions "
-    "about the case. Describe what you actually see; if the feature is genuinely "
+    "visible in the image provided. Describe what you actually see; if the feature is genuinely "
     "not assessable, say so and say why."
 )
 
@@ -187,14 +185,33 @@ def free_text_format(input_mode: str = "slice") -> str:
     # Only the stack arm can be asked to cite slices; saying it to a single-image
     # prompt invites the model to invent slice numbers it was never shown.
     cite = " Where a claim rests on particular slices, say which ones." if stack else ""
+    # REASONING comes FIRST, and before ASSESSMENT specifically. Asked for after
+    # the conclusion it becomes post-hoc justification for an answer already
+    # committed to, which is the opposite of the deliberation this arm exists to
+    # read. It is in-band prose, not the model's native thinking block -- see
+    # run_batch on why that block may not be recoverable.
+    # LESION is a GROUNDING check and comes before everything else: every later
+    # heading describes a feature OF the lesion, so if the model never located
+    # it, those descriptions are about nothing and read exactly like real ones.
+    # Asked first, it cannot be reverse-engineered from a shape the model has
+    # already committed to. The explicit permission to say "I cannot identify
+    # it" is the load-bearing part -- without it the model will always name
+    # something, which is precisely the hallucination this is meant to catch.
+    where = ("which slices it appears on and where it sits within the frame"
+             if stack else "where it sits within the frame")
     return (
         "# OUTPUT FORMAT\n"
-        "Reply in plain prose under exactly these two headings, nothing else "
-        "(no JSON, no markdown fences, no bullet list of options):\n"
+        "Reply in plain prose under exactly these four headings, in this order, "
+        "nothing else (no JSON, no markdown fences, no bullet list of options):\n"
+        f"LESION: whether you can identify the lesion at all, and if so, {where} "
+        "and what makes it distinguishable from surrounding tissue. If you cannot "
+        "confidently tell which structure is the lesion, say so plainly here and "
+        "say why -- that is a valid and useful answer, not a failure.\n"
         f"OBSERVATIONS: what you actually see in {noun} that bears on this feature.\n"
-        "ASSESSMENT: your conclusion about the feature, in your own words.\n"
-        "Do not pick from a list of terms -- none is given. Describe what is there."
-        + cite
+        "REASONING: how you weigh those observations -- what the alternatives are, "
+        "why you favour one over another, and what leaves you uncertain. Think it "
+        "through here, before committing to a conclusion.\n"
+        "ASSESSMENT: your conclusion about the feature, in your own words.\n"        + cite
     )
 
 
