@@ -40,7 +40,7 @@ features:
     # case-insensitive match -- no mapping layer needed. Keep these strings
     # identical to the assessment values.
     label_options: ["Round/Oval", lobulated, irregular]
-    description: "The overall shape of the lesion's outer margin/contour as seen on this MRI slice."
+    description: "The overall shape of the lesion as seen on this MRI slice."
     # Used INSTEAD of `description` when the stack arm is selected; the wording
     # above asserts a single slice, which is false there.
     description_stack: >-
@@ -58,10 +58,9 @@ features:
     # "or something else" does not undo the anchoring. Ask about the boundary;
     # let the model supply the words.
     free_text_task: >-
-      Describe the shape of this lesion's outer margin: trace how the boundary
-      runs the whole way around and say what it does. Explain what in what you
-      are shown leads you to that description. Do not assess internal
-      composition or anything outside the margin.
+      Describe the shape of this lesion in your own words: how the
+      boundary runs, and whether it is smooth, lobed, jagged, or something else.
+      Explain what in what you are shown leads you to that description.
     # Each definition says how the label DIFFERS from the others, so the model
     # can pick exactly one. Discriminating axes: number of convex bulges,
     # inward (concave) vs outward (convex) curvature, smooth/organised vs jagged,

@@ -144,8 +144,8 @@ SYSTEM_ROLE_FREE = (
     "You are an expert musculoskeletal radiologist. For each case, you are shown "
     "a single MRI slice of a bone lesion and asked to describe ONE specific "
     "imaging feature in your own words. Base your judgment only on what is "
-    "visible in the image provided. Describe what you actually see; if the feature is genuinely "
-    "not assessable, say so and say why."
+    "visible in the image provided. Describe whether you found the lesion, and what you actually see;" 
+    "if the feature is genuinely not assessable, say so and say why."
 )
 
 SYSTEM_ROLE_STACK_FREE = (
