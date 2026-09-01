@@ -12,8 +12,17 @@ contour it gets in the real run. If you change the real overlay's colour or
 thickness, change `DEFAULT_COLOR` / `DEFAULT_THICKNESS` here too -- otherwise
 the probe stops being a proxy for the real task.
 
-All shapes are inscribed in a circle of radius `radius_px` around `center`, so
-the four classes cover comparable image area and cannot be told apart by size.
+Icon shapes are inscribed in a circle of radius `radius_px` around `center`.
+Clinical shapes are instead scaled to a constant ENCLOSED AREA (see
+NORM_TARGET_RMS), because inscribing them in a common circle does NOT equalise
+size: a few tall spikes set the maximum radius for `irregular` and shrank its
+whole body to ~0.5x a round_oval's area, which is a shortcut cue. Their maximum
+extent therefore differs by class -- a spike reaching further than a smooth arc
+is the feature itself, not a confound.
+
+Run `preview_local.py --stats` after any change here: it measures every
+descriptor from r(theta) and flags any NUISANCE parameter whose range no longer
+overlaps between classes.
 
 TWO SHAPE SETS
 --------------
@@ -76,10 +85,21 @@ SHAPE_SETS: Dict[str, Tuple[str, ...]] = {"icons": SHAPES, "clinical": CLINICAL_
 # of R. `difficulty` multiplies all of them, so 0.35 means "bulges/dents/spikes
 # are ~1/3 as pronounced" -- the same five classes, closer together.
 BASE = {
-    "aspect": 0.45,   # round_oval: ellipse elongation (1 + aspect)
+    # Elongation, drawn per image as 1 + aspect*U(0,1) for EVERY family alike --
+    # it is deliberately NOT a class cue, and unlike the others it is NOT scaled
+    # by `difficulty` (a class-independent nuisance should not track the axis the
+    # psychometric curve is measured along). See the note in clinical_radii.
+    "aspect": 0.45,
     "lobe": 0.15,     # lobulated: sinusoid amplitude
     "dent": 0.80,     # geographic: depth of the single concave arc
-    "jag": 0.34,      # irregular: spike amplitude (see IRREGULAR_* below)
+    # Deliberately close to "lobe" above. At the old 0.34 an irregular boundary
+    # wandered ~2.3x further from the mean than a lobulated one, so the two were
+    # separable by AMPLITUDE alone -- a model could score well without ever
+    # judging cusped-vs-wavy, which is the distinction this probe exists to test.
+    # At 0.20 the peak-to-peak ranges largely overlap and the discriminating cues
+    # are dom_k and kurt, as intended. This is the "stricter experiment" the
+    # README caveat describes.
+    "jag": 0.20,      # irregular: spike amplitude (see IRREGULAR_* below)
     "bump": 1.10,     # exophytic: height of the single outward stalk
 }
 
@@ -94,8 +114,10 @@ BASE = {
 #            spikes. THIS is "jagged vs wavy", and it is the descriptor that
 #            wavenumber alone does not touch.
 #
-# Reference values at difficulty 1.0:  lobulated dom_k 5.6, kurt 1.5, p2p 0.25
-#                                      irregular dom_k 15,  kurt  7,  p2p 0.60
+# Reference values at difficulty 1.0 (measured, n=300, via preview_local.py):
+#   lobulated  dom_k 5.4  kurt 1.5  p2p 0.20 [0.17, 0.22]
+#   irregular  dom_k 15   kurt 7.9  p2p 0.34 [0.15, 0.52]
+# The p2p RANGES now overlap -- that is deliberate. See point 3 below.
 #
 # 1. IRREGULAR_SHARPNESS (biggest effect, and the least obvious)
 #    A sum of sinusoids is infinitely smooth, so raising the wavenumber only
@@ -113,13 +135,14 @@ BASE = {
 #    to do with the model. (10, 20) puts dom_k at ~15, a 3x gap. Going higher
 #    stops helping once a period is only a few pixels -- see the resolution note.
 #
-# 3. BASE["jag"] vs BASE["lobe"]  (use with care)
-#    The bluntest separator, currently 0.34 vs 0.15, so irregular deviates ~2.4x
-#    further than lobulated. It works, but it is a *size* cue rather than a
-#    character cue: a model can then pass by measuring how far the boundary wanders
-#    without ever judging jaggedness. If you want the honest experiment -- "can it
-#    see cusped vs smooth at matched amplitude" -- set jag to ~0.20 and rely on
-#    SHARPNESS plus the band instead.
+# 3. BASE["jag"] vs BASE["lobe"]  -- now 0.20 vs 0.15, deliberately close
+#    The bluntest separator, and the one to leave alone. At the previous 0.34 an
+#    irregular boundary deviated ~2.4x further than a lobulated one, which is an
+#    AMPLITUDE cue rather than a character cue: a model could pass by measuring
+#    how far the boundary wanders without ever judging jaggedness. At 0.20 the
+#    peak-to-peak ranges overlap (see the reference values above) and SHARPNESS
+#    plus the harmonic band carry the distinction, which is the question the
+#    probe is actually asking. Raising it again would re-open the shortcut.
 #
 # 4. IRREGULAR_PATCHES / _PATCH_SIGMA / _FLOOR
 #    The sparse envelope: where jaggedness is switched on. These control
@@ -159,6 +182,13 @@ DIFFICULTY_PRESETS = {"easy": 1.0, "medium": 0.6, "hard": 0.35}
 # ~5x this value -- still safe, but this is now the binding constraint on how low
 # you can push either the lobe amplitude or the difficulty floor.
 SURFACE_NOISE = 0.01
+
+# Every family is scaled so its RMS radius is this fraction of R, which makes the
+# ENCLOSED AREA identical across classes (area = pi * mean(r^2)). The remainder is
+# headroom for `irregular`'s spikes, which overshoot the RMS radius by up to ~1.2x
+# at difficulty 1.0. Raise it and the longest spikes clip at the crop edge; lower
+# it and every shape occupies less of the image for no benefit.
+NORM_TARGET_RMS = 0.68
 
 DEFAULT_COLOR = (255, 0, 0)  # RGB, matches preprocess.overlay.draw_contour_overlay
 DEFAULT_THICKNESS = 2
@@ -292,10 +322,23 @@ def clinical_radii(
     # so round_oval and lobulated differ from irregular in amplitude at the same
     # wavenumber -- exactly the confound the shared texture exists to avoid.
     r = 1.0 + SURFACE_NOISE * _surface(theta, rng, 24, 40, 4)
-    base_aspect = 1.0 + 0.10 * rng.random()
+    # ONE draw for every family, no per-class override. An earlier version gave
+    # round_oval `1 + BASE["aspect"] * difficulty * uniform(0.4, 1.0)` while the
+    # others kept `1 + 0.10 * random()`, which put round_oval in [1.12, 1.45] and
+    # the rest in [1.00, 1.10] -- DISJOINT at every difficulty. A model could then
+    # score ~0.9 AUC separating round_oval from irregular by measuring elongation
+    # alone, never looking at the boundary, and a linear probe on `aspect` picked
+    # round_oval out at 1.000 precision AND recall. Every round_oval number
+    # produced before this fix is uninterpretable as evidence of shape perception.
+    # If elongation is ever reintroduced as a cue, it must vary WITHIN each class,
+    # not between them.
+    base_aspect = 1.0 + BASE["aspect"] * rng.random()
 
     if family == "round_oval":
-        base_aspect = 1.0 + BASE["aspect"] * difficulty * rng.uniform(0.4, 1.0)
+        # No deformation term: round_oval IS the shared ellipse plus the shared
+        # surface texture. Kept as an explicit branch rather than falling through
+        # to the `else` below, which exists to reject unknown family names.
+        pass
 
     elif family == "lobulated":
         # Several rounded convex lobes side by side. k is the discriminating cue
@@ -353,9 +396,24 @@ def clinical_radii(
 
     r = np.clip(r, 0.15, None)
     p["aspect"] = round(base_aspect, 3)
-    # Normalise so every family is inscribed in R: area/extent cannot separate
-    # classes, only boundary character can.
-    return theta, r / float(r.max()), p
+    # Normalise to constant ENCLOSED AREA, not to a constant maximum radius.
+    #
+    # The area swept by r(theta) is 0.5 * integral(r^2) = pi * mean(r^2), so
+    # dividing by the RMS radius makes every family enclose exactly the same area
+    # regardless of how its boundary wanders.
+    #
+    # The previous `r / r.max()` did NOT do this, and the difference was a real
+    # confound. A few isolated tall spikes set the maximum for `irregular`, which
+    # shrank its whole body: at difficulty 1.0 a round_oval enclosed 0.96 pi R^2
+    # against irregular's 0.52 -- nearly 2x, perfectly ordered by class, and the
+    # gap WIDENED with difficulty, so it contaminated the psychometric axis too.
+    # A model could read the class off how much area the outline encloses without
+    # ever judging boundary character.
+    #
+    # NORM_TARGET_RMS < 1 leaves headroom for the spikes, which now reach past
+    # the RMS radius rather than defining it. It is set so the longest ones still
+    # land inside R -- see the assertion in preview_local.py --stats.
+    return theta, r / float(np.sqrt((r ** 2).mean())) * NORM_TARGET_RMS, p
 
 
 def clinical_polygon(
