@@ -116,10 +116,20 @@ import sys, pandas as pd
 df = pd.read_csv(sys.argv[1], dtype=str).fillna("")
 prose = df["reason"].str.strip()
 empty = int((prose == "").sum())
-cut = int((prose != "").sum() - prose[prose != ""].str.endswith((".", "!", "?")).sum())
-print(f"free-text rows: {len(df)} | empty: {empty} | not ending in terminal punctuation: {cut}")
-if empty or cut:
-    print("  ^ likely truncated or refused -- raise --max-new-tokens and re-run "
+
+# In RANKED mode the reply is required to end on the bare "ASSESSMENT: a > b > c"
+# line, so no answer ends in a full stop -- the punctuation test would flag every
+# row. There, an unparsed `ranking` is the real truncation signal.
+ranked = "ranking" in df.columns and (df["ranking"].str.strip() != "").any()
+if ranked:
+    bad = int((df["ranking"].str.strip() == "").sum())
+    label, hint = "no ranking parsed", "ranking line missing or malformed"
+else:
+    bad = int((prose != "").sum() - prose[prose != ""].str.endswith((".", "!", "?")).sum())
+    label, hint = "not ending in terminal punctuation", "truncated or refused"
+print(f"free-text rows: {len(df)} | empty: {empty} | {label}: {bad}")
+if empty or bad:
+    print(f"  ^ likely {hint} -- raise --max-new-tokens and re-run "
           "(inference is resume-safe, but delete the affected rows first)")
 PY
 
