@@ -41,6 +41,7 @@ def build_context(
     other_planes: Optional[List[str]] = None,
     has_contour: bool = False,
     if_example: bool = False,
+    n_slices: int = 0,
 ) -> str:
     """The per-image context sentence(s): what this particular image shows. Kept
     separate from the feature task because in a few-shot prompt the task is
@@ -52,12 +53,24 @@ def build_context(
         location:      lesion location, e.g. "distal femur, metaphysis" (optional)
         other_planes:  other orientations of the SAME lesion assessed separately
         has_contour:   True when a radiologist red-contour overlay is being fed
+        n_slices:      >0 selects the STACK arm: this turn carries n contiguous
+                       slices of ONE lesion instead of a single slice. Mutually
+                       exclusive with the largest-area/other-planes wording,
+                       which is why it returns early rather than adding a clause.
     """
     modality = (modality or "").strip() or "MRI"
     plane = (plane or "").strip() or "unknown-plane"
 
     loc = f", of a bone lesion in the {location}" if location else ", of a bone lesion"
     parts: List[str] = [f"This is a {modality} MRI in the {plane} plane{loc}."]
+
+    # The STACK arm replaces the single-slice framing entirely: what the images
+    # are, how many, and -- the part that carries the 3D information -- what
+    # order they are in. A stack of images with no stated ordering is a bag of
+    # slices, so `n_slices` and the through-plane direction are not optional.
+    if n_slices:
+        return " ".join(_stack_context_parts(parts, modality, plane, n_slices,
+                                             has_contour, if_example))
 
     # The imaging explanation (cropped to the lesion, largest-area slice, sibling
     # orientations) is only needed for the QUERY -- stating it on every example
@@ -81,6 +94,33 @@ def build_context(
     return " ".join(parts)
 
 
+def _stack_context_parts(head: List[str], modality: str, plane: str, n_slices: int,
+                         has_contour: bool, if_example: bool) -> List[str]:
+    """Context clauses for one multi-slice turn (see build_context's n_slices)."""
+    parts = list(head)
+    parts.append(
+        f"The following {n_slices} images are CONSECUTIVE {plane} slices through that ONE "
+        "lesion, in anatomical order from the first slice on which it appears to the last. "
+        "They are not separate cases: each image is a different level through the same mass."
+    )
+    if not if_example:
+        parts.append(
+            "Each slice is cropped to the same bounding box around the lesion, so the images "
+            "are spatially registered to one another and the lesion sits at the CENTRE of every "
+            "frame -- it is the central mass, not the normal tissue around the edges. Because "
+            "the box spans the whole lesion, it fills most of the frame on the middle slices "
+            "and is smaller, and may sit off-centre, on the first and last few. "
+            "Read them together as a volume: use how the lesion CHANGES from slice to slice, "
+            "and treat a finding as present if it is visible on any slice."
+        )
+    if has_contour:
+        parts.append(
+            "A thin RED contour on each image marks the lesion boundary segmented by a "
+            "radiologist on that slice. Use it to locate the lesion; assess the region it encloses."
+        )
+    return parts
+
+
 # ---------------------------------------------------------------------------
 # medgemma (generative) — system text + chat messages
 # ---------------------------------------------------------------------------
@@ -96,13 +136,92 @@ SYSTEM_ROLE = (
     "uncertainty in the reason."
 )
 
+# The free-text counterparts. SYSTEM_ROLE and SYSTEM_ROLE_STACK both promise a
+# fixed label set and offer the hedging escape; under free text no vocabulary is
+# given, so those clauses are a false premise and an invitation to a non-answer
+# respectively. Kept as separate literals rather than assembled from fragments so
+# the label-mode strings stay byte-identical to earlier runs.
+SYSTEM_ROLE_FREE = (
+    "You are an expert musculoskeletal radiologist. For each case, you are shown "
+    "a single MRI slice of a bone lesion and asked to describe ONE specific "
+    "imaging feature in your own words. Base your judgment only on what is "
+    "visible in the image provided, not on other slices, planes, or assumptions "
+    "about the case. Describe what you actually see; if the feature is genuinely "
+    "not assessable, say so and say why."
+)
+
+SYSTEM_ROLE_STACK_FREE = (
+    "You are an expert musculoskeletal radiologist. For each case, you are shown "
+    "a STACK of consecutive MRI slices through a single bone lesion and asked to "
+    "describe ONE specific imaging feature in your own words. Base your judgment "
+    "only on what is visible in the images provided, not on other planes or "
+    "assumptions about the case. Reason across the whole stack: the slices show "
+    "one lesion at different levels, so a feature may be evident on only some of "
+    "them. Describe what you actually see; if the feature is genuinely not "
+    "assessable, say so and say why."
+)
+
+# The STACK counterpart. Every clause that restricts the model to one image is
+# inverted -- notably "not on other slices", which under a multi-slice prompt
+# tells the model to ignore exactly the information the arm exists to test, and
+# would make a null 3D result uninterpretable. The hedging escape ("choose the
+# closest label and note the uncertainty") is dropped too: it belongs to the
+# forced-choice format, and under free text it just licenses a non-answer.
+SYSTEM_ROLE_STACK = (
+    "You are an expert musculoskeletal radiologist. For each case, you are shown "
+    "a STACK of consecutive MRI slices through a single bone lesion and asked to "
+    "assess ONE specific imaging feature. Base your judgment only on what is "
+    "visible in the images provided, not on other planes or assumptions about the "
+    "case. Reason across the whole stack: the slices show one lesion at different "
+    "levels, so a feature may be evident on only some of them."
+)
+
+# Free-text output. No vocabulary, no length cap -- the point of the arm is the
+# reasoning, and a one-sentence cap is what produced unusable hedges before. The
+# headings are fixed only so a 40-case manual read stays skimmable; they impose
+# no answer set. The last line asks the model to ground each claim in a slice,
+# which is what makes a wrong answer diagnosable rather than merely wrong.
+def free_text_format(input_mode: str = "slice") -> str:
+    stack = input_mode == "stack"
+    noun = "the images" if stack else "the image"
+    # Only the stack arm can be asked to cite slices; saying it to a single-image
+    # prompt invites the model to invent slice numbers it was never shown.
+    cite = " Where a claim rests on particular slices, say which ones." if stack else ""
+    return (
+        "# OUTPUT FORMAT\n"
+        "Reply in plain prose under exactly these two headings, nothing else "
+        "(no JSON, no markdown fences, no bullet list of options):\n"
+        f"OBSERVATIONS: what you actually see in {noun} that bears on this feature.\n"
+        "ASSESSMENT: your conclusion about the feature, in your own words.\n"
+        "Do not pick from a list of terms -- none is given. Describe what is there."
+        + cite
+    )
+
+
+def free_text_task(feature_cfg: dict) -> str:
+    """The TASK line for the free-text arm.
+
+    The YAML `task` fields tell the model to CHOOSE a label, which contradicts
+    this arm, and `description` is worded "as seen on this MRI slice". Both can
+    be overridden per feature (`free_text_task`, `description_stack`); the
+    fallback is derived from the feature name so a feature works untouched.
+    """
+    override = (feature_cfg.get("free_text_task") or "").strip()
+    if override:
+        return override
+    name = (feature_cfg.get("display_name") or feature_cfg.get("name") or "this feature").strip()
+    return (f"Describe {name} for the lesion shown, and explain what in the images leads you "
+            "to that description. Do not assess any other feature.")
+
+
 # Announced once at the end of the system message (only in few-shot), BEFORE any
 # example turns -- so the examples aren't glued onto the first image's context.
 EXAMPLES_NOTE = ("The next turns are WORKED EXAMPLES: each shows an image and the correct answer, "
                  "to illustrate the task. Study them, then classify the final (query) image.")
 
 
-def build_system_text(feature_cfg: dict, has_examples: bool = False) -> str:
+def build_system_text(feature_cfg: dict, has_examples: bool = False,
+                      input_mode: str = "slice", output_mode: str = "label") -> str:
     """The CONSTANT task, assembled from the feature config (YAML). This is the
     system message: role + what the feature IS + what each label MEANS + what to
     DECIDE + the strict one-word answer format. It does not mention any specific
@@ -115,28 +234,52 @@ def build_system_text(feature_cfg: dict, has_examples: bool = False) -> str:
         + task              <- feature_cfg["task"]
         + answer format     <- from feature_cfg["label_options"]
     """
-    opts = ", ".join(feature_cfg["label_options"])
-    sections: List[str] = [SYSTEM_ROLE]
+    if input_mode not in ("slice", "stack"):
+        raise ValueError(f"input_mode must be 'slice' or 'stack', got {input_mode!r}")
+    if output_mode not in ("label", "free_text"):
+        raise ValueError(f"output_mode must be 'label' or 'free_text', got {output_mode!r}")
+    free = output_mode == "free_text"
 
+    role = {
+        ("slice", "label"): SYSTEM_ROLE,
+        ("slice", "free_text"): SYSTEM_ROLE_FREE,
+        ("stack", "label"): SYSTEM_ROLE_STACK,
+        ("stack", "free_text"): SYSTEM_ROLE_STACK_FREE,
+    }[(input_mode, output_mode)]
+    sections: List[str] = [role]
+
+    # `description` is written "as seen on this MRI slice"; the stack arm can
+    # override it per feature rather than feeding the model a false premise.
     description = (feature_cfg.get("description") or feature_cfg.get("prompt_description") or "").strip()
+    if input_mode == "stack":
+        description = (feature_cfg.get("description_stack") or "").strip() or description
     if description:
         sections.append("# FEATURE\n" + description)
+
+    # LABEL DEFINITIONS is the vocabulary. Emitting it under free text would hand
+    # the model the answer set the arm is designed to withhold, so it is dropped
+    # there -- along with the label-valued OUTPUT FORMAT.
     defs = feature_cfg.get("label_definitions")
-    if defs:
+    if defs and not free:
         sections.append("# LABEL DEFINITIONS\n" + "\n".join(f"- {k}: {v}" for k, v in defs.items()))
-    task = (feature_cfg.get("task") or "").strip()
+
+    task = free_text_task(feature_cfg) if free else (feature_cfg.get("task") or "").strip()
     if task:
         sections.append("# TASK\n" + task)
 
-    # Strict structured-output constraint (constant across features; only the
-    # allowed values vary). Stating it explicitly keeps output consistent and
-    # forces the reason field.
-    sections.append(
-        "# OUTPUT FORMAT\n"
-        'Reply with ONLY this JSON, nothing else (no markdown/fences):\n'
-        '{"prediction": "<LABEL>", "reason": "<one short sentence>"}\n'
-        f"<LABEL> must be exactly one of: {opts}."
-    )
+    if free:
+        sections.append(free_text_format(input_mode))
+    else:
+        # Strict structured-output constraint (constant across features; only the
+        # allowed values vary). Stating it explicitly keeps output consistent and
+        # forces the reason field.
+        opts = ", ".join(feature_cfg["label_options"])
+        sections.append(
+            "# OUTPUT FORMAT\n"
+            'Reply with ONLY this JSON, nothing else (no markdown/fences):\n'
+            '{"prediction": "<LABEL>", "reason": "<one short sentence>"}\n'
+            f"<LABEL> must be exactly one of: {opts}."
+        )
     # Announce few-shot examples here (once, before any example turn) rather than
     # gluing the announcement onto the first example's image context.
     if has_examples:
@@ -157,11 +300,26 @@ def _user_turn(image, context: str) -> dict:
     }
 
 
+def _user_turn_stack(images, context: str) -> dict:
+    """One user turn carrying a whole slice stack: the context sentence FIRST,
+    then every image in order. Context leads here (unlike _user_turn) because it
+    is what tells the model the images that follow are one ordered volume rather
+    than unrelated cases -- stated after them, it arrives too late to frame them."""
+    return {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": context},
+            *({"type": "image", "image": im} for im in images),
+        ],
+    }
+
+
 def build_medgemma_messages(
     feature_cfg: dict,
     query_image,
     query_context: str,
     few_shot: Optional[List[dict]] = None,
+    output_mode: str = "label",
 ) -> List[dict]:
     """Assemble the full chat message list for a generative MedGemma call.
 
@@ -174,9 +332,18 @@ def build_medgemma_messages(
     resolve_few_shot(). None/empty -> zero-shot (system + single query turn).
     """
     few = few_shot or []
+    # Few-shot exemplars answer with a label in JSON, which teaches the terse
+    # forced-choice format the free-text arm exists to avoid -- so the two are
+    # refused together rather than silently producing a contaminated prompt.
+    if few and output_mode == "free_text":
+        raise ValueError(
+            "few-shot exemplars answer with a label, which contradicts output_mode='free_text'; "
+            "run the free-text arm zero-shot, or write prose exemplar answers first"
+        )
     messages: List[dict] = [
         {"role": "system",
-         "content": [{"type": "text", "text": build_system_text(feature_cfg, has_examples=bool(few))}]}
+         "content": [{"type": "text", "text": build_system_text(
+             feature_cfg, has_examples=bool(few), output_mode=output_mode)}]}
     ]
     for ex in few:
         messages.append(_user_turn(ex["image"], ex["context"]))
@@ -186,6 +353,30 @@ def build_medgemma_messages(
         messages.append({"role": "assistant", "content": [{"type": "text", "text": answer}]})
     messages.append(_user_turn(query_image, query_context))
     return messages
+
+
+def build_stack_messages(
+    feature_cfg: dict,
+    query_images: List,
+    query_context: str,
+    output_mode: str = "free_text",
+) -> List[dict]:
+    """Zero-shot messages for the STACK arm: system + one multi-image user turn.
+
+    No few_shot parameter, deliberately. Under free text the exemplar answers
+    would have to be prose someone wrote by hand, which puts that person's
+    vocabulary into the model's mouth and leaves you grading text you partly
+    authored; under a stack each exemplar also multiplies the image budget.
+    Few-shot on this arm is a separate decision, not a default.
+    """
+    if not query_images:
+        raise ValueError("build_stack_messages needs at least one image")
+    system = build_system_text(feature_cfg, has_examples=False,
+                               input_mode="stack", output_mode=output_mode)
+    return [
+        {"role": "system", "content": [{"type": "text", "text": system}]},
+        _user_turn_stack(query_images, query_context),
+    ]
 
 
 def messages_to_text(messages: List[dict]) -> str:
