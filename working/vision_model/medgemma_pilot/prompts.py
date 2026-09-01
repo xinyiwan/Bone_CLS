@@ -34,6 +34,50 @@ log = logging.getLogger("medgemma.prompts")
 # ---------------------------------------------------------------------------
 # Shared: per-image clinical/imaging context (runtime values, not feature-specific)
 # ---------------------------------------------------------------------------
+# The dataset stores modality as a terse code (T1W, T1W_C, ...). Spelled out for
+# the model: a code like "T1W_C" carries no meaning to a language model, while
+# "T1-weighted with contrast enhancement" does. Base sequence first, then the
+# suffix flags, in the order they appear in the code.
+_MODALITY_BASE = {
+    "T1W": "T1-weighted",
+    "T2W": "T2-weighted",
+    "PDW": "proton-density-weighted",
+    "STIR": "STIR (short-tau inversion recovery)",
+    "DWI": "diffusion-weighted",
+    "ADC": "ADC (apparent diffusion coefficient) map",
+}
+_MODALITY_FLAG = {
+    "C": "contrast enhancement",
+    "FS": "fat suppression",
+}
+
+
+def describe_modality(modality: str, plural: bool = False):
+    """Expand a modality code into (noun phrase, acquisition sentence), e.g.
+    "T1W_C" -> ("T1-weighted MRI image (T1W_C)",
+                "It was acquired with contrast enhancement.")
+
+    The flags are a separate sentence rather than a clause so the modality can
+    stay adjacent to the plane/location in the opening sentence. Unknown
+    codes/flags are passed through unchanged so an unexpected value degrades to
+    the old behaviour instead of being dropped.
+    """
+    code = (modality or "").strip()
+    noun = "MRI images" if plural else "MRI image"
+    if not code:
+        return noun, ""
+    tokens = code.replace("-", "_").upper().split("_")
+    base = _MODALITY_BASE.get(tokens[0])
+    if base is None:
+        return f"{code} {noun}", ""
+    flags = [_MODALITY_FLAG.get(t, t.lower()) for t in tokens[1:] if t]
+    acq = ""
+    if flags:
+        subject = "They were" if plural else "It was"
+        acq = f"{subject} acquired with " + " and ".join(flags) + "."
+    return f"{base} {noun} ({code})", acq
+
+
 def build_context(
     modality: str,
     plane: str,
@@ -48,7 +92,8 @@ def build_context(
     stated ONCE (system message) while this context differs per image/turn.
 
     Args mirror the old build_prompt() context block:
-        modality:      e.g. "T1", "T2FS", "T1FSC"  (per THIS image)
+        modality:      code, e.g. "T1W", "T1W_C", "T2W_FS" (per THIS image);
+                       expanded to full wording by describe_modality()
         plane:         orientation of THIS image (axial/coronal/sagittal)
         location:      lesion location, e.g. "distal femur, metaphysis" (optional)
         other_planes:  other orientations of the SAME lesion assessed separately
@@ -58,11 +103,14 @@ def build_context(
                        exclusive with the largest-area/other-planes wording,
                        which is why it returns early rather than adding a clause.
     """
-    modality = (modality or "").strip() or "MRI"
+    modality_desc, modality_acq = describe_modality(modality, plural=bool(n_slices))
     plane = (plane or "").strip() or "unknown-plane"
 
     loc = f", of a bone lesion in the {location}" if location else ", of a bone lesion"
-    parts: List[str] = [f"This is a {modality} MRI in the {plane} plane{loc}."]
+    lead = "These are" if n_slices else "This is a"
+    parts: List[str] = [f"{lead} {modality_desc} in the {plane} plane{loc}."]
+    if modality_acq:
+        parts.append(modality_acq)
 
     # The STACK arm replaces the single-slice framing entirely: what the images
     # are, how many, and -- the part that carries the 3D information -- what
