@@ -123,17 +123,7 @@ def build_context(
     # The imaging explanation (cropped to the lesion, largest-area slice, sibling
     # orientations) is only needed for the QUERY -- stating it on every example
     # turn just repeats it. Examples keep a short context (modality/plane/location).
-    if not if_example:
-        parts.append(
-            "The image is cropped to a bounding box around the lesion, so the lesion fills most "
-            f"of the frame; it is the {plane} slice with the LARGEST cross-sectional area of the lesion. "
-            "Make your assessment based on this slice."
-        )
-        if other_planes:
-            parts.append(
-                f"Its largest-area slice in other orientations ({', '.join(other_planes)}) is "
-                "assessed separately in other images; judge only the image shown here."
-            )
+
     if has_contour:
         parts.append(
             "A thin RED contour drawn on the image marks the lesion boundary segmented by a "
