@@ -185,6 +185,26 @@ def load_model(model_id: str):
     return model, processor
 
 
+def _strip_padding_tokens(text: str, processor) -> str:
+    """Remove the STRUCTURAL special tokens from a decoded completion, keeping
+    any thinking delimiters.
+
+    Sequences that finish early are padded to the batch's longest, so decoding
+    with skip_special_tokens=False leaves a tail of pad tokens (plus bos/eos).
+    Those are noise in the CSV. The thought markers must survive, so they are
+    excluded by name rather than by "is it special".
+    """
+    tok = getattr(processor, "tokenizer", processor)
+    keep = set(THINK_START_MARKERS) | set(THINK_END_MARKERS)
+    drop = {getattr(tok, f"{k}_token", None) for k in ("pad", "bos", "eos", "unk")}
+    # Some checkpoints list extra structural tokens (e.g. <start_of_image>) only
+    # in additional_special_tokens; those are noise here too.
+    drop |= set(getattr(tok, "additional_special_tokens", []) or [])
+    for t in sorted((t for t in drop if t and t not in keep), key=len, reverse=True):
+        text = text.replace(t, "")
+    return text
+
+
 def run_batch(model, processor, batch: List[List[dict]], max_new_tokens: int = 1024) -> List[str]:
     """A LIST of chat message lists -> one raw decoded text each (greedy).
 
@@ -222,7 +242,16 @@ def run_batch(model, processor, batch: List[List[dict]], max_new_tokens: int = 1
     input_len = inputs["input_ids"].shape[-1]
     with torch.inference_mode():
         out = model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False)
-    return [t.strip() for t in processor.batch_decode(out[:, input_len:], skip_special_tokens=True)]
+    # Decoded with skip_special_tokens=FALSE on purpose. The thinking block is
+    # delimited by special tokens (<unused94>/<unused95>); skipping them deletes
+    # the delimiters while leaving the thought text glued to the answer, so
+    # extract_thinking() finds no start marker and silently returns "" -- an
+    # empty `thinking` column that looks like "the model didn't think" and is
+    # indistinguishable from it. _strip_padding_tokens() then removes the
+    # structural tokens (pad/bos/eos) that skipping used to take care of, while
+    # keeping the thought delimiters the parser needs.
+    texts = processor.batch_decode(out[:, input_len:], skip_special_tokens=False)
+    return [_strip_padding_tokens(t, processor).strip() for t in texts]
 
 
 # A backend is just a callable: (list of message lists) -> list of raw texts.
