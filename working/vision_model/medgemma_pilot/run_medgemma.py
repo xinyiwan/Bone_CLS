@@ -93,6 +93,10 @@ INFERENCE_FIELDS = [
     # parsed_label holds only its head; the tail is what lets a near-miss be told
     # from a wild miss (mean reciprocal rank), so it must not be thrown away.
     "ranking",
+    # Stack arm only. `image_path` stays a single real file (the MIDDLE slice) so
+    # it remains a valid resume key and something review_server can display;
+    # `stack_paths` is the full ordered run that was actually sent.
+    "stack_paths", "stack_size",
     "ground_truth_label", "correct",
 ]
 
@@ -580,6 +584,81 @@ def row_location(row: pd.Series, loc_cols: List[str]) -> Optional[str]:
     return ", ".join(parts) if parts else None
 
 
+def _plan_stacks(df: pd.DataFrame, features: Dict[str, dict], location_cols: List[str],
+                 use_contour: bool, done: set, log) -> List[dict]:
+    """One task per ORDERED RUN of slices: (case, feature, modality, plane).
+
+    The metadata is still one row per image -- preprocess writes it that way for
+    both modes -- so the run has to be reassembled here. `stack_pos` is what makes
+    that safe: sorting on it (not on file order, which is lexicographic and puts
+    slice 10 before slice 2) restores anatomical order, and comparing the group
+    size against `stack_size` catches a run whose middle is missing, which would
+    otherwise be fed to the model as if it were contiguous.
+
+    The resume key stays (case, feature, image_path) with image_path = the MIDDLE
+    slice: one real file, unique per run, and the most representative thing for
+    the viewer to show.
+    """
+    if "stack_pos" not in df.columns:
+        raise SystemExit("--input-mode stack needs the `stack_pos`/`stack_size` columns written "
+                         "by preprocess with slice_mode: stack (see feature_config_stack.yaml); "
+                         "this metadata.csv has neither, so it is a top_k run")
+    tasks: List[dict] = []
+    for (case_id, feature, modality, plane), g in df.groupby(
+            ["case_id", "feature_name", "modality", "plane"], sort=False):
+        if feature not in features:
+            log.warning("no config for feature %r (case %s) -- skipping", feature, case_id)
+            continue
+        g = g.copy()
+        g["stack_pos"] = pd.to_numeric(g["stack_pos"], errors="coerce")
+        if g["stack_pos"].isna().any():
+            log.warning("%s/%s %s %s: rows without stack_pos -- not a stack, skipping",
+                        case_id, feature, modality, plane)
+            continue
+        g = g.sort_values("stack_pos")
+
+        declared = pd.to_numeric(g["stack_size"], errors="coerce").dropna().unique()
+        if len(declared) == 1 and int(declared[0]) != len(g):
+            log.warning("%s/%s %s %s: %d slice(s) present but stack_size says %d -- "
+                        "incomplete run, skipping", case_id, feature, modality, plane,
+                        len(g), int(declared[0]))
+            continue
+
+        paths = [Path(p) for p in g["image_path"]]
+        mid = str(paths[len(paths) // 2])
+        if (case_id, feature, mid) in done:
+            continue
+
+        fed, n_contour = [], 0
+        for p in paths:
+            ov = _overlay_variant(p) if use_contour else None
+            fed.append(ov or p)
+            n_contour += ov is not None
+        if use_contour and n_contour != len(paths):
+            log.warning("%s/%s %s %s: only %d/%d slices have an _overlay -- feeding plain crops "
+                        "for the rest", case_id, feature, modality, plane, n_contour, len(paths))
+
+        row0 = g.iloc[0]
+        tasks.append({
+            "case_id": case_id,
+            "feature": feature,
+            "plane": plane,
+            "modality": modality,
+            "image_path": mid,
+            "fed_paths": fed,
+            "has_contour": use_contour and n_contour == len(paths),
+            "gt": row0.get("ground_truth_label", ""),
+            "context": prompts.build_context(
+                modality, plane,
+                location=row_location(row0, location_cols),
+                has_contour=use_contour and n_contour == len(paths),
+                n_slices=len(fed),
+            ),
+        })
+        log.info("%s/%s %s %s: stack of %d slice(s)", case_id, feature, modality, plane, len(fed))
+    return tasks
+
+
 def infer(
     metadata_csv: Path,
     config_path: Path,
@@ -593,6 +672,7 @@ def infer(
     shard_index: int = 0,
     num_shards: int = 1,
     output_mode: str = "label",
+    input_mode: str = "slice",
 ) -> None:
     """Infer per-image labels from flattened metadata (one row per image/plane).
 
@@ -625,6 +705,9 @@ def infer(
         raise SystemExit(f"--output-mode {output_mode} is zero-shot only (label exemplars answer "
                          "with a bare label, teaching back a format neither arm uses); "
                          "drop --num-few-shot")
+    if input_mode == "stack" and num_few_shot > 0:
+        raise SystemExit("--input-mode stack is zero-shot only: an exemplar would be a whole "
+                         "second stack, and resolve_few_shot loads one image per example")
     location_cols = location_cols or ["skeletal_location", "location_within_bone"]
     features = load_feature_config(config_path)
     config_dir = Path(config_path).resolve().parent
@@ -718,7 +801,7 @@ def infer(
             "plane": plane,
             "modality": row.get("modality", ""),
             "image_path": img_path_str,
-            "fed_path": img_path,
+            "fed_paths": [img_path],
             "has_contour": has_contour,
             "gt": row.get("ground_truth_label", ""),
             "context": prompts.build_context(
@@ -727,6 +810,9 @@ def infer(
                 other_planes=other_planes, has_contour=has_contour,
             ),
         })
+
+    if input_mode == "stack":
+        tasks = _plan_stacks(df, features, location_cols, use_contour, done, log)
 
     # Group same-feature rows into the same batch: they share the (long) system
     # prompt, so padding waste is minimal and they tend to finish at similar
@@ -754,16 +840,25 @@ def infer(
             batch_tasks: List[dict] = []
             for t in chunk:
                 try:
-                    image = to_jpeg_rgb(t["fed_path"])
+                    images = [to_jpeg_rgb(p) for p in t["fed_paths"]]
                 except Exception as e:  # noqa: BLE001 -- missing/unreadable image
-                    log.warning("skip image %s (%s / %s): %s",
-                                t["fed_path"], t["case_id"], t["feature"], e)
+                    log.warning("skip %s (%s / %s): %s",
+                                t["image_path"], t["case_id"], t["feature"], e)
                     continue
-                messages = prompts.build_medgemma_messages(
-                    features[t["feature"]], image, t["context"],
-                    few_shot=few_shot_by_feature.get(t["feature"]),
-                    output_mode=output_mode,
-                )
+                # A stack is not "several single-image calls": it is ONE turn
+                # carrying every slice, so it takes the other builder. Length is
+                # the discriminator, so the single-slice path is untouched.
+                if len(images) > 1:
+                    messages = prompts.build_stack_messages(
+                        features[t["feature"]], images, t["context"],
+                        output_mode=output_mode,
+                    )
+                else:
+                    messages = prompts.build_medgemma_messages(
+                        features[t["feature"]], images[0], t["context"],
+                        few_shot=few_shot_by_feature.get(t["feature"]),
+                        output_mode=output_mode,
+                    )
                 batch_messages.append(messages)
                 batch_tasks.append({**t, "input_text": prompts.messages_to_text(messages)})
             if not batch_messages:
@@ -811,7 +906,9 @@ def infer(
                     "image_path": t["image_path"],
                     # what the model actually saw -- differs from image_path whenever
                     # the --use-contour overlay swap above succeeded.
-                    "fed_image_path": str(t["fed_path"]),
+                    "fed_image_path": str(t["fed_paths"][0]),
+                    "stack_paths": ";".join(str(p) for p in t["fed_paths"]) if len(t["fed_paths"]) > 1 else "",
+                    "stack_size": len(t["fed_paths"]) if len(t["fed_paths"]) > 1 else "",
                     "has_contour": t["has_contour"],
                     "model_id": model_id,
                     "num_few_shot": num_few_shot,
@@ -1066,6 +1163,10 @@ def main() -> None:
     ap.add_argument("--num-few-shot", type=int, default=0,
                     help="prepend up to N labeled example turns per feature from the YAML 'examples:' block "
                          "(0 = zero-shot; example images are auto-excluded from inference)")
+    ap.add_argument("--input-mode", choices=["slice", "stack"], default="slice",
+                    help="'slice' = one image per call (default). 'stack' = every slice of a run "
+                         "in ONE call, reassembled from the stack_pos/stack_size columns that "
+                         "preprocess writes under slice_mode: stack. Zero-shot only")
     ap.add_argument("--output-mode", choices=["label", "free_text", "ranked"], default="label",
                     help="'label' = forced choice from the YAML label_options (default, scored). "
                          "'free_text' = no vocabulary offered; the model describes the feature in "
@@ -1104,7 +1205,7 @@ def main() -> None:
               num_few_shot=args.num_few_shot, model_id=args.model_id,
               batch_size=args.batch_size,
               shard_index=args.shard_index, num_shards=args.num_shards,
-              output_mode=args.output_mode)
+              output_mode=args.output_mode, input_mode=args.input_mode)
     elif args.mode == "combine":
         if not args.inference_results:
             raise SystemExit("--inference-results is required for --mode combine")
