@@ -524,6 +524,7 @@ def infer(
     batch_size: int = 1,
     shard_index: int = 0,
     num_shards: int = 1,
+    output_mode: str = "label",
 ) -> None:
     """Infer per-image labels from flattened metadata (one row per image/plane).
 
@@ -552,6 +553,9 @@ def infer(
     so the CSV says which run produced it -- generation itself goes through the
     `generate` callable, which already has the model bound.
     """
+    if output_mode == "free_text" and num_few_shot > 0:
+        raise SystemExit("--output-mode free_text is zero-shot only (label exemplars would teach "
+                         "the forced-choice format back); drop --num-few-shot")
     location_cols = location_cols or ["skeletal_location", "location_within_bone"]
     features = load_feature_config(config_path)
     config_dir = Path(config_path).resolve().parent
@@ -689,6 +693,7 @@ def infer(
                 messages = prompts.build_medgemma_messages(
                     features[t["feature"]], image, t["context"],
                     few_shot=few_shot_by_feature.get(t["feature"]),
+                    output_mode=output_mode,
                 )
                 batch_messages.append(messages)
                 batch_tasks.append({**t, "input_text": prompts.messages_to_text(messages)})
@@ -705,7 +710,15 @@ def infer(
             for t, raw in zip(batch_tasks, raws):
                 fcfg = features[t["feature"]]
                 thinking = extract_thinking(raw)  # full chain-of-thought (richer than `reason`)
-                label, reason = parse_answer(raw, fcfg["label_options"])
+                if output_mode == "free_text":
+                    # No vocabulary was offered, so there is nothing to parse and
+                    # nothing to score: the answer IS the prose, and it lands in
+                    # `reason` because that is the field review_server renders.
+                    # `parsed_label`/`correct` stay blank rather than being filled
+                    # with a guess -- this arm is read by a human, not scored.
+                    label, reason = "", _answer_region(raw).strip()
+                else:
+                    label, reason = parse_answer(raw, fcfg["label_options"])
                 if label == "PARSE_FAILED":
                     truncated = ("<unused94>" in raw) and not any(m in raw for m in THINK_END_MARKERS)
                     log.warning("PARSE_FAILED %s / %s%s", t["case_id"], t["feature"],
@@ -714,7 +727,8 @@ def infer(
                 gt = t["gt"]
                 # label_options already use the assessment vocabulary, so a direct
                 # case-insensitive match is the score (no mapping needed).
-                correct = (label.lower() == gt.strip().lower()) if has_gt(gt) and label != "PARSE_FAILED" else ""
+                scorable = has_gt(gt) and label not in ("", "PARSE_FAILED")
+                correct = (label.lower() == gt.strip().lower()) if scorable else ""
 
                 writer.writerow({
                     "case_id": t["case_id"],
@@ -978,6 +992,11 @@ def main() -> None:
     ap.add_argument("--num-few-shot", type=int, default=0,
                     help="prepend up to N labeled example turns per feature from the YAML 'examples:' block "
                          "(0 = zero-shot; example images are auto-excluded from inference)")
+    ap.add_argument("--output-mode", choices=["label", "free_text"], default="label",
+                    help="'label' = forced choice from the YAML label_options (default, scored). "
+                         "'free_text' = no vocabulary offered; the model describes the feature in "
+                         "prose, which lands in the `reason` column with parsed_label/correct left "
+                         "blank because there is nothing to score. Zero-shot only")
     # quick mode
     ap.add_argument("--image", type=Path, nargs="+",
                     help="one or more image paths (quick mode); each is sent in its own call")
@@ -1007,7 +1026,8 @@ def main() -> None:
               use_contour=args.use_contour, location_cols=args.location_cols,
               num_few_shot=args.num_few_shot, model_id=args.model_id,
               batch_size=args.batch_size,
-              shard_index=args.shard_index, num_shards=args.num_shards)
+              shard_index=args.shard_index, num_shards=args.num_shards,
+              output_mode=args.output_mode)
     elif args.mode == "combine":
         if not args.inference_results:
             raise SystemExit("--inference-results is required for --mode combine")
