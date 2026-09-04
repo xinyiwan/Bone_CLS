@@ -64,6 +64,7 @@ from __future__ import annotations
 import argparse
 import csv
 import logging
+import re
 import time
 from collections import Counter
 from io import BytesIO
@@ -557,6 +558,16 @@ def is_degenerate(raw: str, min_repeats: int = 6) -> bool:
     return False
 
 
+# Heading match for the ranked/prose arms. Deliberately misspelling-tolerant:
+# the model very often writes "ASSESMENT" (and "ASESSMENT"/"ASSESSEMENT"), and an
+# exact match threw away otherwise perfect answers over one letter. Anchored to
+# the start of a line and followed by ':' or end-of-line, so the word appearing
+# mid-sentence in the prose ("...my assessment is...") is not mistaken for the
+# heading. Spelling of the ANSWER still matters; spelling of the LABEL is what we
+# actually score, and that is matched exactly against label_options.
+ASSESSMENT_HEADING = re.compile(r"(?im)^[#*\s>-]*A+S+E+S+E?M+E+N+T'?S?[:*\s]*")
+
+
 def parse_ranking(raw: str, options: List[str]) -> tuple[str, str]:
     """Parse the ranked arm's ASSESSMENT line -> (top_label, "a > b > c").
 
@@ -567,8 +578,10 @@ def parse_ranking(raw: str, options: List[str]) -> tuple[str, str]:
     confident one.
 
     Tolerant of the heading variants the model actually emits -- '# ASSESSMENT:',
-    '**ASSESSMENT:**', '## ASSESSMENT' -- and of it echoing the prompt's own
-    format lines earlier in the reply, by taking the LAST ASSESSMENT block.
+    '**ASSESSMENT:**', '## ASSESSMENT', the frequent misspelling 'ASSESMENT'
+    (see ASSESSMENT_HEADING) -- and of it echoing the prompt's own format lines
+    earlier in the reply, by taking the LAST ASSESSMENT block. When no heading
+    survives at all, the last line that is itself a complete ranking is used.
 
     Ties are accepted: the model writes '=' (or '>=' / '~') between labels it
     won't separate, e.g. "irregular > Round/Oval = lobulated". The tie is kept
@@ -577,15 +590,31 @@ def parse_ranking(raw: str, options: List[str]) -> tuple[str, str]:
     has no single top label, so it is a parse failure for `parsed_label` even
     though the ranking itself is returned for review.
     """
-    import re
-
     region = _answer_region(raw)
-    blocks = re.split(r"(?im)^[#*\s]*ASSESSMENT[:*\s]*", region)
-    if len(blocks) < 2:
-        return "PARSE_FAILED", ""
-    # The last block is the real answer; earlier ones are echoed instructions.
-    line = next((l for l in blocks[-1].splitlines() if l.strip()), "")
-    line = line.replace("*", "").strip()
+    candidates: List[str] = []
+    blocks = ASSESSMENT_HEADING.split(region)
+    if len(blocks) >= 2:
+        # The last block is the real answer; earlier ones are echoed instructions.
+        candidates.append(next((l for l in blocks[-1].splitlines() if l.strip()), ""))
+    # Then any line that IS a ranking, last one first -- covers a heading dropped
+    # or mangled beyond the pattern, and a heading followed by prose with the
+    # ranking further down. _rank_line only accepts a line naming every option
+    # exactly once, so prose cannot match by accident.
+    candidates += list(reversed(region.splitlines()))
+
+    for line in candidates:
+        top, ranking = _rank_line(line, options)
+        if ranking:
+            return top, ranking
+    return "PARSE_FAILED", ""
+
+
+def _rank_line(line: str, options: List[str]) -> tuple[str, str]:
+    """One candidate ASSESSMENT line -> (top_label, normalized ranking).
+
+    Returns ("PARSE_FAILED", "") unless the line names every option exactly once,
+    and ("PARSE_FAILED", ranking) when it does but ties across the top."""
+    line = line.replace("*", "").strip().lstrip(":").strip()
 
     # Split on the separators while keeping them, so the tie structure survives
     # into `ranking`. Longest alternatives first so '>=' doesn't match as '>'.
