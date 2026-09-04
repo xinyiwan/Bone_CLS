@@ -15,12 +15,12 @@
 # no devices, device_map="auto" quietly places the model on CPU, and the shard
 # appears to hang instead of failing. Multi-node would need srun per node.
 #
-#SBATCH --job-name=shape_probe_fs
-#SBATCH --partition=gpu_a100
+#SBATCH --job-name=s_fs_n
+#SBATCH --partition=gpu_h100
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --gpus-per-node=2
-#SBATCH --time=02:00:00
+#SBATCH --gpus-per-node=1
+#SBATCH --time=01:00:00
 #SBATCH --output=/projects/prjs1779/BONE-AI/logs/out/slurm-%x-%j.out
 #SBATCH --error=/projects/prjs1779/BONE-AI/logs/err/slurm-%x-%j.err
 
@@ -35,12 +35,12 @@ export HF_HOME=/scratch-shared/$USER/hf-cache
 # the uv project ("warning: --no-sync has no effect when used outside of a
 # project", then ModuleNotFoundError: No module named 'torch').
 REPO=/gpfs/work2/0/prjs1779/BONE-AI/Bone_CLS
-BACKGROUND_VAR=mri
+BACKGROUND_VAR=noise
 LEVEL=s
 
-MODEL=/scratch-shared/$USER/models/medgemma-27b-it
+MODEL=/scratch-shared/$USER/models/medgemma-1.5-4b-it
 # Output of build_shapes.py --out-root <dir>  (NOT the preprocess metadata.csv).
-SHAPE_META=/scratch-shared/$USER/BONE-AI/pseudo_shape/$BACKGROUND_VAR/shape_256_cli_${LEVEL}/shape_metadata.csv
+SHAPE_META=/scratch-shared/$USER/BONE-AI/pseudo_shape/$BACKGROUND_VAR/shape_256_cli_3_new/shape_metadata.csv
 OUTDIR=/scratch-shared/$USER/BONE-AI/results/pseudo_shape/$BACKGROUND_VAR
 
 # N examples PER CLASS. 1 with the clinical set = 5 example turns, one per
@@ -56,20 +56,22 @@ NUM_FEW_SHOT=1
 #           and the comparison against zero-shot is no longer like-for-like.
 # Point this at the EASIEST build you have -- an example should show the
 # prototype, not an ambiguous case.
-FEWSHOT_META=/scratch-shared/$USER/BONE-AI/pseudo_shape/$BACKGROUND_VAR/shape_256_cli_e/shape_metadata.csv
+# FEWSHOT_META=/scratch-shared/$USER/BONE-AI/pseudo_shape/$BACKGROUND_VAR/shape_256_cli_3_s/shape_metadata.csv
+FEWSHOT_META=""
 
-OUT=$OUTDIR/probe_results_cli_${LEVEL}_27b_fs${NUM_FEW_SHOT}.csv
+
+OUT=$OUTDIR/probe_results_cli_3_new_${LEVEL}_4b_fs_${NUM_FEW_SHOT}_meta.csv
 # The zero-shot run to compare against; leave as-is to reuse run_shape_probe.sh's
 # output. Skipped silently if it isn't there yet.
-ZEROSHOT=$OUTDIR/probe_results_cli_${LEVEL}_27b.csv
+ZEROSHOT=$OUTDIR/probe_results_cli_3_new_${LEVEL}_4b.csv
 
-NUM_SHARDS=2
+NUM_SHARDS=1
 # LOWER than the zero-shot job on purpose. Few-shot sends NUM_FEW_SHOT*classes+1
 # images per prompt (6 at 1-shot clinical, not 1), so the same --batch-size is
 # ~6x the pixels and KV cache. make_hf_generate halves the batch on OOM rather
 # than dying, but every halving throws away the work already done on the failed
 # attempt -- cheaper to start low and raise it after reading the img/s line.
-BATCH_SIZE=8
+BATCH_SIZE=36
 
 # Token budget for the whole generation, THINKING BLOCK INCLUDED. The script
 # default is 512, which was not enough: MedGemma 1.5 reasons at length on the

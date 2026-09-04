@@ -35,15 +35,15 @@ REPO=/gpfs/work2/0/prjs1779/BONE-AI/Bone_CLS
 MODEL=/scratch-shared/$USER/models/medgemma-1.5-4b-it
 # The pilot subset, not the full metadata: this arm is graded by hand, so the
 # run size is bounded by how much prose you are willing to read (~40 cases).
-METADATA=/projects/prjs1779/BONE-AI/output/preprocess/shape_256_m/metadata_pilot40.csv
-OUTDIR=/scratch-shared/$USER/BONE-AI/freetext/rank
+METADATA=/projects/prjs1779/BONE-AI/output/preprocess/shape_256_stack/metadata_subset.csv
+OUTDIR=/scratch-shared/$USER/BONE-AI/stack/rank
 OUT=$OUTDIR/freetext_slice.csv
 NUM_SHARDS=1
 
 # Lower than the label run's 32. There the answer is one JSON line; here it is
 # two prose paragraphs, so sequences are far longer and a static batch costs its
 # SLOWEST member -- a big batch spends most of its time padding.
-BATCH_SIZE=16
+BATCH_SIZE=1
 # Also raised: 1024 was sized for a thinking block plus a one-sentence `reason`.
 # Prose overruns it, and a truncated answer is indistinguishable from a terse
 # one when you are reading them by hand.
@@ -75,6 +75,7 @@ uv run --no-sync python -c "import torch, transformers" || {
 pids=()
 for i in $(seq 0 $((NUM_SHARDS - 1))); do
     CUDA_VISIBLE_DEVICES=$i uv run --no-sync python run_medgemma.py --mode infer \
+        --input-mode stack \
         --output-mode ranked \
         --model-id "$MODEL" \
         --metadata "$METADATA" \

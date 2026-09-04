@@ -26,10 +26,10 @@
 # appears to hang instead of failing. Multi-node would need srun per node.
 #
 #SBATCH --job-name=shape_probe_lp
-#SBATCH --partition=gpu_a100
+#SBATCH --partition=gpu_h100
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --gpus-per-node=2
+#SBATCH --gpus-per-node=1
 #SBATCH --time=01:30:00
 #SBATCH --output=/projects/prjs1779/BONE-AI/logs/out/slurm-%x-%j.out
 #SBATCH --error=/projects/prjs1779/BONE-AI/logs/err/slurm-%x-%j.err
@@ -48,27 +48,27 @@ REPO=/gpfs/work2/0/prjs1779/BONE-AI/Bone_CLS
 BACKGROUND_VAR=mri
 LEVEL=s
 
-MODEL=/scratch-shared/$USER/models/medgemma-27b-it
+MODEL=/scratch-shared/$USER/models/medgemma-1.5-4b-it
 # Output of build_shapes.py --out-root <dir>  (NOT the preprocess metadata.csv).
-SHAPE_META=/scratch-shared/$USER/BONE-AI/pseudo_shape/$BACKGROUND_VAR/shape_256_cli_${LEVEL}/shape_metadata.csv
+SHAPE_META=/scratch-shared/$USER/BONE-AI/pseudo_shape/$BACKGROUND_VAR/shape_256_cli_3_s/shape_metadata.csv
 OUTDIR=/scratch-shared/$USER/BONE-AI/results/pseudo_shape/$BACKGROUND_VAR
 
-LOGP=$OUTDIR/logprobs_cli_${LEVEL}_27b.csv
-LOGP_COT=$OUTDIR/logprobs_cli_${LEVEL}_27b_cot.csv
-EMB=$OUTDIR/embeddings_cli_${LEVEL}_27b.npz
+LOGP=$OUTDIR/logprobs_cli_3_s_${LEVEL}_4b.csv
+LOGP_COT=$OUTDIR/logprobs_cli_3_s_${LEVEL}_4b_cot.csv
+EMB=$OUTDIR/embeddings_cli_3_s_${LEVEL}_4b.npz
 
 # The generative zero-shot run, used ONLY as the source of `thinking` text for
 # the RUN_SCORE_COT pass. Same name run_shape_probe.sh writes.
-ZEROSHOT=$OUTDIR/probe_results_cli_${LEVEL}_27b.csv
+ZEROSHOT=$OUTDIR/probe_results_cli_3_s_${LEVEL}_4b.csv
 
 # --- which passes to run -------------------------------------------------
 # Ordered by value per GPU-minute. RUN_SCORE alone already gives the pairwise
 # AUC verdict and the calibrated baseline; the other two refine it.
-RUN_SCORE=1      # forced-choice log-probs, no thinking block
-RUN_SCORE_COT=1  # same, but scored after replaying $ZEROSHOT's thinking column
+RUN_SCORE=0      # forced-choice log-probs, no thinking block
+RUN_SCORE_COT=0  # same, but scored after replaying $ZEROSHOT's thinking column
 RUN_EMBED=1      # pooled hidden states for the linear probe
 
-NUM_SHARDS=2
+NUM_SHARDS=1
 
 # LOWER than the generative job's 64, for two different reasons per mode:
 #   score  the batch is expanded by the number of labels internally (3 rows per
