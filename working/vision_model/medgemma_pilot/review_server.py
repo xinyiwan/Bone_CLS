@@ -33,9 +33,11 @@ import pandas as pd
 DATA: Dict[str, Dict[str, List[dict]]] = {}
 IMAGE_WHITELIST: Dict[str, Path] = {}
 
-# The CSVs carry absolute cluster paths. When the images have been copied to a
-# laptop, rewrite those prefixes to the local checkout. Longest prefix wins.
-# Override/extend from the command line with --path-map REMOTE=LOCAL.
+# The CSVs carry absolute cluster paths, which are correct when the server runs
+# on the cluster -- the default. Under --copy-local (reviewing a local copy of
+# the data) those prefixes are rewritten to this checkout instead; longest
+# prefix wins, and --path-map REMOTE=LOCAL adds more.
+COPY_LOCAL = False
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PATH_MAP: List[tuple] = [
     ("/projects/prjs1779/BONE-AI/output", str(REPO_ROOT / "output")),
@@ -61,10 +63,14 @@ ROW_COLS = (
 def resolve_image(path: str) -> Path:
     """Map an image path recorded in the CSV onto a local file.
 
-    Applies PATH_MAP (longest prefix first) and, if the result doesn't exist,
-    tries splicing a preprocessing-variant directory into the path. Returns the
-    best candidate even when nothing exists, so /img can report 404 with the
-    path it actually looked for."""
+    Without --copy-local the recorded path is the real path (we're on the
+    cluster) and is used as-is. Otherwise applies PATH_MAP (longest prefix
+    first) and, if the result doesn't exist, tries splicing a preprocessing-
+    variant directory into the path. Returns the best candidate even when
+    nothing exists, so /img can report 404 with the path it looked for."""
+    if not COPY_LOCAL:
+        return Path(path)
+
     mapped = path
     for remote, local in sorted(PATH_MAP, key=lambda kv: -len(kv[0])):
         if path == remote or path.startswith(remote.rstrip("/") + "/"):
@@ -78,6 +84,8 @@ def resolve_image(path: str) -> Path:
         try:
             tail = p.relative_to(parent)
         except ValueError:
+            continue
+        if not parent.is_dir():
             continue
         for variant in sorted(d for d in parent.iterdir() if d.is_dir()):
             cand = variant / tail
@@ -130,8 +138,9 @@ def load(results_csv: Path) -> None:
 
     missing = sum(1 for p in IMAGE_WHITELIST.values() if not p.is_file())
     if missing:
-        print(f"warning: {missing}/{len(IMAGE_WHITELIST)} image(s) not found locally "
-              f"-- add a mapping with --path-map REMOTE=LOCAL")
+        hint = ("add a mapping with --path-map REMOTE=LOCAL" if COPY_LOCAL else
+                "pass --copy-local if you are reviewing a local copy of the data")
+        print(f"warning: {missing}/{len(IMAGE_WHITELIST)} image(s) not found on disk -- {hint}")
 
 
 def _run_info(df: pd.DataFrame) -> Dict[str, object]:
@@ -440,12 +449,16 @@ def main() -> None:
                     help="per-image results CSV from run_medgemma.py --mode infer")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8000)
+    ap.add_argument("--copy-local", action="store_true",
+                    help="the images were copied off the cluster: rewrite the cluster path "
+                         "prefixes in the CSV onto this checkout (default: use them as-is)")
     ap.add_argument("--path-map", action="append", default=[], metavar="REMOTE=LOCAL",
-                    help="rewrite this path prefix in the CSV's image paths (repeatable); "
-                         "added to the built-in cluster->checkout defaults; longest "
+                    help="extra prefix rewrite for --copy-local (repeatable); longest "
                          "matching prefix wins, ties go to the flag")
     args = ap.parse_args()
 
+    global COPY_LOCAL
+    COPY_LOCAL = args.copy_local
     for m in args.path_map:
         if "=" not in m:
             raise SystemExit(f"--path-map expects REMOTE=LOCAL, got {m!r}")
