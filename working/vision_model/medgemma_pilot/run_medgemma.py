@@ -560,14 +560,22 @@ def is_degenerate(raw: str, min_repeats: int = 6) -> bool:
 def parse_ranking(raw: str, options: List[str]) -> tuple[str, str]:
     """Parse the ranked arm's ASSESSMENT line -> (top_label, "a > b > c").
 
-    Returns ("PARSE_FAILED", "") when the line is missing or does not name every
-    option exactly once. That strictness is deliberate: a partial ranking cannot
-    be scored (is a missing label ranked last, or overlooked?), and silently
-    keeping the first token would turn a malformed answer into a confident one.
+    Returns ("PARSE_FAILED", ranking) when the line is missing or does not name
+    every option exactly once. That strictness is deliberate: a partial ranking
+    cannot be scored (is a missing label ranked last, or overlooked?), and
+    silently keeping the first token would turn a malformed answer into a
+    confident one.
 
     Tolerant of the heading variants the model actually emits -- '# ASSESSMENT:',
     '**ASSESSMENT:**', '## ASSESSMENT' -- and of it echoing the prompt's own
     format lines earlier in the reply, by taking the LAST ASSESSMENT block.
+
+    Ties are accepted: the model writes '=' (or '>=' / '~') between labels it
+    won't separate, e.g. "irregular > Round/Oval = lobulated". The tie is kept
+    verbatim in `ranking` -- collapsing it to a strict order would invent a
+    preference the model declined to state. A tie ACROSS THE TOP ("a = b > c")
+    has no single top label, so it is a parse failure for `parsed_label` even
+    though the ranking itself is returned for review.
     """
     import re
 
@@ -579,11 +587,24 @@ def parse_ranking(raw: str, options: List[str]) -> tuple[str, str]:
     line = next((l for l in blocks[-1].splitlines() if l.strip()), "")
     line = line.replace("*", "").strip()
 
+    # Split on the separators while keeping them, so the tie structure survives
+    # into `ranking`. Longest alternatives first so '>=' doesn't match as '>'.
+    parts = re.split(r"\s*(>=|=>|≥|>>|~=|>|=|~)\s*", line)
+    labels, seps = parts[0::2], parts[1::2]
+
     by_lower = {o.lower(): o for o in options}
-    ranked = [by_lower.get(part.strip().strip(".").lower()) for part in line.split(">")]
+    ranked = [by_lower.get(p.strip().strip(".").lower()) for p in labels]
     if len(ranked) != len(options) or any(r is None for r in ranked) or len(set(ranked)) != len(options):
         return "PARSE_FAILED", ""
-    return ranked[0], " > ".join(ranked)  # type: ignore[arg-type]
+
+    # Normalize each separator to '>' (strict) or '=' (tie).
+    norm = ["=" if s in ("=", "~", "~=") else ">" for s in seps]
+    ranking = ranked[0]
+    for s, lab in zip(norm, ranked[1:]):
+        ranking += f" {s} {lab}"
+    if norm and norm[0] == "=":     # no single best label
+        return "PARSE_FAILED", ranking
+    return ranked[0], ranking  # type: ignore[return-value]
 
 
 def has_gt(gt: str) -> bool:
@@ -780,10 +801,14 @@ def infer(
     so the CSV says which run produced it -- generation itself goes through the
     `generate` callable, which already has the model bound.
     """
-    if output_mode in ("free_text", "ranked") and num_few_shot > 0:
-        raise SystemExit(f"--output-mode {output_mode} is zero-shot only (label exemplars answer "
-                         "with a bare label, teaching back a format neither arm uses); "
-                         "drop --num-few-shot")
+    # free_text has no vocabulary to demonstrate -- a labeled exemplar would only
+    # teach it to answer tersely with a term it was told not to use. ranked DOES
+    # have a vocabulary (it orders it), so prompts.build_medgemma_messages builds
+    # it a proper ranked-format exemplar instead of refusing it.
+    if output_mode == "free_text" and num_few_shot > 0:
+        raise SystemExit("--output-mode free_text is zero-shot only (a labeled exemplar answers "
+                         "with a bare term, teaching back the forced-choice format this arm "
+                         "exists to avoid); drop --num-few-shot")
     if input_mode == "stack" and num_few_shot > 0:
         raise SystemExit("--input-mode stack is zero-shot only: an exemplar would be a whole "
                          "second stack, and resolve_few_shot loads one image per example")
@@ -1270,7 +1295,10 @@ def main() -> None:
                          "blank because there is nothing to score. "
                          "'ranked' = same prose reasoning, but ASSESSMENT orders ALL the "
                          "label_options best-first ('a > b > c'); parsed_label is the head and "
-                         "`ranking` the whole chain. free_text/ranked are zero-shot only")
+                         "`ranking` the whole chain. Supports --num-few-shot (unlike free_text): "
+                         "each exemplar's own ranked-format answer is built from its YAML "
+                         "label/reason (or an explicit `ranking:`/`lesion:`/`observations:`/"
+                         "`reasoning:` override -- see resolve_few_shot)")
     # quick mode
     ap.add_argument("--image", type=Path, nargs="+",
                     help="one or more image paths (quick mode); each is sent in its own call")
