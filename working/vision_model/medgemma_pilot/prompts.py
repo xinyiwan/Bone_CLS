@@ -143,13 +143,11 @@ def _stack_context_parts(head: List[str], modality: str, plane: str, n_slices: i
     )
     if not if_example:
         parts.append(
-            "Each slice is cropped to the same bounding box around the lesion, so the images "
-            "are spatially registered to one another and the lesion sits at the CENTRE of every "
-            "frame -- it is the central mass, not the normal tissue around the edges. Because "
-            "the box spans the whole lesion, it fills most of the frame on the middle slices "
-            "and is smaller, and may sit off-centre, on the first and last few. "
-            "Read them together as a volume: use how the lesion CHANGES from slice to slice, "
-            "and treat a finding as present if it is visible on any slice."
+            "Every slice shares the same crop box, so the lesion sits at the CENTRE of "
+            "each frame -- the central mass, not the tissue at the edges. It fills most "
+            "of the middle slices and is smaller, possibly off-centre, on the first and "
+            "last few. Read the slices as one volume: judge how the lesion CHANGES "
+            "across them, and count a finding as present if any slice shows it."
         )
     if has_contour:
         parts.append(
@@ -165,12 +163,11 @@ def _stack_context_parts(head: List[str], modality: str, plane: str, n_slices: i
 # Role + the one non-format rule. The output-structure rules that used to live
 # here are dropped -- the "# OUTPUT FORMAT" section states them once, in full.
 SYSTEM_ROLE = (
-    "You are an expert musculoskeletal radiologist. For each case, you are shown "
-    "a single MRI slice of a bone lesion and asked to assess ONE specific imaging "
-    "feature, choosing from a fixed set of labels defined below. Base your "
-    "judgment only on what is visible in the image provided. If the feature is not clearly "
-    "assessable from the image, choose the closest label and note the "
-    "uncertainty in the reason."
+    "You are an expert musculoskeletal radiologist. You are shown a single MRI "
+    "slice of a bone lesion and must assess ONE imaging feature, choosing from "
+    "the fixed labels defined below. Judge only what is visible in this image. "
+    "If the feature is not clearly assessable, pick the closest label and note "
+    "the uncertainty in your reason."
 )
 
 # The free-text counterparts. SYSTEM_ROLE and SYSTEM_ROLE_STACK both promise a
@@ -179,22 +176,21 @@ SYSTEM_ROLE = (
 # respectively. Kept as separate literals rather than assembled from fragments so
 # the label-mode strings stay byte-identical to earlier runs.
 SYSTEM_ROLE_FREE = (
-    "You are an expert musculoskeletal radiologist. For each case, you are shown "
-    "a single MRI slice of a bone lesion and asked to describe ONE specific "
-    "imaging feature in your own words. Base your judgment only on what is "
-    "visible in the image provided. Describe whether you found the lesion, and what you actually see;" 
-    "if the feature is genuinely not assessable, say so and say why."
+    "You are an expert musculoskeletal radiologist. You are shown a single MRI "
+    "slice of a bone lesion and must describe ONE imaging feature in your own "
+    "words. Judge only what is visible in this image. Say whether you found the "
+    "lesion and what you actually see; if the feature is genuinely not "
+    "assessable, say so and say why."
 )
 
 SYSTEM_ROLE_STACK_FREE = (
-    "You are an expert musculoskeletal radiologist. For each case, you are shown "
-    "a STACK of consecutive MRI slices through a single bone lesion and asked to "
-    "describe ONE specific imaging feature in your own words. Base your judgment "
-    "only on what is visible in the images provided, not on other planes or "
-    "assumptions about the case. Reason across the whole stack: the slices show "
-    "one lesion at different levels, so a feature may be evident on only some of "
-    "them. Describe what you actually see; if the feature is genuinely not "
-    "assessable, say so and say why."
+    "You are an expert musculoskeletal radiologist. You are shown a STACK of "
+    "consecutive MRI slices through one bone lesion and must describe ONE "
+    "imaging feature in your own words. Judge only what is visible in these "
+    "images, not other planes or assumptions about the case. Reason across the "
+    "whole stack: the slices show one lesion at different levels, so a feature "
+    "may be evident on only some of them. Say what you actually see; if the "
+    "feature is genuinely not assessable, say so and say why."
 )
 
 # The STACK counterpart. Every clause that restricts the model to one image is
@@ -204,12 +200,12 @@ SYSTEM_ROLE_STACK_FREE = (
 # closest label and note the uncertainty") is dropped too: it belongs to the
 # forced-choice format, and under free text it just licenses a non-answer.
 SYSTEM_ROLE_STACK = (
-    "You are an expert musculoskeletal radiologist. For each case, you are shown "
-    "a STACK of consecutive MRI slices through a single bone lesion and asked to "
-    "assess ONE specific imaging feature. Base your judgment only on what is "
-    "visible in the images provided, not on other planes or assumptions about the "
-    "case. Reason across the whole stack: the slices show one lesion at different "
-    "levels, so a feature may be evident on only some of them."
+    "You are an expert musculoskeletal radiologist. You are shown a STACK of "
+    "consecutive MRI slices through one bone lesion and must assess ONE imaging "
+    "feature. Judge only what is visible in these images, not other planes or "
+    "assumptions about the case. Reason across the whole stack: the slices show "
+    "one lesion at different levels, so a feature may be evident on only some of "
+    "them."
 )
 
 # Free-text output. No vocabulary, no length cap -- the point of the arm is the
@@ -249,29 +245,29 @@ def free_text_format(input_mode: str = "slice", rank_options: Optional[List[str]
     where = ("which slices it appears on and where it sits within the frame"
              if stack else "where it sits within the frame")
     return (
-        "# OUTPUT FORMAT\n"
+        "[OUTPUT FORMAT]\n"
         "Reply in plain prose under exactly these four headings, in this order, "
-        "nothing else (no JSON, no markdown fences, no bullet list of options):\n"
-        f"LESION: whether you can identify the lesion at all, and if so, {where} "
-        "and what makes it distinguishable from surrounding tissue. If you cannot "
-        "confidently tell which structure is the lesion, say so plainly here and "
-        "say why -- that is a valid and useful answer, not a failure.\n"
+        "nothing else (no JSON, no markdown, no bullet list of options).\n"
+        f"LESION: can you identify the lesion at all? If so, say {where} and what "
+        "distinguishes it from surrounding tissue. If you cannot confidently tell "
+        "which structure is the lesion, say so plainly -- that is a valid answer, "
+        "not a failure.\n"
         f"OBSERVATIONS: what you actually see in {noun} that bears on this feature.\n"
-        "REASONING: how you weigh those observations -- what the alternatives are, "
-        "why you favour one over another, and what leaves you uncertain. Think it "
-        "through here, before committing to a conclusion.\n"
+        "REASONING: weigh those observations against each other -- the "
+        "alternatives, why you favour one, what leaves you uncertain. Think it "
+        "through here, before you conclude.\n"
         + (
-            "ASSESSMENT: your conclusion about the feature, in your own words.\n"
-            "Do not pick from a list of terms -- none is given. Describe what is there."
+            "ASSESSMENT: your conclusion, in your own words. Do not pick from a "
+            "list of terms -- none is given. Describe what is there."
             if not rank_options else
-            "ASSESSMENT: rank ALL of the descriptors below from best fit to worst fit "
-            "for this lesion, separated by '>', with nothing else on that line.\n"
-            f"  the descriptors, to be written exactly as given: {', '.join(rank_options)}\n"
-            f"  the required form: ASSESSMENT: {' > '.join(rank_options)}\n"
-            "Every descriptor must appear exactly once, even the ones that fit badly. "
-            "Rank them even when the call is close -- put the closer one first and say "
-            "in REASONING why it was close. Do not add words of your own to that line; "
-            "if a better word exists, use it in REASONING instead."
+            "ASSESSMENT: rank ALL the descriptors below, best fit first, separated "
+            "by '>', nothing else on that line.\n"
+            f"  descriptors, written exactly as given: {', '.join(rank_options)}\n"
+            f"  required form: ASSESSMENT: {' > '.join(rank_options)}\n"
+            "Every descriptor exactly once, even ones that fit badly. Rank even a "
+            "close call -- closer one first, explain the closeness in REASONING. "
+            "Do not add your own words to this line; put a better word in "
+            "REASONING instead."
         )
         + cite
     )
@@ -339,18 +335,18 @@ def build_system_text(feature_cfg: dict, has_examples: bool = False,
     if input_mode == "stack":
         description = (feature_cfg.get("description_stack") or "").strip() or description
     if description:
-        sections.append("# FEATURE\n" + description)
+        sections.append("[FEATURE TO ASSESS]\n" + description)
 
     # LABEL DEFINITIONS is the vocabulary. Emitting it under free text would hand
     # the model the answer set the arm is designed to withhold, so it is dropped
     # there -- along with the label-valued OUTPUT FORMAT.
     defs = feature_cfg.get("label_definitions")
     if defs and output_mode != "free_text":
-        sections.append("# LABEL DEFINITIONS\n" + "\n".join(f"- {k}: {v}" for k, v in defs.items()))
+        sections.append("[DEFINITIONS]\n" + "\n".join(f"- {k}: {v}" for k, v in defs.items()))
 
     task = free_text_task(feature_cfg) if prose else (feature_cfg.get("task") or "").strip()
     if task:
-        sections.append("# TASK\n" + task)
+        sections.append("[TASK]\n" + task)
 
     if output_mode == "ranked":
         sections.append(free_text_format(input_mode, feature_cfg["label_options"]))
@@ -362,15 +358,15 @@ def build_system_text(feature_cfg: dict, has_examples: bool = False,
         # forces the reason field.
         opts = ", ".join(feature_cfg["label_options"])
         sections.append(
-            "# OUTPUT FORMAT\n"
-            'Reply with ONLY this JSON, nothing else (no markdown/fences):\n'
+            "[OUTPUT FORMAT]\n"
+            "Reply with ONLY this JSON, nothing else (no markdown, no fences, no headings):\n"
             '{"prediction": "<LABEL>", "reason": "<one short sentence>"}\n'
             f"<LABEL> must be exactly one of: {opts}."
         )
     # Announce few-shot examples here (once, before any example turn) rather than
     # gluing the announcement onto the first example's image context.
     if has_examples:
-        sections.append("# EXAMPLES\n" + EXAMPLES_NOTE)
+        sections.append("[EXAMPLES]\n" + EXAMPLES_NOTE)
     # Blank line between sections so the model (and you, in the logged input_text)
     # can tell role / feature / definitions / task / format apart.
     return "\n\n".join(sections)
@@ -581,3 +577,45 @@ def few_shot_image_paths(feature_cfg: dict, base_dir: Path) -> List[str]:
         p = Path(img_field)
         paths.append(str(p if p.is_absolute() else base_dir / p))
     return paths
+
+
+# ---------------------------------------------------------------------------
+# CLI: render a prompt with no model, no images, no metadata -- for eyeballing
+# wording changes. `run_medgemma.py --mode quick` needs a loaded model and a
+# real image just to show you the text; this needs neither.
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    import argparse
+    import sys
+
+    import yaml
+
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--config", type=Path, default=Path("feature_prompts.yaml"))
+    ap.add_argument("--feature", default="shape")
+    ap.add_argument("--input-mode", choices=["slice", "stack"], default="slice")
+    ap.add_argument("--output-mode", choices=["label", "free_text", "ranked"], default="label")
+    ap.add_argument("--n-slices", type=int, default=23,
+                    help="only shown/used for --input-mode stack, as the per-image context")
+    ap.add_argument("--few-shot", action="store_true",
+                    help="also print the [EXAMPLES] announcement, as it would appear "
+                         "with --num-few-shot > 0 (system text only; doesn't load example images)")
+    args = ap.parse_args()
+
+    with open(args.config) as fh:
+        features = yaml.safe_load(fh)["features"]
+    if args.feature not in features:
+        raise SystemExit(f"no feature {args.feature!r} in {args.config} "
+                         f"(have: {', '.join(features)})")
+    cfg = features[args.feature]
+
+    system = build_system_text(cfg, has_examples=args.few_shot,
+                               input_mode=args.input_mode, output_mode=args.output_mode)
+    context = build_context("T2W_FS", "axial", location="distal femur, metaphysis",
+                            n_slices=args.n_slices if args.input_mode == "stack" else 0)
+
+    print(f"===== [system] ({args.input_mode}/{args.output_mode}, "
+          f"{len(system)} chars) =====", file=sys.stderr)
+    print(system)
+    print(f"\n===== [user context] ({len(context)} chars) =====", file=sys.stderr)
+    print(context)

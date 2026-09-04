@@ -213,7 +213,8 @@ def _strip_padding_tokens(text: str, processor) -> str:
     return text
 
 
-def run_batch(model, processor, batch: List[List[dict]], max_new_tokens: int = 1024) -> List[str]:
+def run_batch(model, processor, batch: List[List[dict]], max_new_tokens: int = 1024,
+             repetition_penalty: float = 1.3, no_repeat_ngram_size: int = 4) -> List[str]:
     """A LIST of chat message lists -> one raw decoded text each (greedy).
 
     Each `messages` is the backend-neutral format built in prompts.py: a list of
@@ -235,6 +236,19 @@ def run_batch(model, processor, batch: List[List[dict]], max_new_tokens: int = 1
     member of the batch stops, so one long thinking block holds up its whole
     batch. infer() mitigates this by grouping same-feature rows together; the
     vLLM backend removes it entirely via continuous batching.
+
+    repetition_penalty/no_repeat_ngram_size guard against degenerate looping
+    ("The lesion is centered in the proximal femur." x200 until max_new_tokens
+    cuts it off) -- observed on the STACK arm, where dozens of images push the
+    prompt far longer than the single-slice runs this greedy config was never
+    stress-tested against. no_repeat_ngram_size=4 hard-forbids repeating any
+    4-token run verbatim, which is what a real answer never needs to do, so it
+    should not touch legitimate output; repetition_penalty softly discourages
+    reusing any already-generated token. Both are no-ops on short answers, so
+    the label arm's JSON output is unaffected. If a genuinely repetitive but
+    CORRECT phrase gets mangled, lower repetition_penalty before disabling
+    no_repeat_ngram_size -- the ngram block is the one actually preventing the
+    loop; the penalty just makes it less likely to start.
     """
     import torch
 
@@ -249,7 +263,9 @@ def run_batch(model, processor, batch: List[List[dict]], max_new_tokens: int = 1
 
     input_len = inputs["input_ids"].shape[-1]
     with torch.inference_mode():
-        out = model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False)
+        out = model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False,
+                             repetition_penalty=repetition_penalty,
+                             no_repeat_ngram_size=no_repeat_ngram_size)
     # Decoded with skip_special_tokens=FALSE on purpose. The thinking block is
     # delimited by special tokens (<unused94>/<unused95>); skipping them deletes
     # the delimiters while leaving the thought text glued to the answer, so
@@ -268,7 +284,8 @@ def run_batch(model, processor, batch: List[List[dict]], max_new_tokens: int = 1
 Generate = Callable[[List[List[dict]]], List[str]]
 
 
-def make_hf_generate(model_id: str, max_new_tokens: int) -> Generate:
+def make_hf_generate(model_id: str, max_new_tokens: int, repetition_penalty: float = 1.3,
+                     no_repeat_ngram_size: int = 4) -> Generate:
     """In-process HuggingFace backend (loads weights locally; needs torch).
 
     Retries on CUDA OOM by splitting the batch in half, so an over-large
@@ -280,7 +297,9 @@ def make_hf_generate(model_id: str, max_new_tokens: int) -> Generate:
 
     def generate(batch: List[List[dict]]) -> List[str]:
         try:
-            return run_batch(model, processor, batch, max_new_tokens)
+            return run_batch(model, processor, batch, max_new_tokens,
+                             repetition_penalty=repetition_penalty,
+                             no_repeat_ngram_size=no_repeat_ngram_size)
         except torch.cuda.OutOfMemoryError:
             if len(batch) == 1:
                 raise
@@ -299,6 +318,7 @@ def make_vllm_generate(
     max_images_per_prompt: int = 1,
     gpu_memory_utilization: float = 0.90,
     max_model_len: Optional[int] = None,
+    repetition_penalty: float = 1.3,
 ) -> Generate:
     """vLLM backend: same (messages -> text) contract, much higher throughput.
 
@@ -328,7 +348,11 @@ def make_vllm_generate(
         **({"max_model_len": max_model_len} if max_model_len else {}),
     )
     # do_sample=False in the HF path == greedy == temperature 0 here.
-    sampling = SamplingParams(temperature=0.0, max_tokens=max_new_tokens)
+    # repetition_penalty mirrors the HF path's degenerate-loop guard (see
+    # run_batch); vLLM's SamplingParams has no no_repeat_ngram_size equivalent,
+    # so this is the only lever available on this backend.
+    sampling = SamplingParams(temperature=0.0, max_tokens=max_new_tokens,
+                              repetition_penalty=repetition_penalty)
 
     def generate(batch: List[List[dict]]) -> List[str]:
         requests = []
@@ -346,12 +370,22 @@ def make_vllm_generate(
     return generate
 
 
-def make_generate(backend: str, model_id: str, max_new_tokens: int, num_few_shot: int = 0) -> Generate:
-    """Build the backend named by --backend. Both honour the same Generate contract."""
+def make_generate(backend: str, model_id: str, max_new_tokens: int, num_few_shot: int = 0,
+                  repetition_penalty: float = 1.3, no_repeat_ngram_size: int = 4,
+                  max_images_per_prompt: int = 1) -> Generate:
+    """Build the backend named by --backend. Both honour the same Generate contract.
+
+    max_images_per_prompt must cover the largest turn this run will ever send --
+    for --input-mode stack that is max_slices (up to 85), not num_few_shot + 1.
+    vLLM rejects any prompt over its `limit_mm_per_prompt`, so under-setting this
+    silently drops or errors on the largest stacks rather than degrading gracefully.
+    """
     if backend == "vllm":
         return make_vllm_generate(model_id, max_new_tokens,
-                                  max_images_per_prompt=max(1, num_few_shot + 1))
-    return make_hf_generate(model_id, max_new_tokens)
+                                  max_images_per_prompt=max(1, num_few_shot + 1, max_images_per_prompt),
+                                  repetition_penalty=repetition_penalty)
+    return make_hf_generate(model_id, max_new_tokens, repetition_penalty=repetition_penalty,
+                            no_repeat_ngram_size=no_repeat_ngram_size)
 
 
 # ---------------------------------------------------------------------------
@@ -504,6 +538,23 @@ def parse_answer(raw: str, options: List[str]) -> tuple[str, str]:
     if len(hits) == 1:
         return hits[0], reason
     return "PARSE_FAILED", reason
+
+
+def is_degenerate(raw: str, min_repeats: int = 6) -> bool:
+    """True when the reply looks like a greedy repetition loop rather than a
+    template deviation: the same sentence-ish chunk repeated min_repeats+ times
+    back to back. Distinguishing this from a merely malformed reply (e.g. a
+    "FINDINGS:" heading instead of the four asked for) matters because the fix
+    is different -- a repetition loop is a decoding problem (see run_batch's
+    repetition_penalty/no_repeat_ngram_size), while a wrong heading is a prompt
+    problem that turning up those knobs will not touch.
+    """
+    import re
+    region = _answer_region(raw)
+    for sentence in re.findall(r"[^.!?]{15,}[.!?]", region):
+        if region.count(sentence) >= min_repeats:
+            return True
+    return False
 
 
 def parse_ranking(raw: str, options: List[str]) -> tuple[str, str]:
@@ -915,10 +966,15 @@ def infer(
                     label, reason = "", _answer_region(raw).strip()
                 else:
                     label, reason = parse_answer(raw, fcfg["label_options"])
-                if label == "PARSE_FAILED":
+                if label == "PARSE_FAILED" or (output_mode != "label" and is_degenerate(raw)):
                     truncated = ("<unused94>" in raw) and not any(m in raw for m in THINK_END_MARKERS)
-                    log.warning("PARSE_FAILED %s / %s%s", t["case_id"], t["feature"],
-                                "  (thinking block truncated -- raise --max-new-tokens)" if truncated else "")
+                    degenerate = is_degenerate(raw)
+                    hint = ("  (thinking block truncated -- raise --max-new-tokens)" if truncated else
+                            "  (degenerate repetition loop -- raise --repetition-penalty / "
+                            "lower --no-repeat-ngram-size)" if degenerate else "")
+                    log.warning("%s %s / %s%s",
+                               "DEGENERATE OUTPUT" if degenerate and label != "PARSE_FAILED" else "PARSE_FAILED",
+                               t["case_id"], t["feature"], hint)
 
                 gt = t["gt"]
                 # label_options already use the assessment vocabulary, so a direct
@@ -1168,6 +1224,18 @@ def main() -> None:
     ap.add_argument("--model-id", default="google/medgemma-1.5-4b-it",
                     help="default 4B; pass google/medgemma-27b-it for a comparison run (see load_model)")
     ap.add_argument("--max-new-tokens", type=int, default=1024)
+    ap.add_argument("--repetition-penalty", type=float, default=1.3,
+                    help="greedy decoding has no built-in escape from a repeated phrase; this "
+                         "penalizes reusing already-generated tokens. Set to 1.0 to disable. "
+                         "Was needed on the STACK arm, where a long multi-image prompt could push "
+                         "greedy decoding into looping the same sentence until --max-new-tokens cut it off")
+    ap.add_argument("--no-repeat-ngram-size", type=int, default=4,
+                    help="hard-forbid regenerating any exact N-token run (HF backend only; vLLM has "
+                         "no equivalent). 0 disables. This is what actually breaks a repetition loop; "
+                         "--repetition-penalty only makes one less likely to start")
+    ap.add_argument("--max-slices", type=int, default=85,
+                    help="--input-mode stack only: also sets the vLLM backend's per-prompt image "
+                         "limit, so it must be >= the largest stack_size this run will send")
     # throughput
     ap.add_argument("--backend", choices=["hf", "vllm"], default="hf",
                     help="hf: in-process transformers with static batching (no extra deps). "
@@ -1227,7 +1295,10 @@ def main() -> None:
             # half-written rows. Give each its own file, aggregate afterwards.
             out = out.with_name(f"{out.stem}.shard{args.shard_index}{out.suffix}")
             log.info("sharded run -> writing %s", out)
-        generate = make_generate(args.backend, args.model_id, args.max_new_tokens, args.num_few_shot)
+        generate = make_generate(args.backend, args.model_id, args.max_new_tokens, args.num_few_shot,
+                                 repetition_penalty=args.repetition_penalty,
+                                 no_repeat_ngram_size=args.no_repeat_ngram_size,
+                                 max_images_per_prompt=args.max_slices if args.input_mode == "stack" else 1)
         infer(args.metadata, args.config, out, generate,
               use_contour=args.use_contour, location_cols=args.location_cols,
               num_few_shot=args.num_few_shot, model_id=args.model_id,
@@ -1247,7 +1318,10 @@ def main() -> None:
     elif args.mode == "quick":
         if not args.image or not args.prompt:
             raise SystemExit("--image and --prompt are required for --mode quick")
-        generate = make_generate(args.backend, args.model_id, args.max_new_tokens, args.num_few_shot)
+        generate = make_generate(args.backend, args.model_id, args.max_new_tokens, args.num_few_shot,
+                                 repetition_penalty=args.repetition_penalty,
+                                 no_repeat_ngram_size=args.no_repeat_ngram_size,
+                                 max_images_per_prompt=max(1, len(args.image)))
         run_quick(generate, args.image, args.prompt, repeat=args.repeat, batch_size=args.batch_size)
     else:
         evaluate(args.results, args.config)

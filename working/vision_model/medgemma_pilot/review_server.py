@@ -27,10 +27,24 @@ from typing import Dict, List
 
 import pandas as pd
 
-# Populated in main(): case_id -> feature_name -> list[row-dict]; and the set of
-# image paths we're allowed to serve.
+# Populated in main(): case_id -> feature_name -> list[row-dict]; and the map
+# from the image path written in the CSV to the local file we actually serve
+# (identity on the cluster; rewritten when reviewing a local copy of the data).
 DATA: Dict[str, Dict[str, List[dict]]] = {}
-IMAGE_WHITELIST: set = set()
+IMAGE_WHITELIST: Dict[str, Path] = {}
+
+# The CSVs carry absolute cluster paths. When the images have been copied to a
+# laptop, rewrite those prefixes to the local checkout. Longest prefix wins.
+# Override/extend from the command line with --path-map REMOTE=LOCAL.
+REPO_ROOT = Path(__file__).resolve().parents[3]
+PATH_MAP: List[tuple] = [
+    ("/projects/prjs1779/BONE-AI/output", str(REPO_ROOT / "output")),
+    ("/scratch-shared/xwan1/BONE-AI", str(REPO_ROOT / "BONE-AI")),
+]
+# The local copy of output/preprocess groups cases under a preprocessing-variant
+# directory (all_feature/, shape_256/, ...) that the cluster paths don't have.
+# If a mapped path is missing, retry with each of these dirs spliced in.
+VARIANT_PARENTS: List[Path] = [REPO_ROOT / "output" / "preprocess"]
 # Run configuration read off the result rows (model / shot count / contour), so
 # the page states which run it is showing. Blank for pre-schema CSVs.
 RUN_INFO: Dict[str, object] = {}
@@ -42,6 +56,34 @@ ROW_COLS = (
     "reason", "ground_truth_label", "correct", "input_text", "thinking", "raw_output",
     "fed_image_path", "has_contour", "model_id", "num_few_shot", "use_contour",
 )
+
+
+def resolve_image(path: str) -> Path:
+    """Map an image path recorded in the CSV onto a local file.
+
+    Applies PATH_MAP (longest prefix first) and, if the result doesn't exist,
+    tries splicing a preprocessing-variant directory into the path. Returns the
+    best candidate even when nothing exists, so /img can report 404 with the
+    path it actually looked for."""
+    mapped = path
+    for remote, local in sorted(PATH_MAP, key=lambda kv: -len(kv[0])):
+        if path == remote or path.startswith(remote.rstrip("/") + "/"):
+            mapped = local.rstrip("/") + path[len(remote.rstrip("/")):]
+            break
+
+    p = Path(mapped)
+    if p.is_file():
+        return p
+    for parent in VARIANT_PARENTS:
+        try:
+            tail = p.relative_to(parent)
+        except ValueError:
+            continue
+        for variant in sorted(d for d in parent.iterdir() if d.is_dir()):
+            cand = variant / tail
+            if cand.is_file():
+                return cand
+    return p
 
 
 def truthy(s) -> bool:
@@ -80,12 +122,16 @@ def load(results_csv: Path) -> None:
         # Serve (and display) the image the model actually saw. fed_image_path is
         # the contour overlay under --use-contour; fall back to the crop path for
         # rows written before that column existed.
-        if row["image_path"]:
-            IMAGE_WHITELIST.add(row["image_path"])
-        if row["fed_image_path"]:
-            IMAGE_WHITELIST.add(row["fed_image_path"])
+        for col in ("image_path", "fed_image_path"):
+            if row[col] and row[col] not in IMAGE_WHITELIST:
+                IMAGE_WHITELIST[row[col]] = resolve_image(row[col])
 
     RUN_INFO.update(_run_info(df))
+
+    missing = sum(1 for p in IMAGE_WHITELIST.values() if not p.is_file())
+    if missing:
+        print(f"warning: {missing}/{len(IMAGE_WHITELIST)} image(s) not found locally "
+              f"-- add a mapping with --path-map REMOTE=LOCAL")
 
 
 def _run_info(df: pd.DataFrame) -> Dict[str, object]:
@@ -378,9 +424,9 @@ class Handler(BaseHTTPRequestHandler):
             if path not in IMAGE_WHITELIST:        # only serve images named in the CSV
                 self._send(b"forbidden", "text/plain", 403)
                 return
-            p = Path(path)
+            p = IMAGE_WHITELIST[path]
             if not p.is_file():
-                self._send(b"image not found on disk", "text/plain", 404)
+                self._send(f"image not found on disk: {p}".encode(), "text/plain", 404)
                 return
             ctype = mimetypes.guess_type(str(p))[0] or "application/octet-stream"
             self._send(p.read_bytes(), ctype)
@@ -394,7 +440,17 @@ def main() -> None:
                     help="per-image results CSV from run_medgemma.py --mode infer")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8000)
+    ap.add_argument("--path-map", action="append", default=[], metavar="REMOTE=LOCAL",
+                    help="rewrite this path prefix in the CSV's image paths (repeatable); "
+                         "added to the built-in cluster->checkout defaults; longest "
+                         "matching prefix wins, ties go to the flag")
     args = ap.parse_args()
+
+    for m in args.path_map:
+        if "=" not in m:
+            raise SystemExit(f"--path-map expects REMOTE=LOCAL, got {m!r}")
+        remote, local = m.split("=", 1)
+        PATH_MAP.insert(0, (remote, local))
 
     load(args.results)
     n_img = sum(len(v) for feats in DATA.values() for v in feats.values())
