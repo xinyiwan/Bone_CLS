@@ -1089,6 +1089,71 @@ def combine_results(inference_csvs: List[Path] | Path, out_path: Path) -> None:
         log.warning("no image_path column -- review_server.py will not be able to show images")
 
 
+def reparse_results(inference_csvs: List[Path] | Path, config_path: Path,
+                    out_path: Path, output_mode: str) -> None:
+    """Re-run ONLY the parsing over an existing per-image CSV.
+
+    `raw_output` is the model's full reply, so a parser fix (a new ASSESSMENT
+    separator, say) can be applied to a finished run without paying for
+    generation again. Rewrites parsed_label / reason / ranking / correct and
+    leaves every other column -- prompts, images, raw_output -- untouched.
+
+    Reports how many rows changed, so a "fix" that silently rewrites labels it
+    was not meant to touch is visible rather than assumed."""
+    df = load_inference_rows(inference_csvs)
+    if df.empty:
+        log.warning("inference results CSV is empty")
+        return
+    if "raw_output" not in df.columns:
+        raise SystemExit(f"{out_path}: input CSV has no raw_output column -- nothing to reparse")
+
+    features = load_feature_config(config_path)
+    for col in ("parsed_label", "reason", "ranking", "correct"):
+        if col not in df.columns:
+            df[col] = ""
+
+    changed = rescued = lost = 0
+    for i, row in df.iterrows():
+        feat = row["feature_name"]
+        if feat not in features:
+            raise SystemExit(f"row {i}: feature {feat!r} is not in the config "
+                             f"(have {sorted(features)}) -- wrong --config?")
+        options = features[feat]["label_options"]
+        raw = row["raw_output"]
+
+        ranking = ""
+        if output_mode == "ranked":
+            label, ranking = parse_ranking(raw, options)
+            reason = _answer_region(raw).strip()
+        elif output_mode == "free_text":
+            label, reason = "", _answer_region(raw).strip()
+        else:
+            label, reason = parse_answer(raw, options)
+
+        gt = row.get("ground_truth_label", "")
+        scorable = has_gt(gt) and label not in ("", "PARSE_FAILED")
+        before = row["parsed_label"]
+        if label != before:
+            changed += 1
+            rescued += before == "PARSE_FAILED" and label != "PARSE_FAILED"
+            lost += before != "PARSE_FAILED" and label == "PARSE_FAILED"
+        df.at[i, "parsed_label"] = label
+        df.at[i, "reason"] = reason
+        df.at[i, "ranking"] = ranking
+        # str(), not the bool: the frame is all-str (dtype=str on read), and infer
+        # writes "True"/"False" through csv.DictWriter anyway.
+        df.at[i, "correct"] = str(label.lower() == str(gt).strip().lower()) if scorable else ""
+
+    ordered = [c for c in INFERENCE_FIELDS if c in df.columns]
+    df = df[ordered + [c for c in df.columns if c not in ordered]]
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(out_path, index=False)
+    still = int((df["parsed_label"] == "PARSE_FAILED").sum())
+    log.info("reparsed %d row(s) in --output-mode %s -> %s", len(df), output_mode, out_path)
+    log.info("  %d label(s) changed (%d rescued from PARSE_FAILED, %d newly failing); "
+             "%d still PARSE_FAILED", changed, rescued, lost, still)
+
+
 def aggregate_results(inference_csvs: List[Path] | Path, out_path: Path) -> None:
     """Read one or more inference_results CSVs (one row per image) and write
     results_sanity.csv with majority-voted labels per (case_id, feature) across
@@ -1234,7 +1299,10 @@ def run_quick(
 # ---------------------------------------------------------------------------
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--mode", choices=["infer", "combine", "aggregate", "eval", "quick"], required=True)
+    ap.add_argument("--mode", choices=["infer", "combine", "reparse", "aggregate", "eval", "quick"],
+                    required=True,
+                    help="'reparse' re-runs only the parser over an existing per-image CSV's "
+                         "raw_output (no model, no GPU) -- use it after a parser fix")
     ap.add_argument("--metadata", type=Path, help="metadata CSV (infer mode)")
     ap.add_argument("--inference-results", type=Path, nargs="+",
                     help="per-image results CSV(s) (combine/aggregate mode); pass every shard file "
@@ -1339,6 +1407,15 @@ def main() -> None:
         if not args.out:
             raise SystemExit("--out is required for --mode combine (the merged per-image CSV)")
         combine_results(args.inference_results, args.out)
+    elif args.mode == "reparse":
+        if not args.inference_results:
+            raise SystemExit("--inference-results is required for --mode reparse")
+        if not args.out:
+            # In-place would destroy the only copy of the old labels if the new
+            # parser is worse; make the user name the output.
+            raise SystemExit("--out is required for --mode reparse (pass the same path as "
+                             "--inference-results to overwrite deliberately)")
+        reparse_results(args.inference_results, args.config, args.out, args.output_mode)
     elif args.mode == "aggregate":
         if not args.inference_results:
             raise SystemExit("--inference-results is required for --mode aggregate")
