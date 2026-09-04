@@ -270,6 +270,13 @@ def free_text_format(input_mode: str = "slice", rank_options: Optional[List[str]
             "REASONING instead."
         )
         + cite
+        # Last line, so it is the most recently read instruction at generation
+        # time. The prose arms were coming back with misspellings and dropped
+        # words, which is not cosmetic here: a typo'd descriptor on the
+        # ASSESSMENT line fails to match label_options and the whole answer is
+        # discarded as PARSE_FAILED.
+        + "\nWrite every heading exactly as given above, in correctly spelled, "
+          "grammatical, standard English."
     )
 
 
@@ -415,9 +422,9 @@ def build_medgemma_messages(
     resolve_few_shot(). None/empty -> zero-shot (system + single query turn).
     """
     few = few_shot or []
-    # Few-shot exemplars answer with a label in JSON, which teaches the terse
-    # forced-choice format the free-text arm exists to avoid -- so the two are
-    # refused together rather than silently producing a contaminated prompt.
+    # Free text has no vocabulary to demonstrate, so a labeled exemplar would only
+    # teach it to answer tersely with a term it was told not to use. Ranked DOES
+    # have a vocabulary -- it just orders it -- so it can be taught; see below.
     if few and output_mode == "free_text":
         raise ValueError(
             "few-shot exemplars answer with a label, which contradicts output_mode='free_text'; "
@@ -430,12 +437,39 @@ def build_medgemma_messages(
     ]
     for ex in few:
         messages.append(_user_turn(ex["image"], ex["context"]))
-        # The exemplar answer must be the SAME JSON structure we ask the model to
-        # produce, or the examples teach a different format than the system text.
-        answer = json.dumps({"prediction": ex["label"], "reason": ex.get("reason", "")})
+        # The exemplar answer must be the SAME shape we ask the model to produce
+        # (JSON for label, the four-heading block ending in a ranking for ranked),
+        # or the examples teach a different format than the system text does.
+        if output_mode == "ranked":
+            answer = _ranking_exemplar_answer(ex)
+        else:
+            answer = json.dumps({"prediction": ex["label"], "reason": ex.get("reason", "")})
         messages.append({"role": "assistant", "content": [{"type": "text", "text": answer}]})
     messages.append(_user_turn(query_image, query_context))
     return messages
+
+
+def _ranking_exemplar_answer(ex: dict) -> str:
+    """The assistant turn for one few-shot exemplar under output_mode='ranked'.
+
+    Mirrors free_text_format's four headings so the exemplar demonstrates the
+    exact shape parse_ranking expects, ending on a bare `ASSESSMENT: a > b > c`
+    line with every label exactly once -- `ex["ranking"]` is pre-validated to
+    that shape by resolve_few_shot. LESION/OBSERVATIONS/REASONING are filled from
+    whatever the YAML gives (falling back to `reason` for REASONING, and a
+    generic sentence for the other two) rather than invented in detail here --
+    curate them in the YAML for exemplars that matter; the fallback exists so a
+    bare label+reason (the pre-ranked-mode exemplar shape) still works.
+    """
+    lesion = ex.get("lesion") or "The lesion is visible in the image."
+    observations = ex.get("observations") or ex.get("reason") or "See reasoning."
+    reasoning = ex.get("reasoning") or ex.get("reason") or "See observations."
+    return (
+        f"LESION: {lesion}\n"
+        f"OBSERVATIONS: {observations}\n"
+        f"REASONING: {reasoning}\n"
+        f"ASSESSMENT: {' > '.join(ex['ranking'])}"
+    )
 
 
 def build_stack_messages(
