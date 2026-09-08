@@ -152,6 +152,14 @@ features:
     task: >-
       Pick the single option that best matches the lesion's overall T1W
       brightness relative to muscle or adjacent intervertebral disc.
+    # Used INSTEAD of `task` under free text/ranked (see prompts.free_text_task).
+    # Asks the same brightness-vs-muscle question in prose rather than the
+    # generic "describe T1W_intensity" fallback, which just echoes the
+    # feature's variable name back at the model.
+    free_text_task: >-
+      Describe the lesion's T1-weighted (non-fat-saturated) signal intensity
+      relative to skeletal muscle or adjacent intervertebral disc, and explain
+      what in the image leads you to that assessment.
 
   T1W_findings:
     # Companion question to T1W_intensity: a separate present/absent check for
@@ -168,6 +176,11 @@ features:
     task: >-
       State whether a fluid-fluid level or hemorrhagic pattern is clearly
       present on T1W; otherwise choose none.
+    free_text_task: >-
+      Describe any additional findings on this T1-weighted (non-fat-saturated)
+      image beyond overall signal intensity -- in particular, state whether a
+      fluid-fluid level or hemorrhagic pattern is present -- and explain what
+      leads you to that assessment.
 
   T2W_intensity:
     # T2W (non-fat-sat) signal intensity, matching the v6.0 workflow's
@@ -181,6 +194,9 @@ features:
     task: >-
       Pick the single option that best describes the lesion's overall T2W
       brightness.
+    free_text_task: >-
+      Describe the lesion's T2-weighted (non-fat-saturated) signal intensity,
+      and explain what in the image leads you to that assessment.
 
   T2W_pattern:
     # Companion question to T2W_intensity, matching T2W_PATTERN. Only
@@ -200,6 +216,11 @@ features:
       appearance is clearly present, heterogeneous for other irregular mixed
       signal, and homogeneous only when the signal is essentially uniform. If
       the T2W signal is low/dark, choose not_applicable.
+    free_text_task: >-
+      Describe the pattern of the lesion's T2-weighted (non-fat-saturated)
+      signal -- if it is high, describe how that signal is distributed within
+      the lesion (uniform, layered, or patchy) -- and explain what leads you
+      to that assessment.
 
   T1W_post_contrast_enhancement:
     # T1W fat-sat post-contrast enhancement pattern. Distinct from the
@@ -216,6 +237,11 @@ features:
     task: >-
       Pick the single option describing the enhancement pattern. Only choose
       not_available if no post-contrast fat-sat T1W image is provided.
+    free_text_task: >-
+      Describe the pattern of contrast enhancement within the lesion on this
+      T1-weighted fat-saturated post-contrast image, and explain what leads
+      you to that assessment. If no post-contrast fat-sat T1W image is shown,
+      say so plainly instead.
 
   # enhancement:
   #   label_options: [homogeneous, heterogeneous, none]
