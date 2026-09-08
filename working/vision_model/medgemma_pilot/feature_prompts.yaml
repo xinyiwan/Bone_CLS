@@ -67,29 +67,19 @@ features:
     # and whether a focal protrusion sticks out past the main mass.
     label_definitions:
       "Round/Oval": >-
-        Round/Oval — the outer boundary is one smooth, continuous curve; 
+        the outer boundary is one smooth, continuous curve; 
         the internal nodular foci sit inside that envelope without pushing out to 
         create separate bulges reaching the margin.
 
       lobulated: >-
-        Lobulated — the mass is made of several rounded lobes packed side by side, 
+        the mass is made of several rounded lobes packed side by side, 
         each bulge smooth on its own but separated by shallow notches where adjacent 
         lobes meet, giving the cauliflower-like outline rather than one single curve.
 
-      # geographic: >-
-      #   Geographic — the margin sweeps as one broad, sharply demarcated concave arc, 
-      #   like a scalloped bite taken out of the bone, rather than bulging outward or 
-      #   breaking into jagged segments.
-
       irregular: >-
-        Irregular — the margin has no repeatable geometry: 
+        the margin has no repeatable geometry: 
         jagged, angular, ill-defined projections scattered unpredictably, 
         fitting none of the smooth-curve, lobed, or single-concave-arc patterns.
-
-      # exophytic: >-
-      #   One dominant focal protrusion projecting OUTWARD past the main boundary
-      #   (mushroom-like / polypoid). Defined by that single sticking-out
-      #   projection, not the shape of the main mass.
         
     task: >-
       Pick the single descriptor best matching the lesion's OUTER margin
@@ -144,6 +134,26 @@ features:
         modality: T2W_FS
         plane: coronal
         location: "tibia_right"
+
+  T1_intensity:
+    label_options: [hypointense, isointense, hyperintense]
+    description: "T1W signal intensity relative to skeletal muscle or adjacent intervertebral disc."
+    label_definitions:
+      hypointense: "darker than normal muscle"
+      isointense: "similar in brightness to normal muscle"
+      hyperintense: "brighter than normal muscle"
+    description_stack: >-
+      Describe the T1 signal intensity relative to skeletal muscle or adjacent intervertebral disc.
+    
+  T2W_:
+    label_options: [hypointense, isointense, hyperintense]
+    description: "T1W signal intensity relative to skeletal muscle or adjacent intervertebral disc."
+    label_definitions:
+      hypointense: "darker than normal muscle"
+      isointense: "similar in brightness to normal muscle"
+      hyperintense: "brighter than normal muscle"
+    description_stack: >-
+      Describe the T1 signal intensity relative to skeletal muscle or adjacent intervertebral disc.
 
   # enhancement:
   #   label_options: [homogeneous, heterogeneous, none]
