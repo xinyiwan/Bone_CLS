@@ -1346,12 +1346,12 @@ def main() -> None:
     ap.add_argument("--model-id", default="google/medgemma-1.5-4b-it",
                     help="default 4B; pass google/medgemma-27b-it for a comparison run (see load_model)")
     ap.add_argument("--max-new-tokens", type=int, default=1024)
-    ap.add_argument("--repetition-penalty", type=float, default=1.3,
+    ap.add_argument("--repetition-penalty", type=float, default=1.1,
                     help="greedy decoding has no built-in escape from a repeated phrase; this "
                          "penalizes reusing already-generated tokens. Set to 1.0 to disable. "
                          "Was needed on the STACK arm, where a long multi-image prompt could push "
                          "greedy decoding into looping the same sentence until --max-new-tokens cut it off")
-    ap.add_argument("--no-repeat-ngram-size", type=int, default=4,
+    ap.add_argument("--no-repeat-ngram-size", type=int, default=0,
                     help="hard-forbid regenerating any exact N-token run (HF backend only; vLLM has "
                          "no equivalent). 0 disables. This is what actually breaks a repetition loop; "
                          "--repetition-penalty only makes one less likely to start")

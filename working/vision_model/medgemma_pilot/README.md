@@ -144,6 +144,23 @@ uv run python run_medgemma.py --mode aggregate \
 Pass `--model-id google/medgemma-27b-it` to use the 27B model instead of 4B
 (verify a 1.5-tagged 27B exists on the hub first — see `load_model` note).
 
+
+## Just check prompt
+cd working/vision_model/medgemma_pilot
+
+python prompts.py                                          # label/slice, default feature (shape)
+
+python prompts.py --output-mode free_text                  # free-text/slice
+
+python prompts.py --output-mode ranked --input-mode stack  # your new ranked arm, stack framing
+
+python prompts.py --few-shot                                # + the [EXAMPLES] announcement
+
+python prompts.py --n-slices 60 --input-mode stack          # check wording at a specific stack size
+
+python prompts.py --feature shape --config feature_prompts.yaml
+
+System text goes to stdout, a ===== [...] ===== banner with char counts goes to stderr, so python prompts.py ... 2>/dev/null gives you exactly what the model would see, pipeable into wc -c or a diff. An unknown --feature fails loudly and lists what's actually in the YAML instead of a KeyError.
 ## Outputs
 
 **`inference_results.csv`** (from `--mode infer`):

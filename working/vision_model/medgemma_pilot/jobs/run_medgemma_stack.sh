@@ -11,12 +11,12 @@
 # `--mode combine`, which merges the shards while KEEPING one row per image --
 # the form review_server.py reads.
 #
-#SBATCH --job-name=run_medgemma_rank
+#SBATCH --job-name=free_text_rank_stack
 #SBATCH --partition=gpu_h100
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gpus-per-node=1
-#SBATCH --time=01:00:00
+#SBATCH --time=02:00:00
 #SBATCH --output=/projects/prjs1779/BONE-AI/logs/out/slurm-%x-%j.out
 #SBATCH --error=/projects/prjs1779/BONE-AI/logs/err/slurm-%x-%j.err
 
@@ -35,19 +35,21 @@ REPO=/gpfs/work2/0/prjs1779/BONE-AI/Bone_CLS
 MODEL=/scratch-shared/$USER/models/medgemma-1.5-4b-it
 # The pilot subset, not the full metadata: this arm is graded by hand, so the
 # run size is bounded by how much prose you are willing to read (~40 cases).
-METADATA=/projects/prjs1779/BONE-AI/output/preprocess/shape_256_stack/metadata_subset.csv
+METADATA=/projects/prjs1779/BONE-AI/output/preprocess/shape_256_stack/metadata_pilot40.csv
 OUTDIR=/scratch-shared/$USER/BONE-AI/stack/rank
-OUT=$OUTDIR/freetext_slice.csv
+OUT=$OUTDIR/freetext_slice_pilot40.csv
 NUM_SHARDS=1
 
 # Lower than the label run's 32. There the answer is one JSON line; here it is
 # two prose paragraphs, so sequences are far longer and a static batch costs its
 # SLOWEST member -- a big batch spends most of its time padding.
-BATCH_SIZE=1
+BATCH_SIZE=8
 # Also raised: 1024 was sized for a thinking block plus a one-sentence `reason`.
 # Prose overruns it, and a truncated answer is indistinguishable from a terse
 # one when you are reading them by hand.
-MAX_NEW_TOKENS=2048
+MAX_NEW_TOKENS=1024
+REPETITION_PENALTY=1.1
+NO_REPEAT_NGRAM_SIZE=0
 
 mkdir -p "$OUTDIR"
 cd "$REPO/working/vision_model/medgemma_pilot"
@@ -82,6 +84,8 @@ for i in $(seq 0 $((NUM_SHARDS - 1))); do
         --config feature_prompts.yaml \
         --batch-size $BATCH_SIZE \
         --max-new-tokens $MAX_NEW_TOKENS \
+        --max-new-tokens $MAX_NEW_TOKENS \
+        --repetition-penalty $REPETITION_PENALTY \
         --num-shards $NUM_SHARDS --shard-index "$i" \
         --out "$OUT" &
     pids+=($!)
@@ -104,7 +108,7 @@ for i in $(seq 0 $((NUM_SHARDS - 1))); do
     if (( NUM_SHARDS > 1 )); then SHARDS+=("${OUT%.csv}.shard${i}.csv"); else SHARDS+=("$OUT"); fi
 done
 
-COMBINED=$OUTDIR/freetext_slice_all.csv
+COMBINED=$OUTDIR/freetext_slice_all_pilot40.csv
 uv run --no-sync python run_medgemma.py --mode combine \
     --inference-results "${SHARDS[@]}" \
     --out "$COMBINED"
