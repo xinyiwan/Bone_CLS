@@ -37,6 +37,51 @@ features:
       - modality: T2W_FS
         planes: [axial, coronal, sagittal]
 
+  - name: T1W_intensity
+    assessment_key: t1w_intensity
+    crop_margin_mm: 10
+    top_k: 1
+    crop_mode: bbox            # signal is read relative to nearby muscle
+    requirements:
+      - modality: T1W
+        planes: [axial, coronal, sagittal]
+
+  - name: T1W_findings
+    assessment_key: t1w_findings
+    crop_margin_mm: 10
+    top_k: 1                  # fluid-fluid levels can be slice-dependent
+    crop_mode: bbox
+    requirements:
+      - modality: T1W
+        planes: [axial, sagittal]
+
+  - name: T2W_intensity
+    assessment_key: t2w_intensity
+    crop_margin_mm: 10
+    top_k: 1
+    crop_mode: bbox
+    requirements:
+      - modality: T2W
+        planes: [axial, coronal, sagittal]
+
+  - name: T2W_pattern
+    assessment_key: t2w_pattern
+    crop_margin_mm: 10
+    top_k: 1
+    crop_mode: bbox
+    requirements:
+      - modality: T2W
+        planes: [axial, coronal, sagittal]
+
+  - name: T1W_post_contrast_enhancement
+    assessment_key: mri_contrast_enhancement
+    crop_margin_mm: 10
+    top_k: 1
+    crop_mode: bbox            # enhancement is read relative to nearby tissue
+    requirements:
+      - modality: T1W_FS_C
+        planes: [axial, coronal, sagittal]
+
   # - name: enhancement
   #   assessment_key: mri_contrast_enhancement
   #   crop_margin_mm: 8

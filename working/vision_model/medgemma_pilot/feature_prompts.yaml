@@ -135,25 +135,87 @@ features:
         plane: coronal
         location: "tibia_right"
 
-  T1_intensity:
-    label_options: [hypointense, isointense, hyperintense]
-    description: "T1W signal intensity relative to skeletal muscle or adjacent intervertebral disc."
+  T1W_intensity:
+    # T1W (non-fat-sat) signal relative to skeletal muscle/disc.
+    # The hemorrhage/fluid-fluid finding is now a SEPARATE question
+    # (T1W_findings, below) rather than a fourth point on this scale, since a
+    # lesion can be e.g. intermediate AND show a fluid-fluid level at once.
+    label_options: [high, intermediate, low]
+    description: "T1W (non-fat-saturated) signal intensity relative to skeletal muscle or adjacent intervertebral disc."
     label_definitions:
-      hypointense: "darker than normal muscle"
-      isointense: "similar in brightness to normal muscle"
-      hyperintense: "brighter than normal muscle"
+      high: "much higher (brighter) than normal muscle"
+      intermediate: "slightly higher than normal muscle -- clearly brighter than muscle, but well short of fat/marrow brightness"
+      low: "similar to or darker than normal muscle"
     description_stack: >-
-      Describe the T1 signal intensity relative to skeletal muscle or adjacent intervertebral disc.
-    
-  T2W_:
-    label_options: [hypointense, isointense, hyperintense]
-    description: "T1W signal intensity relative to skeletal muscle or adjacent intervertebral disc."
+      Describe the T1W (non-fat-saturated) signal intensity relative to skeletal
+      muscle or adjacent intervertebral disc, across the stack of slices.
+    task: >-
+      Pick the single option that best matches the lesion's overall T1W
+      brightness relative to muscle or adjacent intervertebral disc.
+
+  T1W_findings:
+    # Companion question to T1W_intensity: a separate present/absent check for
+    # a specific finding (fluid-fluid level or hemorrhage) rather than a value
+    # on the brightness scale, so it can co-occur with any intensity label.
+    label_options: [fluid_fluid_or_hemorrhage, none]
+    description: "Additional findings on T1W (non-fat-saturated) imaging beyond overall signal intensity."
     label_definitions:
-      hypointense: "darker than normal muscle"
-      isointense: "similar in brightness to normal muscle"
-      hyperintense: "brighter than normal muscle"
-    description_stack: >-
-      Describe the T1 signal intensity relative to skeletal muscle or adjacent intervertebral disc.
+      fluid_fluid_or_hemorrhage: >-
+        a horizontal layered interface between two different signal
+        intensities (fluid-fluid level), or a mixed/heterogeneous
+        bright-and-dark pattern typical of blood products.
+      none: "no fluid-fluid level or hemorrhagic pattern is visible"
+    task: >-
+      State whether a fluid-fluid level or hemorrhagic pattern is clearly
+      present on T1W; otherwise choose none.
+
+  T2W_intensity:
+    # T2W (non-fat-sat) signal intensity, matching the v6.0 workflow's
+    # T2W_INTENSITY question -- a 2-way high/low split (no "isointense" rung
+    # here; the assessment sheet only distinguishes bright vs dark-as-bone).
+    label_options: [high, low]
+    description: "T2W (non-fat-saturated) signal intensity within the lesion."
+    label_definitions:
+      high: "bright"
+      low: "dark, similar to cortical bone"
+    task: >-
+      Pick the single option that best describes the lesion's overall T2W
+      brightness.
+
+  T2W_pattern:
+    # Companion question to T2W_intensity, matching T2W_PATTERN. Only
+    # meaningful when T2W is high -- "not_applicable" is the explicit answer
+    # when the lesion reads low/dark, so this question's label space stays in
+    # sync with T2W_intensity rather than being left blank.
+    label_options: [homogeneous, fluid_fluid_levels, heterogeneous, not_applicable]
+    description: "Pattern of T2W (non-fat-saturated) signal within the lesion, when that signal is high."
+    label_definitions:
+      homogeneous: "uniformly high signal throughout, with no internal variation worth noting"
+      fluid_fluid_levels: "high signal containing one or more horizontal layered interfaces between two different intensities, settled by gravity"
+      heterogeneous: "high signal overall but with irregular, patchy internal variation (mixed brighter/darker regions) not explained by a fluid-fluid level"
+      not_applicable: "the T2W signal is low (dark), so no high-signal pattern applies"
+    task: >-
+      If the lesion's T2W signal is high, pick the pattern that best
+      describes it -- fluid_fluid_levels only if that specific layered
+      appearance is clearly present, heterogeneous for other irregular mixed
+      signal, and homogeneous only when the signal is essentially uniform. If
+      the T2W signal is low/dark, choose not_applicable.
+
+  T1W_post_contrast_enhancement:
+    # T1W fat-sat post-contrast enhancement pattern. Distinct from the
+    # `enhancement` block further below (which used a 3-way homogeneous/
+    # heterogeneous/none vocabulary matching a different assessment key) --
+    # this one matches the "not_available" convention used above so missing
+    # post-contrast series are recorded explicitly.
+    label_options: [homogeneous, heterogeneous, not_available]
+    description: "Pattern of contrast enhancement within the lesion on T1-weighted fat-saturated post-contrast (post-gadolinium) MRI."
+    label_definitions:
+      homogeneous: "uniform enhancement throughout the lesion"
+      heterogeneous: "patchy, mixed, or non-uniform enhancement, including enhancement sparing part of the lesion"
+      not_available: "no post-contrast fat-sat T1W sequence is available for this lesion"
+    task: >-
+      Pick the single option describing the enhancement pattern. Only choose
+      not_available if no post-contrast fat-sat T1W image is provided.
 
   # enhancement:
   #   label_options: [homogeneous, heterogeneous, none]
