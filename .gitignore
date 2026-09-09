@@ -146,10 +146,12 @@ ENV/
 env.bak/
 venv.bak/
 *.csv
+.agents
 *.png
 *.npz
 *.txt
 .claude/
+*.json
 # Spyder project settings
 .spyderproject
 .spyproject
