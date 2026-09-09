@@ -4,8 +4,8 @@ import sys
 import pandas as pd
 from sklearn.metrics import cohen_kappa_score
 
-SINGLE = "BONE-AI/freetext/rank/freetext_slice_all_pilot40.csv"
-STACK = "BONE-AI/stack/rank/freetext_slice_all_pilot40.csv"
+SINGLE = "/scratch-shared/xwan1/BONE-AI/freetext/rank/freetext_slice_all_pilot40.csv"
+STACK = "/scratch-shared/xwan1/BONE-AI/stack/rank/freetext_slice_all_pilot40.csv"
 
 KEYS = ["case_id", "feature_name", "plane", "modality"]
 
@@ -59,7 +59,7 @@ def main():
             acc = (sub[pl_col] == sub[gt_col]).mean()
             print(f"\n{suffix} accuracy vs ground_truth_label: {acc:.3f} ({len(sub)} rows with GT)")
 
-    out_path = "BONE-AI/agreement_single_vs_stack.csv"
+    out_path = "/projects/prjs1779/BONE-AI/output/vision_model/analysis/agreement_single_vs_stack.csv"
     merged.to_csv(out_path, index=False)
     print(f"\nFull merged comparison written to {out_path}")
 
