@@ -14,7 +14,7 @@
 # filtering the metadata CSV down to those feature_name values BEFORE
 # inference, rather than by passing a flag.
 #
-#SBATCH --job-name=run_medgemma_signal
+#SBATCH --job-name=run_medg_signal
 #SBATCH --partition=gpu_h100
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -39,8 +39,8 @@ MODEL=/scratch-shared/$USER/models/medgemma-${MODEL_NAME}-it
 # Regenerate this with preprocess/feature_config.yaml (now including the five
 # signal-feature blocks) BEFORE running this job, so these feature_name rows
 # actually exist in the metadata.
-METADATA_FULL=/projects/prjs1779/BONE-AI/output/preprocess/metadata.csv
-FEATURES=(T1W_intensity T1W_findings T2W_intensity T2W_pattern T1W_post_contrast_enhancement)
+METADATA_FULL=/projects/prjs1779/BONE-AI/output/preprocess/shape_256_m/metadata_pilot40_all_fea.csv
+FEATURES=(T1W_intensity T1W_fluid_level T2W_intensity T2W_pattern T1W_post_contrast_enhancement)
 
 OUTDIR=/scratch-shared/$USER/BONE-AI/signal_features
 METADATA=$OUTDIR/metadata_signal_features_${MODEL_NAME}.csv

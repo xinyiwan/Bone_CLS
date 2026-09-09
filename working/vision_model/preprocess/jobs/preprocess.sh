@@ -15,10 +15,11 @@ PROJECT_ROOT=${PROJECT_ROOT:-/projects/prjs1779/BONE-AI}
 REPO_ROOT=${REPO_ROOT:-${PROJECT_ROOT}/Bone_CLS}
 
 DATA_ROOT=${DATA_ROOT:-${PROJECT_ROOT}/subdata}
-OUT_ROOT=${OUT_ROOT:-${PROJECT_ROOT}/output/preprocess/shape_256_m}
+OUT_ROOT=${OUT_ROOT:-${PROJECT_ROOT}/output/preprocess/shape_256_all_loc}
 SEQUENCE_TABLE=${SEQUENCE_TABLE:-${DATA_ROOT}/case_metadata.csv}
 CONFIG=${CONFIG:-${REPO_ROOT}/working/vision_model/preprocess/feature_config.yaml}
 LABELS_DIR=${PROJECT_ROOT}/output/label_out/jsons
+CLINICAL_CSV=${PROJECT_ROOT}/output/clinical_info/combined_clinical_info.csv
 
 # -------------------------------------------------------------- options ----
 OUT_SIZE=${OUT_SIZE:-256}
@@ -42,6 +43,7 @@ echo "  CONFIG         = ${CONFIG}"
 echo "  OUT_SIZE       = ${OUT_SIZE}"
 echo "  EXTRA_ARGS     = ${EXTRA_ARGS}"
 echo "  LABELS_DIR     = ${LABELS_DIR}"
+echo "  CLINICAL_CSV   = ${CLINICAL_CSV}"
 
 # ------------------------------------------------------------------ run ----
 uv run python3 working/vision_model/preprocess/run.py \
@@ -51,6 +53,7 @@ uv run python3 working/vision_model/preprocess/run.py \
     --config "${CONFIG}" \
     --out-size "${OUT_SIZE}" \
     --labels-dir  "${LABELS_DIR}" \
+    --clinical-csv "${CLINICAL_CSV}" \
     ${EXTRA_ARGS}
 
 echo "[$(date -Is)] done"

@@ -44,12 +44,12 @@ MODEL_NAME=27b
 MODEL=/scratch-shared/$USER/models/medgemma-${MODEL_NAME}-it
 # Regenerate this with preprocess/feature_config.yaml (which now includes the
 # five signal-feature blocks) BEFORE running this job.
-METADATA_FULL=/projects/prjs1779/BONE-AI/output/preprocess/metadata.csv
-FEATURES=(T1W_intensity T1W_findings T2W_intensity T2W_pattern T1W_post_contrast_enhancement)
+METADATA_FULL=/projects/prjs1779/BONE-AI/output/preprocess/shape_256_all_loc/metadata_pilot40_all_fea.csv
+FEATURES=(T1W_intensity T1W_fluid_level T2W_intensity T2W_pattern T1W_post_contrast_enhancement)
 
-OUTDIR=/scratch-shared/$USER/BONE-AI/freetext/signal_features
+OUTDIR=/scratch-shared/$USER/BONE-AI/signal_features/freetext_loc
 METADATA=$OUTDIR/metadata_signal_features_${MODEL_NAME}.csv
-OUT=$OUTDIR/freetext_slice_${MODEL_NAME}.csv
+OUT=$OUTDIR/freetext_${MODEL_NAME}.csv
 NUM_SHARDS=1
 
 # Lower than the label run's 32. The reply is prose across four headings, not
@@ -139,7 +139,7 @@ for i in $(seq 0 $((NUM_SHARDS - 1))); do
     if (( NUM_SHARDS > 1 )); then SHARDS+=("${OUT%.csv}.shard${i}.csv"); else SHARDS+=("$OUT"); fi
 done
 
-COMBINED=$OUTDIR/freetext_slice_all_signal_features_${MODEL_NAME}.csv
+COMBINED=$OUTDIR/freetext_all_signal_features_${MODEL_NAME}.csv
 uv run --no-sync python run_medgemma.py --mode combine \
     --inference-results "${SHARDS[@]}" \
     --out "$COMBINED"
