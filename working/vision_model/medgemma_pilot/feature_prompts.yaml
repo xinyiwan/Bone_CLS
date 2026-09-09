@@ -161,7 +161,7 @@ features:
       relative to skeletal muscle or adjacent intervertebral disc, and explain
       what in the image leads you to that assessment.
 
-  T1W_findings:
+  T1W_fluid_level:
     # Companion question to T1W_intensity: a separate present/absent check for
     # a specific finding (fluid-fluid level or hemorrhage) rather than a value
     # on the brightness scale, so it can co-occur with any intensity label.
