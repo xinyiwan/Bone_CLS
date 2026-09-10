@@ -17,14 +17,14 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 from PIL import Image
 
-ROOT = Path(__file__).resolve().parents[3]
+ROOT = Path(__file__).resolve().parents[4]
 LABELS_DIR = ROOT / "output/label_out/jsons"
-SLICES_DIR = ROOT / "output/preprocess/all_feature"
-OUT_DIR = ROOT / "BONE-AI/results/label_examples"
-N_SUBJECTS = 6
+SLICES_DIR = ROOT / "output/preprocess/shape_256_all_loc"
+OUT_DIR = ROOT / "results/label_examples"
+N_SUBJECTS = 10
 SHAPE_GRID = 3  # 3x3
 SHAPE_MODALITY_PREFERENCE = ["T1W"]
-MATRIX_ROW_MODALITIES = ["T1W", "T2W_FS", "T1W_FS_C"]
+MATRIX_ROW_MODALITIES = ["T1W", "T1W_C", "T2W_FS", "T1W_FS_C"]
 PLANE_RE = re.compile(r"_(coronal|sagittal|axial)_\d+(?:_overlay)?$")
 
 
