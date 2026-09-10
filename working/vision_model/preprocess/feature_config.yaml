@@ -17,6 +17,7 @@ sequence_aliases:
   T1W_FS_C: T1W_FS_CE       # T1 fat-sat post-contrast
   T2W:   T2W_nFS_nCE      # plain T2
   T2W_FS: T2W_FS           # T2 fat-sat
+  T2W_star: T2*           # T2* (susceptibility-weighted)
 
 # `assessment_key` maps a feature to its key under the assessment JSON's
 # "imaging_features" block (ground-truth source), when the names differ.
@@ -61,7 +62,7 @@ features:
     top_k: 1
     crop_mode: bbox
     requirements:
-      - modality: T2W
+      - modality: T2W, T2W_star
         planes: [axial, coronal, sagittal]
 
   - name: T2W_pattern
@@ -70,7 +71,16 @@ features:
     top_k: 1
     crop_mode: bbox
     requirements:
-      - modality: T2W
+      - modality: T2W, T2W_star
+        planes: [axial, coronal, sagittal]
+  
+  - name: T2W_FS_pattern
+    assessment_key: t2w_pattern
+    crop_margin_mm: 15
+    top_k: 1
+    crop_mode: bbox
+    requirements:
+      - modality: T2W_FS
         planes: [axial, coronal, sagittal]
 
   - name: T1W_post_contrast_enhancement
@@ -80,6 +90,16 @@ features:
     crop_mode: bbox            # enhancement is read relative to nearby tissue
     requirements:
       - modality: T1W_FS_C
+        planes: [axial, coronal, sagittal]
+  
+
+  - name: T1W_contrast_enhancement
+    assessment_key: mri_contrast_enhancement
+    crop_margin_mm: 15
+    top_k: 1
+    crop_mode: bbox            # enhancement is read relative to nearby tissue
+    requirements:
+      - modality: T1W_C
         planes: [axial, coronal, sagittal]
 
   # - name: enhancement
@@ -94,7 +114,7 @@ features:
   # - name: fluid_fluid_level
   #   assessment_key: fluid_without_fluid_fluid_level
   #   crop_margin_mm: 8
-  #   top_k: 3
+  #   top_k: 1
   #   crop_mode: bbox
   #   requirements:
   #     - modality: T2W_FS
