@@ -29,7 +29,7 @@ SHAPE_MODALITY_PREFERENCE = ["T1W"]
 MATRIX_ROW_MODALITIES = {
     "T1W": ("T1W",),
     "T1W_C": ("T1W_C",),
-    "T2W_FS": ("T2W_FS"),
+    "T2W_FS": ("T2W_FS",),
     "T1W_FS_C": ("T1W_FS_C",),
 }
 PLANE_RE = re.compile(r"_(coronal|sagittal|axial)_\d+(?:_overlay)?$")
