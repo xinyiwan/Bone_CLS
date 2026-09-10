@@ -24,7 +24,14 @@ OUT_DIR = ROOT / "results/label_examples"
 N_SUBJECTS = 10
 SHAPE_GRID = 3  # 3x3
 SHAPE_MODALITY_PREFERENCE = ["T1W"]
-MATRIX_ROW_MODALITIES = ["T1W", "T1W_C", "T2W_FS", "T1W_FS_C"]
+# row label -> acceptable modality tags, tried in order (T2W and T2* look
+# alike and are grouped into one row)
+MATRIX_ROW_MODALITIES = {
+    "T1W": ("T1W",),
+    "T1W_C": ("T1W_C",),
+    "T2W_FS": ("T2W_FS", "T2W", "T2W_star", "T2*"),
+    "T1W_FS_C": ("T1W_FS_C",),
+}
 PLANE_RE = re.compile(r"_(coronal|sagittal|axial)_\d+(?:_overlay)?$")
 
 
@@ -58,10 +65,12 @@ def pick_slice(case_id: str) -> Path | None:
     return candidates[0] if candidates else None
 
 
-def pick_slice_for_modality(case_id: str, modality: str) -> Path | None:
-    for p in case_slices(case_id):
-        if _modality_of(p) == modality:
-            return p
+def pick_slice_for_modality(case_id: str, modality_group: tuple[str, ...]) -> Path | None:
+    slices = case_slices(case_id)
+    for modality in modality_group:
+        for p in slices:
+            if _modality_of(p) == modality:
+                return p
     return None
 
 
@@ -128,15 +137,15 @@ def make_matrix_montage(label: str, case_ids: list[str], out_path: Path) -> None
 
     n_rows, n_cols = len(MATRIX_ROW_MODALITIES), len(subjects)
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(2.4 * n_cols, 2.6 * n_rows), squeeze=False)
-    for row, modality in enumerate(MATRIX_ROW_MODALITIES):
+    for row, (row_label, modality_group) in enumerate(MATRIX_ROW_MODALITIES.items()):
         for col, case_id in enumerate(subjects):
             ax = axes[row][col]
-            _show(ax, pick_slice_for_modality(case_id, modality))
+            _show(ax, pick_slice_for_modality(case_id, modality_group))
             if row == 0:
                 ax.set_title(case_id, fontsize=8)
             if col == 0:
                 ax.text(
-                    -0.15, 0.5, modality, transform=ax.transAxes,
+                    -0.15, 0.5, row_label, transform=ax.transAxes,
                     ha="right", va="center", fontsize=9, rotation=90,
                 )
     fig.suptitle(label, fontsize=14)
