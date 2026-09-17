@@ -34,7 +34,7 @@ def subjects_with_images(data_root: Path) -> set:
     for img in data_root.rglob(IMAGE_NAME):
         rel = img.relative_to(data_root).parts
         if rel:
-            subjects.add(rel[1])
+            subjects.add(rel[0])
     return subjects
 
 
