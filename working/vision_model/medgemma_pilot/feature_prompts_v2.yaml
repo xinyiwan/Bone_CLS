@@ -68,26 +68,24 @@ features:
 
   fluid_sensitive_intensity:
     # Matrix component 2/3: signal intensity on fat-suppressed T2W/STIR.
-    label_options: ["hypo-to-isointense", "isointense-to-hyperintense", "hyperintense", "Not available"]
+    label_options: ["hypo-to-isointense", "isointense-to-hyperintense", "hyperintense"]
     description: "Signal intensity on fluid-sensitive sequences (fat-suppressed T2-weighted or STIR) within the lesion."
     label_definitions:
       "hypo-to-isointense": "similar to or slightly higher than normal muscle, but clearly below the brightness of simple fluid"
       "isointense-to-hyperintense": "brighter than normal muscle and approaching, but not equal to, the brightness of simple fluid"
       "hyperintense": "comparable to that of simple fluid (e.g. cerebrospinal fluid or joint fluid)"
-      "Not available": "no fluid-sensitive sequence is available for this lesion"
     task: >-
       Pick the single option that best matches the lesion's overall signal
       intensity on this fluid-sensitive sequence, relative to muscle and to
-      simple fluid. Only choose "Not available" if no such sequence is shown.
+      simple fluid.
     free_text_task: >-
       Describe the lesion's signal intensity on this fluid-sensitive
       (fat-suppressed T2-weighted or STIR) sequence, relative to muscle and to
-      simple fluid, and explain what leads you to that assessment. If no
-      fluid-sensitive sequence is shown, say so plainly instead.
+      simple fluid, and explain what leads you to that assessment.
 
   fluid_sensitive_pattern:
     # Matrix component 2/3 (pattern half). Companion to fluid_sensitive_intensity.
-    label_options: ["heterogeneous", "homogenous", "lobulated", "Not available"]
+    label_options: ["heterogeneous", "homogenous", "lobulated"]
     description: "Enhancement pattern on fluid-sensitive sequences (fat-suppressed T2-weighted or STIR) within the lesion."
     label_definitions:
       "heterogeneous": "patchy, mixed, or non-uniform signal intensity, including areas of differing brightness within the lesion"
@@ -95,74 +93,62 @@ features:
       "lobulated": >-
         the lesion has a bumpy, clustered, or "cluster-of-grapes" boundary,
         rather than a perfectly smooth round contour
-      "Not available": "no fluid-sensitive sequence is available for this lesion"
     task: >-
       Pick the single option that best describes the pattern of signal on this
-      fluid-sensitive sequence. Only choose "Not available" if no such
-      sequence is shown.
+      fluid-sensitive sequence.
     free_text_task: >-
       Describe the pattern of signal on this fluid-sensitive (fat-suppressed
       T2-weighted or STIR) sequence -- uniform, patchy, or bumpy/clustered --
-      and explain what leads you to that assessment. If no fluid-sensitive
-      sequence is shown, say so plainly instead.
+      and explain what leads you to that assessment.
 
   T1W_FS_CE_signal_drop:
     # Matrix component 3/3, first half. Only meaningful when T1W_intensity is
     # hyperintense (fat within the lesion); the doc branches on that.
-    label_options: ["Yes", "No", "Not available"]
+    label_options: ["Yes", "No"]
     description: "Whether lesion signal drops on fat-suppressed post-contrast T1W (T1W-FS-CE) compared with plain T1W -- assessed when the lesion is T1W-hyperintense."
     label_definitions:
       "Yes": "signal drops on T1W-FS-CE comparing with T1W"
       "No": "no signal drop on T1W-FS-CE comparing with T1W"
-      "Not available": "no T1W-FS-CE sequence is available for this lesion"
     task: >-
       If the lesion appears T1W-hyperintense, state whether its signal drops
       on this fat-suppressed post-contrast image relative to plain T1W.
-      Choose "Not available" only if no T1W-FS-CE image is shown.
     free_text_task: >-
       Describe whether the lesion's signal drops on this fat-suppressed
       post-contrast T1W image compared with plain T1W, and explain what leads
-      you to that assessment. If no T1W-FS-CE image is shown, say so plainly
-      instead.
+      you to that assessment.
 
   T1W_FS_CE_pattern:
     # Matrix component 3/3, second half. Used when T1W_intensity is NOT
     # hyperintense (i.e. the signal-drop branch does not apply).
-    label_options: ["Heterogeneous", "Homogenous (fluid-like)", "No enhancement", "Not available"]
+    label_options: ["Heterogeneous", "Homogenous (fluid-like)", "No enhancement"]
     description: "Enhancement pattern of the lesion on fat-suppressed post-contrast T1W (T1W-FS-CE)."
     label_definitions:
       "Heterogeneous": "patchy, mixed, or non-uniform enhancement, including areas of the lesion that do not enhance"
       "Homogenous (fluid-like)": "uniform enhancement throughout the lesion"
       "No enhancement": "no detectable increase in signal within the lesion after contrast administration"
-      "Not available": "no T1W-FS-CE sequence is available for this lesion"
     task: >-
       Pick the single option describing the lesion's enhancement pattern on
-      this fat-suppressed post-contrast image. Only choose "Not available" if
-      no T1W-FS-CE image is shown.
+      this fat-suppressed post-contrast image.
     free_text_task: >-
       Describe the lesion's enhancement pattern on this fat-suppressed
       post-contrast T1W image, and explain what leads you to that assessment.
-      If no T1W-FS-CE image is shown, say so plainly instead.
 
   soft_tissue_invasion:
     # Feature description in the doc is actually peritumoral soft-tissue edema
     # (an inflammatory reaction, not tumor extension), read on fluid-sensitive
     # sequences. Ground truth key `soft_tissue_invasion` uses Yes/No.
-    label_options: [Yes, No, not_available]
+    label_options: [Yes, No]
     description: "Hyperintensity in the muscle or fascia adjacent to the tumor on fluid-sensitive sequences (T2-FS or STIR), reflecting peritumoral soft-tissue edema."
     label_definitions:
       Yes: "high signal intensity in the muscle or fascia adjacent to the tumor"
       No: "no high signal intensity in the muscle or fascia adjacent to the tumor"
-      not_available: "no fluid-sensitive sequence is available for this lesion"
     task: >-
       State whether high signal is present in the muscle/fascia adjacent to
-      the tumor on this fluid-sensitive image. Choose not_available only if no
-      such sequence is shown.
+      the tumor on this fluid-sensitive image.
     free_text_task: >-
       Describe whether there is high signal in the muscle or fascia adjacent
       to the tumor on this fluid-sensitive image, and explain what leads you
-      to that assessment. If no fluid-sensitive sequence is shown, say so
-      plainly instead.
+      to that assessment.
 
   perilesional_edema_T1W:
     # Component 1/2 of perilesional bone marrow edema (combined via label
@@ -182,21 +168,18 @@ features:
 
   perilesional_edema_fluid_sensitive:
     # Component 2/2 of perilesional bone marrow edema.
-    label_options: [presence, absence, not_available]
+    label_options: [presence, absence]
     description: "Perilesional boen marrow edema is an inflammatory reaction adjacent to the tumor. Within the bone marrow adjacent to the tumor, appearing as high signal on fluid-sensitive sequences (T2-FS or STIR)"
     label_definitions:
       presence: "high signal around the tumor in the bone marrow"
       absence: "no high signal around the tumor in the bone marrow"
-      not_available: "no fluid-sensitive sequence is available for this lesion"
     task: >-
       State whether high signal is present in the bone marrow immediately
-      adjacent to the tumor on this fluid-sensitive image. Choose
-      not_available only if no such sequence is shown.
+      adjacent to the tumor on this fluid-sensitive image.
     free_text_task: >-
       Describe whether the bone marrow immediately adjacent to the tumor shows
       high signal on this fluid-sensitive image, and explain what leads you to
-      that assessment. If no fluid-sensitive sequence is shown, say so plainly
-      instead.
+      that assessment.
 
   # skip_metastasis:
   #   # Doc notes this may not be visible on a single slice -- pass multiple
