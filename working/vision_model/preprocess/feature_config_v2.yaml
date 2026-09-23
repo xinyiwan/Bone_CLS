@@ -1,0 +1,112 @@
+# Feature config v2 for run.py -- pairs with
+# medgemma_pilot/feature_prompts_v2.yaml (BTI-RADS 2.0 doc alignment).
+# Same schema as feature_config.yaml (see that file's header). `name` here must
+# match a key in feature_prompts_v2.yaml; `assessment_key` maps to the
+# assessment JSON's "imaging_features" block where the names differ.
+#
+# NOTE: perilesional_edema_* and skip_metastasis have no assessment_key in the
+# current ground-truth JSON (not yet annotated) -- assessment_key is left as a
+# best-guess name; update once those fields exist in the assessment schema.
+
+sequence_aliases:
+  T1W:   T1W_nFS_nCE      # plain T1
+  T1W_C:  T1W_nFS_CE       # T1 post-contrast (not fat-sat)
+  T1W_FS_C: T1W_FS_CE       # T1 fat-sat post-contrast
+  T2W:   T2W_nFS_nCE      # plain T2
+  T2W_FS: T2W_FS           # T2 fat-sat / STIR (fluid-sensitive)
+  T2W_star: T2*           # T2* (susceptibility-weighted)
+
+features:
+  - name: shape
+    assessment_key: tumor_shape
+    crop_margin_mm: 15
+    top_k: 1
+    crop_mode: bbox
+    requirements:
+      - modality: T1W
+        planes: [axial, coronal, sagittal]
+      - modality: T1W_C
+        planes: [axial, coronal, sagittal]
+      - modality: T2W_FS
+        planes: [axial, coronal, sagittal]
+
+  - name: T1W_intensity
+    assessment_key: t1w_intensity
+    crop_margin_mm: 15
+    top_k: 1
+    crop_mode: bbox            # signal is read relative to nearby muscle
+    requirements:
+      - modality: T1W
+        planes: [axial, coronal, sagittal]
+
+  - name: fluid_sensitive_intensity
+    assessment_key: tumor_matrix_mri     # derived feature (matrix component)
+    crop_margin_mm: 15
+    top_k: 1
+    crop_mode: bbox
+    requirements:
+      - modality: T2W_FS
+        planes: [axial, coronal, sagittal]
+
+  - name: fluid_sensitive_pattern
+    assessment_key: tumor_matrix_mri     # derived feature (matrix component)
+    crop_margin_mm: 15
+    top_k: 1
+    crop_mode: bbox
+    requirements:
+      - modality: T2W_FS
+        planes: [axial, coronal, sagittal]
+
+  - name: T1W_FS_CE_signal_drop
+    assessment_key: tumor_matrix_mri     # derived feature (matrix component)
+    crop_margin_mm: 15
+    top_k: 1
+    crop_mode: bbox
+    requirements:
+      - modality: T1W_FS_C
+        planes: [axial, coronal, sagittal]
+
+  - name: T1W_FS_CE_pattern
+    assessment_key: tumor_matrix_mri     # derived feature (matrix component)
+    crop_margin_mm: 15
+    top_k: 1
+    crop_mode: bbox
+    requirements:
+      - modality: T1W_FS_C
+        planes: [axial, coronal, sagittal]
+
+  - name: soft_tissue_invasion
+    assessment_key: soft_tissue_invasion
+    crop_margin_mm: 25
+    top_k: 1
+    crop_mode: bbox
+    requirements:
+      - modality: T2W_FS
+        planes: [axial, coronal, sagittal]
+
+  - name: perilesional_edema_T1W
+    assessment_key: perilesional_bone_marrow_edema   # not yet in ground truth
+    crop_margin_mm: 25               # wider margin: reads marrow AROUND tumor
+    top_k: 1
+    crop_mode: bbox
+    requirements:
+      - modality: T1W
+        planes: [axial, coronal, sagittal]
+
+  - name: perilesional_edema_fluid_sensitive
+    assessment_key: perilesional_bone_marrow_edema   # not yet in ground truth
+    crop_margin_mm: 25
+    top_k: 1
+    crop_mode: bbox
+    requirements:
+      - modality: T2W_FS
+        planes: [axial, coronal, sagittal]
+
+  # - name: skip_metastasis
+  #   assessment_key: skip_metastasis      # not yet in ground truth
+  #   crop_margin_mm: 15
+  #   top_k: 3                  # doc: may not be visible on a single slice
+  #   crop_mode: bbox
+  #   requirements:
+  #     - modality: T1W
+  #       planes: [axial, coronal, sagittal]

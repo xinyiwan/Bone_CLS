@@ -1,0 +1,219 @@
+# Feature config v2 -- aligned with "Bone tumor MRI features (BTI-RADS2).docx"
+# (imaging feature definitions collected for the BTI-RADS 2.0 comparison study).
+# Same schema/consumption as feature_prompts.yaml (see that file's header for how
+# prompts.build_system_text() uses each field). This file ADDS the matrix
+# component questions, soft-tissue invasion, perilesional bone marrow edema and
+# skip metastasis described in the doc, and updates `shape` to the doc's
+# 4-label vocabulary (adds "others"). Everything else is carried over unchanged
+# from feature_prompts.yaml.
+#
+# Matrix note: the doc derives `tumor_matrix_mri` from THREE separate
+# modality-level questions (T1W_intensity, fluid_sensitive_intensity/pattern,
+# T1W_FS_CE_signal_drop/pattern) rather than asking a VLM to name the matrix
+# directly -- see the doc's "Label mapping" table. That mapping is applied in
+# code/post-processing, not here; this file only supplies the per-modality
+# prompts.
+
+features:
+  shape:
+    # Doc's 4 collected labels (others added vs. the 3-label v1 vocabulary).
+    label_options: ["Round/Oval", lobulated, irregular, others]
+    description: "The overall shape of the lesion as seen on this MRI slice."
+    description_stack: >-
+      The overall three-dimensional shape of the lesion's outer margin/contour,
+      as seen across the stack of slices.
+    free_text_task: >-
+      Describe the shape of this lesion in your own words: how the
+      boundary runs, and whether it is smooth, lobed, jagged, or something else.
+      Explain what in what you are shown leads you to that description.
+    label_definitions:
+      "Round/Oval": >-
+        the outer boundary is one smooth, continuous curve;
+        the internal nodular foci sit inside that envelope without pushing out to
+        create separate bulges reaching the margin.
+      lobulated: >-
+        the mass is made of several rounded lobes packed side by side,
+        each bulge smooth on its own but separated by shallow notches where adjacent
+        lobes meet, giving the cauliflower-like outline rather than one single curve.
+      irregular: >-
+        the margin has no repeatable geometry:
+        jagged, angular, ill-defined projections scattered unpredictably,
+        fitting none of the smooth-curve, lobed patterns.
+      others: >-
+        the border is not clearly Round/Oval, lobulated, or irregular by the
+        definitions above.
+    task: >-
+      Pick the single descriptor best matching the lesion's OUTER margin
+      silhouette (not internal signal/texture). If mixed, judge the overall
+      gestalt, not fine surface detail.
+
+  T1W_intensity:
+    # Matrix component 1/3 (T1W is mandatory). Doc's table's exact 3 labels.
+    label_options: ["hyperintense", "hypo-to-isointense", "hypointense"]
+    description: "T1W (non-fat-saturated) signal intensity relative to skeletal muscle or adjacent intervertebral disc."
+    label_definitions:
+      "hyperintense": "much higher (brighter) than normal muscle"
+      "hypo-to-isointense": "slightly higher than normal muscle -- clearly brighter than muscle, but well short of fat/marrow brightness"
+      "hypointense": "similar to or darker than normal muscle"
+    description_stack: >-
+      Describe the T1W (non-fat-saturated) signal intensity relative to skeletal
+      muscle or adjacent intervertebral disc, across the stack of slices.
+    task: >-
+      Pick the single option that best matches the lesion's overall T1W
+      brightness relative to muscle or adjacent intervertebral disc.
+    free_text_task: >-
+      Describe the lesion's T1-weighted (non-fat-saturated) signal intensity
+      relative to skeletal muscle or adjacent intervertebral disc, and explain
+      what in the image leads you to that assessment.
+
+  fluid_sensitive_intensity:
+    # Matrix component 2/3: signal intensity on fat-suppressed T2W/STIR.
+    label_options: ["hypo-to-isointense", "isointense-to-hyperintense", "hyperintense", "Not available"]
+    description: "Signal intensity on fluid-sensitive sequences (fat-suppressed T2-weighted or STIR) within the lesion."
+    label_definitions:
+      "hypo-to-isointense": "similar to or slightly higher than normal muscle, but clearly below the brightness of simple fluid"
+      "isointense-to-hyperintense": "brighter than normal muscle and approaching, but not equal to, the brightness of simple fluid"
+      "hyperintense": "comparable to that of simple fluid (e.g. cerebrospinal fluid or joint fluid)"
+      "Not available": "no fluid-sensitive sequence is available for this lesion"
+    task: >-
+      Pick the single option that best matches the lesion's overall signal
+      intensity on this fluid-sensitive sequence, relative to muscle and to
+      simple fluid. Only choose "Not available" if no such sequence is shown.
+    free_text_task: >-
+      Describe the lesion's signal intensity on this fluid-sensitive
+      (fat-suppressed T2-weighted or STIR) sequence, relative to muscle and to
+      simple fluid, and explain what leads you to that assessment. If no
+      fluid-sensitive sequence is shown, say so plainly instead.
+
+  fluid_sensitive_pattern:
+    # Matrix component 2/3 (pattern half). Companion to fluid_sensitive_intensity.
+    label_options: ["heterogeneous", "homogenous", "lobulated", "Not available"]
+    description: "Enhancement pattern on fluid-sensitive sequences (fat-suppressed T2-weighted or STIR) within the lesion."
+    label_definitions:
+      "heterogeneous": "patchy, mixed, or non-uniform signal intensity, including areas of differing brightness within the lesion"
+      "homogenous": "uniform enhancement throughout the lesion"
+      "lobulated": >-
+        the lesion has a bumpy, clustered, or "cluster-of-grapes" boundary,
+        rather than a perfectly smooth round contour
+      "Not available": "no fluid-sensitive sequence is available for this lesion"
+    task: >-
+      Pick the single option that best describes the pattern of signal on this
+      fluid-sensitive sequence. Only choose "Not available" if no such
+      sequence is shown.
+    free_text_task: >-
+      Describe the pattern of signal on this fluid-sensitive (fat-suppressed
+      T2-weighted or STIR) sequence -- uniform, patchy, or bumpy/clustered --
+      and explain what leads you to that assessment. If no fluid-sensitive
+      sequence is shown, say so plainly instead.
+
+  T1W_FS_CE_signal_drop:
+    # Matrix component 3/3, first half. Only meaningful when T1W_intensity is
+    # hyperintense (fat within the lesion); the doc branches on that.
+    label_options: ["Yes", "No", "Not available"]
+    description: "Whether lesion signal drops on fat-suppressed post-contrast T1W (T1W-FS-CE) compared with plain T1W -- assessed when the lesion is T1W-hyperintense."
+    label_definitions:
+      "Yes": "signal drops on T1W-FS-CE comparing with T1W"
+      "No": "no signal drop on T1W-FS-CE comparing with T1W"
+      "Not available": "no T1W-FS-CE sequence is available for this lesion"
+    task: >-
+      If the lesion appears T1W-hyperintense, state whether its signal drops
+      on this fat-suppressed post-contrast image relative to plain T1W.
+      Choose "Not available" only if no T1W-FS-CE image is shown.
+    free_text_task: >-
+      Describe whether the lesion's signal drops on this fat-suppressed
+      post-contrast T1W image compared with plain T1W, and explain what leads
+      you to that assessment. If no T1W-FS-CE image is shown, say so plainly
+      instead.
+
+  T1W_FS_CE_pattern:
+    # Matrix component 3/3, second half. Used when T1W_intensity is NOT
+    # hyperintense (i.e. the signal-drop branch does not apply).
+    label_options: ["Heterogeneous", "Homogenous (fluid-like)", "No enhancement", "Not available"]
+    description: "Enhancement pattern of the lesion on fat-suppressed post-contrast T1W (T1W-FS-CE)."
+    label_definitions:
+      "Heterogeneous": "patchy, mixed, or non-uniform enhancement, including areas of the lesion that do not enhance"
+      "Homogenous (fluid-like)": "uniform enhancement throughout the lesion"
+      "No enhancement": "no detectable increase in signal within the lesion after contrast administration"
+      "Not available": "no T1W-FS-CE sequence is available for this lesion"
+    task: >-
+      Pick the single option describing the lesion's enhancement pattern on
+      this fat-suppressed post-contrast image. Only choose "Not available" if
+      no T1W-FS-CE image is shown.
+    free_text_task: >-
+      Describe the lesion's enhancement pattern on this fat-suppressed
+      post-contrast T1W image, and explain what leads you to that assessment.
+      If no T1W-FS-CE image is shown, say so plainly instead.
+
+  soft_tissue_invasion:
+    # Feature description in the doc is actually peritumoral soft-tissue edema
+    # (an inflammatory reaction, not tumor extension), read on fluid-sensitive
+    # sequences. Ground truth key `soft_tissue_invasion` uses Yes/No.
+    label_options: [Yes, No, not_available]
+    description: "Hyperintensity in the muscle or fascia adjacent to the tumor on fluid-sensitive sequences (T2-FS or STIR), reflecting peritumoral soft-tissue edema."
+    label_definitions:
+      Yes: "high signal intensity in the muscle or fascia adjacent to the tumor"
+      No: "no high signal intensity in the muscle or fascia adjacent to the tumor"
+      not_available: "no fluid-sensitive sequence is available for this lesion"
+    task: >-
+      State whether high signal is present in the muscle/fascia adjacent to
+      the tumor on this fluid-sensitive image. Choose not_available only if no
+      such sequence is shown.
+    free_text_task: >-
+      Describe whether there is high signal in the muscle or fascia adjacent
+      to the tumor on this fluid-sensitive image, and explain what leads you
+      to that assessment. If no fluid-sensitive sequence is shown, say so
+      plainly instead.
+
+  perilesional_edema_T1W:
+    # Component 1/2 of perilesional bone marrow edema (combined via label
+    # mapping in post-processing: present only if BOTH components are present).
+    label_options: [presence, absence]
+    description: "Perilesional boen marrow edema is an inflammatory reaction adjacent to the tumor. Within the bone marrow adjacent to the tumor, appearing as low-to-intermediate signal on T1W)"
+    label_definitions:
+      presence: "low-to-intermediate signal on T1W around the tumor in the bone marrow"
+      absence: "no low-to-intermediate signal on T1W around the tumor in the bone marrow"
+    task: >-
+      State whether low-to-intermediate T1W signal is present in the bone
+      marrow immediately adjacent to the tumor.
+    free_text_task: >-
+      Describe whether the bone marrow immediately adjacent to the tumor shows
+      low-to-intermediate signal on this T1W image, and explain what leads you
+      to that assessment.
+
+  perilesional_edema_fluid_sensitive:
+    # Component 2/2 of perilesional bone marrow edema.
+    label_options: [presence, absence, not_available]
+    description: "Perilesional boen marrow edema is an inflammatory reaction adjacent to the tumor. Within the bone marrow adjacent to the tumor, appearing as high signal on fluid-sensitive sequences (T2-FS or STIR)"
+    label_definitions:
+      presence: "high signal around the tumor in the bone marrow"
+      absence: "no high signal around the tumor in the bone marrow"
+      not_available: "no fluid-sensitive sequence is available for this lesion"
+    task: >-
+      State whether high signal is present in the bone marrow immediately
+      adjacent to the tumor on this fluid-sensitive image. Choose
+      not_available only if no such sequence is shown.
+    free_text_task: >-
+      Describe whether the bone marrow immediately adjacent to the tumor shows
+      high signal on this fluid-sensitive image, and explain what leads you to
+      that assessment. If no fluid-sensitive sequence is shown, say so plainly
+      instead.
+
+  # skip_metastasis:
+  #   # Doc notes this may not be visible on a single slice -- pass multiple
+  #   # slices/the whole stack for this feature (see description_stack).
+  #   label_options: [presence, absence]
+  #   description: "A second, smaller focus of tumor anatomically separate from the primary lesion, in the same bone across a joint, or in a distant part of the extremity."
+  #   description_stack: >-
+  #     A second, smaller focus of tumor anatomically separate from the primary
+  #     lesion, in the same bone across a joint, or in a distant part of the
+  #     extremity, as seen anywhere across the stack of slices.
+  #   label_definitions:
+  #     presence: "a distinct, separate tumor focus is visible away from the primary lesion, as described above"
+  #     absence: "no separate tumor focus is visible away from the primary lesion"
+  #   task: >-
+  #     State whether a skip metastasis (a separate tumor focus away from the
+  #     primary lesion) is visible.
+  #   free_text_task: >-
+  #     Describe whether you see a second, separate focus of tumor away from the
+  #     primary lesion (a skip metastasis), and explain what leads you to that
+  #     assessment.

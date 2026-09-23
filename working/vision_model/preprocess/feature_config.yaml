@@ -47,14 +47,14 @@ features:
       - modality: T1W
         planes: [axial, coronal, sagittal]
 
-  - name: T1W_fluid_level
-    assessment_key: T1W_fluid_level
-    crop_margin_mm: 15
-    top_k: 1                  # fluid-fluid levels can be slice-dependent
-    crop_mode: bbox
-    requirements:
-      - modality: T1W
-        planes: [axial, sagittal]
+  # - name: T1W_fluid_level
+  #   assessment_key: T1W_fluid_level
+  #   crop_margin_mm: 15
+  #   top_k: 1                  # fluid-fluid levels can be slice-dependent
+  #   crop_mode: bbox
+  #   requirements:
+  #     - modality: T1W
+  #       planes: [axial, sagittal]
 
   - name: T2W_intensity
     assessment_key: t2w_intensity
