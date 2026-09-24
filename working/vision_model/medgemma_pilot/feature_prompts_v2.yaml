@@ -137,11 +137,11 @@ features:
     # Feature description in the doc is actually peritumoral soft-tissue edema
     # (an inflammatory reaction, not tumor extension), read on fluid-sensitive
     # sequences. Ground truth key `soft_tissue_invasion` uses Yes/No.
-    label_options: [Yes, No]
+    label_options: ["Yes", "No"]
     description: "Hyperintensity in the muscle or fascia adjacent to the tumor on fluid-sensitive sequences (T2-FS or STIR), reflecting peritumoral soft-tissue edema."
     label_definitions:
-      Yes: "high signal intensity in the muscle or fascia adjacent to the tumor"
-      No: "no high signal intensity in the muscle or fascia adjacent to the tumor"
+      "Yes": "high signal intensity in the muscle or fascia adjacent to the tumor"
+      "No": "no high signal intensity in the muscle or fascia adjacent to the tumor"
     task: >-
       State whether high signal is present in the muscle/fascia adjacent to
       the tumor on this fluid-sensitive image.
