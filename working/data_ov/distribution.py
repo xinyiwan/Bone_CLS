@@ -1,3 +1,4 @@
+import argparse
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -5,11 +6,36 @@ import pandas as pd
 
 from labels import to_label
 
-CSV_PATH = Path("/Users/xinyi/Documents/github/Bone_CLS/kira (Selección 30-03).csv")
+CSV_PATH = Path("/Users/xinyi/Documents/github/Bone_CLS/output/merged_data/kira-1103-combined_dataset.csv")
 OUT_DIR = Path(__file__).resolve().parent
 COLUMN = "palabra_manual"
 
+ap = argparse.ArgumentParser()
+ap.add_argument("--csv", type=Path, default=CSV_PATH)
+ap.add_argument("--exclude-enchondroma", action="store_true",
+                help="drop rows whose manual enchondroma check says 'exclude' (e.g. too small)")
+ap.add_argument("--exclude-missing", action="store_true",
+                help="drop rows with no imaging features (final_output)")
+ap.add_argument("--exclude-no-subject", action="store_true", help="drop rows without subject_code")
+ap.add_argument("--exclude-manual", action="store_true",
+                help="drop rows manually labelled If_segmented == 'exclude'")
+args = ap.parse_args()
+CSV_PATH = args.csv
+
 df = pd.read_csv(CSV_PATH)
+n0 = len(df)
+drop = pd.Series(False, index=df.index)
+suffix = ""
+if args.exclude_enchondroma:
+    drop |= df["enchondroma_decision"].eq("exclude"); suffix += "_noench"
+if args.exclude_missing:
+    drop |= df["final_output"].isna(); suffix += "_nomissing"
+if args.exclude_no_subject:
+    drop |= df["subject_code"].isna(); suffix += "_nosubj"
+if args.exclude_manual:
+    drop |= df["If_segmented"].str.strip().eq("exclude"); suffix += "_nomanual"
+df = df[~drop]
+print(f"Filtered {n0} -> {len(df)} rows")
 
 labels = df[COLUMN].fillna("(missing)").map(to_label)
 counts = labels.value_counts()
@@ -25,7 +51,7 @@ dist = pd.DataFrame({
     "percent": (counts.values / total * 100).round(2),
 })
 
-csv_out = OUT_DIR / "distribution.csv"
+csv_out = OUT_DIR / f"distribution{suffix}.csv"
 dist.to_csv(csv_out, index=False)
 print(f"Saved table -> {csv_out}")
 
@@ -41,6 +67,6 @@ for i, (c, p) in enumerate(zip(dist["count"][::-1], dist["percent"][::-1])):
     ax.text(c, i, f" {c} ({p}%)", va="center", fontsize=8)
 plt.tight_layout()
 
-png_out = OUT_DIR / "distribution.png"
+png_out = OUT_DIR / f"distribution{suffix}.png"
 plt.savefig(png_out, dpi=150)
 print(f"Saved plot  -> {png_out}")
