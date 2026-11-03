@@ -28,7 +28,7 @@ SHAPE_MODALITY_PREFERENCE = ["T1W"]
 # alike and are grouped into one row)
 MATRIX_ROW_MODALITIES = {
     "T1W": ("T1W",),
-    "T1W_C": ("T1W_C",),
+    # "T1W_C": ("T1W_C",),
     "T2W_FS": ("T2W_FS",),
     "T1W_FS_C": ("T1W_FS_C",),
 }

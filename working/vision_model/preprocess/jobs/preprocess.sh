@@ -14,10 +14,10 @@ set -euo pipefail
 PROJECT_ROOT=${PROJECT_ROOT:-/projects/prjs1779/BONE-AI}
 REPO_ROOT=${REPO_ROOT:-${PROJECT_ROOT}/Bone_CLS}
 
-DATA_ROOT=${DATA_ROOT:-${PROJECT_ROOT}/subdata}
+DATA_ROOT=${DATA_ROOT:-${PROJECT_ROOT}/subset_data/subdata_segmented}
 OUT_ROOT=${OUT_ROOT:-${PROJECT_ROOT}/output/preprocess/shape_256_segmented_all}
 SEQUENCE_TABLE=${SEQUENCE_TABLE:-${DATA_ROOT}/case_metadata.csv}
-CONFIG=${CONFIG:-${REPO_ROOT}/working/vision_model/preprocess/feature_config.yaml}
+CONFIG=${CONFIG:-${REPO_ROOT}/working/vision_model/preprocess/feature_config_v2.yaml}
 LABELS_DIR=${PROJECT_ROOT}/output/label_out/jsons
 CLINICAL_CSV=${PROJECT_ROOT}/output/clinical_info/combined_clinical_info.csv
 

@@ -6,8 +6,8 @@ import pandas as pd
 
 from labels import to_label
 
-CSV_PATH = Path("/Users/xinyi/Documents/github/Bone_CLS/output/merged_data/kira-1103-combined_dataset.csv")
-OUT_DIR = Path(__file__).resolve().parent
+CSV_PATH = Path("/projects/prjs1779/BONE-AI/output/clinical_info/merged_data/kira-1103-combined_dataset.csv")
+OUT_DIR = Path("/projects/prjs1779/BONE-AI/output/clinical_info/merged_data")
 COLUMN = "palabra_manual"
 
 ap = argparse.ArgumentParser()
