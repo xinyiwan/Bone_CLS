@@ -30,7 +30,7 @@ import pandas as pd
 from distribution_imaging import subject_labels, subjects_with_images
 from lesion_category import to_category
 
-DEFAULT_CSV = Path("/Users/xinyi/Documents/github/Bone_CLS/kira-0515-seg.csv")
+DEFAULT_CSV = Path("/Users/xinyi/Documents/github/Bone_CLS/output/merged_data/kira-1103-combined_dataset.filtered.csv")
 DEFAULT_DATA_ROOT = Path("/Volumes/SanDisk/BONE-AI/tmp_sorted_data")
 OUT_CSV = Path("/Users/xinyi/Documents/github/Bone_CLS/output/subset/subset_20pct.csv")
 SEG_HISTORY_DIRNAME = "segmentation_history"

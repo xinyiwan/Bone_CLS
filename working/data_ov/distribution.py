@@ -6,8 +6,8 @@ import pandas as pd
 
 from labels import to_label
 
-CSV_PATH = Path("/projects/prjs1779/BONE-AI/output/clinical_info/merged_data/kira-1103-combined_dataset.csv")
-OUT_DIR = Path("/projects/prjs1779/BONE-AI/output/clinical_info/merged_data")
+CSV_PATH = Path("/Users/xinyi/Documents/github/Bone_CLS/output/merged_data/kira-1103-combined_dataset.csv")
+OUT_DIR = Path("/Users/xinyi/Documents/github/Bone_CLS/output/merged_data")
 COLUMN = "palabra_manual"
 
 ap = argparse.ArgumentParser()
@@ -15,10 +15,11 @@ ap.add_argument("--csv", type=Path, default=CSV_PATH)
 ap.add_argument("--exclude-enchondroma", action="store_true",
                 help="drop rows whose manual enchondroma check says 'exclude' (e.g. too small)")
 ap.add_argument("--exclude-missing", action="store_true",
-                help="drop rows with no imaging features (final_output)")
+                help="drop rows with no source data (note == 'not found') or no imaging features (final_output)")
 ap.add_argument("--exclude-no-subject", action="store_true", help="drop rows without subject_code")
 ap.add_argument("--exclude-manual", action="store_true",
                 help="drop rows manually labelled If_segmented == 'exclude'")
+ap.add_argument("--save-filtered", type=Path, help="also write the filtered rows to this CSV")
 args = ap.parse_args()
 CSV_PATH = args.csv
 
@@ -29,13 +30,15 @@ suffix = ""
 if args.exclude_enchondroma:
     drop |= df["enchondroma_decision"].eq("exclude"); suffix += "_noench"
 if args.exclude_missing:
-    drop |= df["final_output"].isna(); suffix += "_nomissing"
+    drop |= df["note"].eq("not found") | df["final_output"].isna(); suffix += "_nomissing"
 if args.exclude_no_subject:
     drop |= df["subject_code"].isna(); suffix += "_nosubj"
 if args.exclude_manual:
     drop |= df["If_segmented"].str.strip().eq("exclude"); suffix += "_nomanual"
 df = df[~drop]
 print(f"Filtered {n0} -> {len(df)} rows")
+if args.save_filtered:
+    df.to_csv(args.save_filtered, index=False); print(f"Saved filtered rows -> {args.save_filtered}")
 
 labels = df[COLUMN].fillna("(missing)").map(to_label)
 counts = labels.value_counts()

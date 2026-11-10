@@ -2,7 +2,8 @@
 select_subset.py's proportional-to-pool-size allocation.
 
 Pool = subjects with imaging on disk ∩ subjects in the clinical CSV, minus
-subjects with If_segmented == "exclude" (same as select_subset.py).
+subjects with If_segmented == "exclude" (same as select_subset.py) and minus
+subjects whose diagnosis label is "uncertain by reports" / missing.
 
 With k subtypes (the same subtype labels as distribution.py) and target
 T = round(--pct/100 * pool_size), an even split gives each subtype a fixed
@@ -30,11 +31,12 @@ from pathlib import Path
 import pandas as pd
 
 from distribution_imaging import subject_labels, subjects_with_images
+from labels import MISSING_LABEL, UNCERTAIN_LABEL
 from select_subset import subjects_with_seg_history
 
-DEFAULT_CSV = Path("/Users/xinyi/Documents/github/Bone_CLS/kira-0515-seg.csv")
+DEFAULT_CSV = Path("/Users/xinyi/Documents/github/Bone_CLS/output/merged_data/kira-1104-combined_dataset.filtered.csv")
 DEFAULT_DATA_ROOT = Path("/Volumes/SanDisk/BONE-AI/tmp_sorted_data")
-OUT_CSV = Path("/Users/xinyi/Documents/github/Bone_CLS/output/subset/subset_waterfill.csv")
+OUT_CSV = Path("/Users/xinyi/Documents/github/Bone_CLS/output/subset/subset_waterfill_filtered1106-15pct.csv")
 
 
 def even_split_alloc(group_sizes: pd.Series, target: int) -> pd.Series:
@@ -69,6 +71,10 @@ def main():
     ) | subjects_with_seg_history(args.data_root)
 
     per_subject = subject_labels(args.csv)
+    # uncertain / missing diagnoses are not a subtype: leave them out of the pool
+    n_unc = per_subject.isin([UNCERTAIN_LABEL, MISSING_LABEL]).sum()
+    per_subject = per_subject[~per_subject.isin([UNCERTAIN_LABEL, MISSING_LABEL])]
+    print(f"Left out (uncertain/missing label): {n_unc} subjects")
     img_subjects = subjects_with_images(args.data_root)
 
     pool = sorted((set(per_subject.index) & img_subjects) - excluded)
